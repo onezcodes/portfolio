@@ -1,0 +1,21 @@
+---
+import { Image } from 'astro:assets';
+import logo from '../assets/logo.webp';
+---
+
+<section class="hero wrap" aria-labelledby="hero-title">
+  <div class="hero-copy">
+    <p class="kicker">Software house</p>
+    <h1 id="hero-title">Tech solutions. Built clean.</h1>
+    <p class="lede">
+      Onez Codes designs and ships software for teams who want a sharp product — not a heavy process.
+    </p>
+    <div class="hero-actions">
+      <a class="btn" href="/contact">Get in touch</a>
+      <a class="btn btn-ghost" href="#work">See work</a>
+    </div>
+  </div>
+  <div class="hero-mark">
+    <Image src={logo} alt="Onez Codes software house logo" width={360} height={360} densities={[1, 2]} loading="eager" fetchpriority="high" />
+  </div>
+</section>

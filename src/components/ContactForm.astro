@@ -1,0 +1,23 @@
+---
+import { site } from '../data/site';
+
+const action = site.formAction || `mailto:${site.email}`;
+const method = site.formAction ? 'POST' : 'post';
+const encType = site.formAction ? undefined : 'text/plain';
+---
+
+<form class="form" action={action} method={method} enctype={encType}>
+  <div class="field">
+    <label for="name">Name</label>
+    <input id="name" name="name" type="text" autocomplete="name" required />
+  </div>
+  <div class="field">
+    <label for="email">Email</label>
+    <input id="email" name="email" type="email" autocomplete="email" required />
+  </div>
+  <div class="field">
+    <label for="message">Project</label>
+    <textarea id="message" name="message" required placeholder="What are you building, and when do you need it?"></textarea>
+  </div>
+  <button class="btn" type="submit">Send message</button>
+</form>

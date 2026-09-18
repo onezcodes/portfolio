@@ -1,0 +1,33 @@
+---
+import Base from '../layouts/Base.astro';
+import { services } from '../data/site';
+import { pages } from '../data/seo';
+---
+
+<Base title={pages.services.title} description={pages.services.description}>
+  <header class="page-intro wrap">
+    <p class="kicker">Services</p>
+    <h1>Build the right thing, then keep it honest</h1>
+    <p class="lede">Four offers. We pick the one that matches the problem — not the one that fills a slide.</p>
+  </header>
+
+  <section class="section" aria-label="Service details">
+    <div class="wrap">
+      {
+        services.map((service, i) => (
+          <article class="service-detail" id={service.slug}>
+            <p class="kicker">{String(i + 1).padStart(2, '0')}</p>
+            <h2>{service.title}</h2>
+            <p class="lede">{service.description}</p>
+            <h3 class="sector">Typical deliverables</h3>
+            <ul class="deliverables">
+              {service.deliverables.map((item) => (
+                <li>{item}</li>
+              ))}
+            </ul>
+          </article>
+        ))
+      }
+    </div>
+  </section>
+</Base>

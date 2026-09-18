@@ -1,0 +1,56 @@
+---
+import { Image } from 'astro:assets';
+import logo from '../assets/logo.webp';
+import poweredBy from '../assets/powered-by.webp';
+import { site, nav } from '../data/site';
+
+const year = new Date().getFullYear();
+---
+
+<footer class="site-footer">
+  <div class="wrap footer-main">
+    <div>
+      <a class="footer-brand" href="/">
+        <Image src={logo} alt="" width={88} height={88} densities={[1, 2]} />
+        {site.name}
+      </a>
+      <p class="footer-copy">{site.tagline}. Software built to stay clear, fast, and maintainable.</p>
+    </div>
+    <div class="footer-col">
+      <h2>Explore</h2>
+      <ul>
+        <li><a href="/">Home</a></li>
+        {nav.map((item) => (
+          <li><a href={item.href}>{item.label}</a></li>
+        ))}
+      </ul>
+    </div>
+    <div class="footer-col">
+      <h2>Contact</h2>
+      <address>
+        <ul>
+          <li><a href={`mailto:${site.email}`}>{site.email}</a></li>
+          <li>{site.location}</li>
+        </ul>
+      </address>
+      <h2 class="footer-follow">Follow</h2>
+      <ul>
+        {
+          site.social.map((item) => (
+            <li>
+              <a href={item.href} rel="me noopener noreferrer" target="_blank">
+                {item.label}
+              </a>
+            </li>
+          ))
+        }
+      </ul>
+    </div>
+  </div>
+  <div class="footer-bar">
+    <div class="wrap footer-bar-inner">
+      <Image class="powered-by" src={poweredBy} alt={`Powered by ${site.name}`} width={320} height={174} />
+      <p class="legal">© {year} {site.name}. All rights reserved.</p>
+    </div>
+  </div>
+</footer>

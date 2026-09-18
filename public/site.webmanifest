@@ -1,0 +1,26 @@
+{
+  "name": "Onez Codes",
+  "short_name": "OC",
+  "description": "Onez Codes is a software house for teams who want sharp products without the noise. Web apps, custom software, and product design — built clean.",
+  "id": "/",
+  "start_url": "/",
+  "scope": "/",
+  "display": "browser",
+  "lang": "en",
+  "dir": "ltr",
+  "background_color": "#FAFAF8",
+  "theme_color": "#FFB800",
+  "icons": [
+    {
+      "src": "/apple-touch-icon.png",
+      "sizes": "180x180",
+      "type": "image/png"
+    },
+    {
+      "src": "/logo.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    }
+  ]
+}

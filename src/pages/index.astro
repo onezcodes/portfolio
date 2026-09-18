@@ -1,0 +1,152 @@
+---
+import Base from '../layouts/Base.astro';
+import Hero from '../components/Hero.astro';
+import ServiceCard from '../components/ServiceCard.astro';
+import WorkCard from '../components/WorkCard.astro';
+import ContactForm from '../components/ContactForm.astro';
+import { Image } from 'astro:assets';
+import lockup from '../assets/lockup.webp';
+import { site, services, projects, process, stack, audience, brief } from '../data/site';
+import { pages } from '../data/seo';
+
+const featured = projects.filter((project) => project.featured);
+---
+
+<Base title={pages.home.title} description={pages.home.description} fullTitle>
+  <Hero />
+
+  <section class="section" id="services" aria-labelledby="services-title">
+    <div class="wrap">
+      <div class="section-head">
+        <p class="kicker">What we do</p>
+        <h2 id="services-title">Four ways we help</h2>
+        <p class="lede">From the first interface to the system behind it — then we stay on after launch.</p>
+      </div>
+      <div class="grid-2">
+        {services.map((service) => <ServiceCard service={service} />)}
+      </div>
+    </div>
+  </section>
+
+  <section class="section" id="process" aria-labelledby="process-title">
+    <div class="wrap">
+      <div class="section-head">
+        <p class="kicker">How we work</p>
+        <h2 id="process-title">Brief. Scope. Build. Care.</h2>
+        <p class="lede">A small process on purpose — so the software ships, and you always know what happens next.</p>
+      </div>
+      <ol class="steps">
+        {
+          process.map((step, i) => (
+            <li class="step">
+              <span class="step-n">{String(i + 1).padStart(2, '0')}</span>
+              <h3>{step.title}</h3>
+              <p>{step.body}</p>
+            </li>
+          ))
+        }
+      </ol>
+    </div>
+  </section>
+
+  <section class="section" id="work" aria-labelledby="work-title">
+    <div class="wrap">
+      <div class="section-head">
+        <p class="kicker">Selected work</p>
+        <h2 id="work-title">Outcomes over ornament</h2>
+        <p class="lede">Live and in progress — Final Third Zone and SayDiagram are out; Lumiere and Stride are coming soon.</p>
+      </div>
+      <div class="work-list">
+        {featured.map((project, index) => <WorkCard project={project} index={index} />)}
+      </div>
+      <p class="hero-actions">
+        <a class="btn btn-ghost" href="/work">All work</a>
+      </p>
+    </div>
+  </section>
+
+  <section class="section" id="stack" aria-labelledby="stack-title">
+    <div class="wrap">
+      <div class="section-head">
+        <p class="kicker">Stack</p>
+        <h2 id="stack-title">Tools we actually ship</h2>
+        <p class="lede">Proven pieces, used across the live work — not a slide of logos we once touched.</p>
+      </div>
+      <ul class="stack-row">
+        {stack.map((item) => (
+          <li class="chip">{item}</li>
+        ))}
+      </ul>
+    </div>
+  </section>
+
+  <section class="section" id="about" aria-labelledby="about-title">
+    <div class="wrap about">
+      <div class="about-lockup">
+        <Image src={lockup} alt={`${site.name} — ${site.tagline}`} width={700} height={382} />
+      </div>
+      <div class="about-copy">
+        <p class="kicker">Studio</p>
+        <h2 id="about-title">A small house for serious software</h2>
+        <p class="lede">
+          We keep the surface area small: clear scope, careful engineering, and interfaces that do not get in the way. Senior work, direct communication, no theatre.
+        </p>
+      </div>
+    </div>
+  </section>
+
+  <section class="section" id="audience" aria-labelledby="audience-title">
+    <div class="wrap">
+      <div class="section-head">
+        <p class="kicker">Who it’s for</p>
+        <h2 id="audience-title">A fit if this sounds like you</h2>
+        <p class="lede">We work best with people who want a sharp result and a small team — not a process to sit in.</p>
+      </div>
+      <div class="audience">
+        {
+          audience.map((item) => (
+            <article>
+              <h3>{item.title}</h3>
+              <p>{item.body}</p>
+            </article>
+          ))
+        }
+      </div>
+    </div>
+  </section>
+
+  <section class="section" id="contact" aria-labelledby="contact-title">
+    <div class="wrap contact-split">
+      <div class="contact-details">
+        <div class="section-head tight">
+          <p class="kicker">Start a project</p>
+          <h2 id="contact-title">Tell us what you need</h2>
+          <p class="lede">Share a short brief. We reply with whether we are a fit, and what the first two weeks would look like.</p>
+        </div>
+        <address>
+          <a href={`mailto:${site.email}`}>{site.email}</a>
+        </address>
+        <ul class="social-links">
+          {
+            site.social.map((item) => (
+              <li>
+                <a href={item.href} rel="me noopener noreferrer" target="_blank">
+                  {item.label}
+                </a>
+              </li>
+            ))
+          }
+        </ul>
+        <div>
+          <h3 class="sector">What to send</h3>
+          <ul class="deliverables">
+            {brief.map((item) => (
+              <li>{item}</li>
+            ))}
+          </ul>
+        </div>
+      </div>
+      <ContactForm />
+    </div>
+  </section>
+</Base>

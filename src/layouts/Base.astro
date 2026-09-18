@@ -1,0 +1,103 @@
+---
+import '@fontsource-variable/outfit/wght.css';
+import '../styles/global.css';
+import { site } from '../data/site';
+import { pages, canonicalUrl, jsonLdGraph, origin } from '../data/seo';
+import Nav from '../components/Nav.astro';
+import Footer from '../components/Footer.astro';
+import logo from '../assets/logo.webp';
+
+interface Props {
+  title?: string;
+  description?: string;
+  fullTitle?: boolean;
+  noindex?: boolean;
+}
+
+const {
+  title,
+  description = pages.home.description,
+  fullTitle = false,
+  noindex = false,
+} = Astro.props;
+
+const pageTitle = fullTitle && title ? title : title ? `${title} · ${site.name}` : pages.home.title;
+const path = Astro.url.pathname.replace(/\/+$/, '') || '/';
+const canonical = canonicalUrl(path);
+const ogImage = `${origin}/og.png`;
+const ogAlt = `${site.name} — ${site.tagline}`;
+const robots = noindex
+  ? 'noindex, follow'
+  : 'index, follow, max-image-preview:large, max-snippet:-1, max-video-preview:-1';
+const jsonLd = jsonLdGraph({ path, title: pageTitle, description });
+---
+
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>{pageTitle}</title>
+    <meta name="description" content={description} />
+    <meta name="author" content={site.name} />
+    <meta name="publisher" content={site.name} />
+    <meta name="robots" content={robots} />
+    <meta name="googlebot" content={robots} />
+    <meta name="bingbot" content={robots} />
+    {site.googleSiteVerification && (
+      <meta name="google-site-verification" content={site.googleSiteVerification} />
+    )}
+    {!noindex && (
+      <>
+        <link rel="canonical" href={canonical} />
+        <link rel="alternate" hreflang="en" href={canonical} />
+        <link rel="alternate" hreflang="x-default" href={canonical} />
+      </>
+    )}
+    <link rel="sitemap" type="application/xml" href="/sitemap-index.xml" />
+    <link rel="manifest" href="/site.webmanifest" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="icon" type="image/png" sizes="180x180" href="/apple-touch-icon.png" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+    <link rel="mask-icon" href="/favicon.svg" color="#FFB800" />
+    <link rel="preload" as="image" href={logo.src} type="image/webp" />
+    <meta property="og:type" content="website" />
+    <meta property="og:locale" content="en_US" />
+    <meta property="og:site_name" content={site.name} />
+    <meta property="og:title" content={pageTitle} />
+    <meta property="og:description" content={description} />
+    <meta property="og:url" content={canonical} />
+    <meta property="og:image" content={ogImage} />
+    <meta property="og:image:secure_url" content={ogImage} />
+    <meta property="og:image:type" content="image/png" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta property="og:image:alt" content={ogAlt} />
+    {site.social.map((item) => <link rel="me" href={item.href} />)}
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:site" content="@onezcodes" />
+    <meta name="twitter:creator" content="@onezcodes" />
+    <meta name="twitter:title" content={pageTitle} />
+    <meta name="twitter:description" content={description} />
+    <meta name="twitter:image" content={ogImage} />
+    <meta name="twitter:image:alt" content={ogAlt} />
+    <meta name="theme-color" content="#FAFAF8" />
+    <meta name="msapplication-TileColor" content="#FFB800" />
+    <meta name="application-name" content={site.name} />
+    <meta name="apple-mobile-web-app-title" content={site.name} />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="format-detection" content="telephone=no" />
+    <meta name="color-scheme" content="light" />
+    <meta name="referrer" content="origin-when-cross-origin" />
+    <meta name="generator" content={Astro.generator} />
+    <script type="application/ld+json" set:html={JSON.stringify(jsonLd)} />
+  </head>
+  <body>
+    <a class="skip-link" href="#main">Skip to content</a>
+    <Nav />
+    <main id="main">
+      <slot />
+    </main>
+    <Footer />
+  </body>
+</html>

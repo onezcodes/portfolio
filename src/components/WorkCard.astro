@@ -1,0 +1,50 @@
+---
+import { Image } from 'astro:assets';
+import type { Project } from '../data/site';
+
+interface Props {
+  project: Project;
+  index: number;
+}
+
+const { project, index } = Astro.props;
+const n = String(index + 1).padStart(2, '0');
+const Tag = project.href ? 'a' : 'article';
+---
+
+<Tag
+  class="work-card"
+  href={project.href}
+  target={project.href ? '_blank' : undefined}
+  rel={project.href ? 'noopener noreferrer' : undefined}
+>
+  {
+    project.logo ? (
+      <Image
+        class:list={['work-logo', project.logoWide && 'wide']}
+        src={project.logo}
+        alt={`${project.title} logo`}
+        width={project.logoWide ? 176 : 112}
+        height={project.logoWide ? 88 : 112}
+        densities={[1, 2]}
+      />
+    ) : (
+      <span class="work-index" aria-hidden="true">
+        {n}
+      </span>
+    )
+  }
+  <div class="work-meta">
+    <p class:list={['sector', project.comingSoon && 'soon']}>
+      {project.comingSoon ? 'Coming soon' : project.sector}
+    </p>
+    <h3>{project.title}</h3>
+    <p>{project.outcome}</p>
+    {project.href && <span class="card-more">Visit site</span>}
+  </div>
+  <ul class="chips">
+    {project.stack.map((item) => (
+      <li class="chip">{item}</li>
+    ))}
+  </ul>
+</Tag>

@@ -1,0 +1,77 @@
+---
+import { Image } from 'astro:assets';
+import logo from '../assets/logo.webp';
+import { site, nav } from '../data/site';
+
+const path = Astro.url.pathname;
+---
+
+<header class="site-header">
+  <div class="wrap header-inner">
+    <a class="brand" href="/">
+      <Image src={logo} alt="" width={80} height={80} densities={[1, 2]} />
+      <span class="brand-name">
+        <strong>{site.name}</strong>
+        <span>{site.tagline}</span>
+      </span>
+    </a>
+    <button
+      class="menu-toggle"
+      id="menu-toggle"
+      type="button"
+      aria-expanded="false"
+      aria-controls="nav-panel"
+    >
+      <span class="visually-hidden">Menu</span>
+      <span class="menu-toggle-bars" aria-hidden="true"></span>
+    </button>
+    <div class="nav-panel" id="nav-panel">
+      <nav aria-label="Primary">
+        <ul class="nav-links">
+          {
+            nav.map((item) => (
+              <li>
+                <a href={item.href} aria-current={path === item.href ? 'page' : undefined}>
+                  {item.label}
+                </a>
+              </li>
+            ))
+          }
+        </ul>
+      </nav>
+      <a class="btn" href="/contact">Get in touch</a>
+    </div>
+  </div>
+</header>
+
+<style>
+  .visually-hidden {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
+  }
+</style>
+
+<script is:inline>
+  const toggle = document.getElementById('menu-toggle');
+  const panel = document.getElementById('nav-panel');
+  if (toggle && panel) {
+    toggle.addEventListener('click', () => {
+      const open = toggle.getAttribute('aria-expanded') === 'true';
+      toggle.setAttribute('aria-expanded', String(!open));
+      panel.classList.toggle('is-open', !open);
+    });
+    panel.querySelectorAll('a').forEach((link) => {
+      link.addEventListener('click', () => {
+        toggle.setAttribute('aria-expanded', 'false');
+        panel.classList.remove('is-open');
+      });
+    });
+  }
+</script>
