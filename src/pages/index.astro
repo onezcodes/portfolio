@@ -12,7 +12,7 @@ import { pages } from '../data/seo';
 const featured = projects.filter((project) => project.featured);
 ---
 
-<Base title={pages.home.title} description={pages.home.description} fullTitle>
+<Base title={pages.home.title} description={pages.home.description} fullTitle home>
   <Hero />
 
   <section class="section" id="services" aria-labelledby="services-title">
@@ -83,7 +83,7 @@ const featured = projects.filter((project) => project.featured);
   <section class="section" id="about" aria-labelledby="about-title">
     <div class="wrap about">
       <div class="about-lockup">
-        <Image src={lockup} alt={`${site.name} — ${site.tagline}`} width={700} height={382} />
+        <Image src={lockup} alt={`${site.name} — ${site.tagline}`} width={700} height={382} densities={[1, 2]} quality={90} />
       </div>
       <div class="about-copy">
         <p class="kicker">Studio</p>
@@ -150,3 +150,27 @@ const featured = projects.filter((project) => project.featured);
     </div>
   </section>
 </Base>
+
+<script is:inline>
+  (function () {
+    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+    if (!('IntersectionObserver' in window)) return;
+    document.documentElement.classList.add('js-reveal');
+    var nodes = document.querySelectorAll(
+      '.is-home .section .section-head, .is-home .grid-2 .card, .is-home .steps .step, .is-home .work-list .work-card, .is-home .work-list + .hero-actions, .is-home .stack-row, .is-home .about-lockup, .is-home .about-copy, .is-home .audience article, .is-home .contact-details, .is-home .contact-split .form',
+    );
+    var io = new IntersectionObserver(
+      function (entries) {
+        entries.forEach(function (entry) {
+          if (!entry.isIntersecting) return;
+          entry.target.classList.add('is-in');
+          io.unobserve(entry.target);
+        });
+      },
+      { threshold: 0.12, rootMargin: '0px 0px -8% 0px' },
+    );
+    nodes.forEach(function (el) {
+      io.observe(el);
+    });
+  })();
+</script>

@@ -376,12 +376,14 @@ main {
   border-left: 2px solid transparent;
   text-decoration: none;
   color: inherit;
-  transition: border-color 0.15s ease;
+  transition: border-color 0.2s ease, transform 0.2s ease, box-shadow 0.2s ease;
 }
 
 a.card:hover,
 a.work-card:hover {
   border-left-color: var(--gold);
+  transform: translateY(-3px);
+  box-shadow: 0 12px 28px color-mix(in srgb, var(--ink) 7%, transparent);
 }
 
 .card h3,
@@ -421,7 +423,7 @@ a.work-card:hover {
   border-left: 2px solid transparent;
   text-decoration: none;
   color: inherit;
-  transition: border-color 0.15s ease;
+  transition: border-color 0.2s ease, transform 0.2s ease, box-shadow 0.2s ease;
 }
 
 .work-index {
@@ -544,6 +546,12 @@ a.work-card:hover {
   padding: 0.45rem 0.8rem;
   font-size: 0.9rem;
   color: var(--ink);
+  transition: border-color 0.2s ease, transform 0.2s ease, background 0.2s ease;
+}
+
+.is-home .stack-row .chip:hover {
+  border-color: color-mix(in srgb, var(--gold) 50%, var(--line));
+  transform: translateY(-2px);
 }
 
 .audience {
@@ -869,6 +877,139 @@ a.work-card:hover {
   }
 }
 
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(1.1rem);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes fade {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes float {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-0.55rem);
+  }
+}
+
+@keyframes draw-rule {
+  from {
+    transform: scaleX(0);
+  }
+  to {
+    transform: scaleX(1);
+  }
+}
+
+.is-home .hero-copy > * {
+  animation: rise 0.85s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.is-home .hero-copy .kicker {
+  animation-delay: 0.05s;
+}
+
+.is-home .hero-copy h1 {
+  animation-delay: 0.14s;
+}
+
+.is-home .hero-copy .lede {
+  animation-delay: 0.24s;
+}
+
+.is-home .hero-copy .hero-actions {
+  animation-delay: 0.36s;
+}
+
+.is-home .hero-copy .kicker::before {
+  transform-origin: left;
+  animation: draw-rule 0.55s 0.08s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.is-home .hero-mark img {
+  animation: float 6.5s ease-in-out infinite;
+}
+
+html.js-reveal .is-home .section .section-head:not(.is-in),
+html.js-reveal .is-home .steps .step:not(.is-in),
+html.js-reveal .is-home .stack-row:not(.is-in),
+html.js-reveal .is-home .about-lockup:not(.is-in),
+html.js-reveal .is-home .about-copy:not(.is-in),
+html.js-reveal .is-home .audience article:not(.is-in),
+html.js-reveal .is-home .contact-details:not(.is-in),
+html.js-reveal .is-home .contact-split .form:not(.is-in),
+html.js-reveal .is-home .work-list + .hero-actions:not(.is-in) {
+  opacity: 0;
+  transform: translateY(2rem);
+}
+
+html.js-reveal .is-home .grid-2 .card:not(.is-in),
+html.js-reveal .is-home .work-list .work-card:not(.is-in) {
+  opacity: 0;
+}
+
+html.js-reveal .is-home .section-head.is-in,
+html.js-reveal .is-home .step.is-in,
+html.js-reveal .is-home .stack-row.is-in,
+html.js-reveal .is-home .about-lockup.is-in,
+html.js-reveal .is-home .about-copy.is-in,
+html.js-reveal .is-home .audience article.is-in,
+html.js-reveal .is-home .contact-details.is-in,
+html.js-reveal .is-home .contact-split .form.is-in,
+html.js-reveal .is-home .work-list + .hero-actions.is-in {
+  animation: rise 0.9s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+html.js-reveal .is-home .grid-2 .card.is-in,
+html.js-reveal .is-home .work-list .work-card.is-in {
+  animation: fade 0.8s ease both;
+}
+
+html.js-reveal .is-home .grid-2 .card:nth-child(2).is-in,
+html.js-reveal .is-home .steps .step:nth-child(2).is-in,
+html.js-reveal .is-home .work-list .work-card:nth-child(2).is-in,
+html.js-reveal .is-home .audience article:nth-child(2).is-in {
+  animation-delay: 0.1s;
+}
+
+html.js-reveal .is-home .grid-2 .card:nth-child(3).is-in,
+html.js-reveal .is-home .steps .step:nth-child(3).is-in,
+html.js-reveal .is-home .work-list .work-card:nth-child(3).is-in,
+html.js-reveal .is-home .audience article:nth-child(3).is-in {
+  animation-delay: 0.2s;
+}
+
+html.js-reveal .is-home .grid-2 .card:nth-child(4).is-in,
+html.js-reveal .is-home .steps .step:nth-child(4).is-in,
+html.js-reveal .is-home .work-list .work-card:nth-child(4).is-in {
+  animation-delay: 0.3s;
+}
+
+html.js-reveal .is-home .section-head:not(.is-in) .kicker::before {
+  transform: scaleX(0);
+  transform-origin: left;
+}
+
+html.js-reveal .is-home .section-head.is-in .kicker::before {
+  transform-origin: left;
+  animation: draw-rule 0.55s 0.12s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
 @media (prefers-reduced-motion: reduce) {
   html {
     scroll-behavior: auto;
@@ -878,5 +1019,6 @@ a.work-card:hover {
   *::before,
   *::after {
     transition: none !important;
+    animation: none !important;
   }
 }
