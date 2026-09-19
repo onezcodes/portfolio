@@ -151,7 +151,7 @@ export async function loadStudioAccess(supabase: TeamSupabase, user: User | null
     superAdmin
       ? Promise.resolve({ data: [] as { project_id: string; roles: unknown }[], error: null })
       : supabase.from('project_members').select('project_id, roles').eq('email', email),
-    supabase.from('team_members').select('display_name, job_title').eq('email', email).maybeSingle(),
+    supabase.from('team_members').select('display_name, job_title, avatar_url').eq('email', email).maybeSingle(),
     superAdmin
       ? Promise.resolve({ count: 1, error: null })
       : supabase.from('studio_credential_access').select('credential_id', { count: 'exact', head: true }).eq('email', email),
@@ -169,6 +169,11 @@ export async function loadStudioAccess(supabase: TeamSupabase, user: User | null
 
   let displayName = oauthName(user);
   if (profile.data?.display_name?.trim()) displayName = profile.data.display_name.trim();
+  const avatarUrl = oauthAvatar(user) || String(profile.data?.avatar_url ?? '').trim();
+  if (avatarUrl && avatarUrl !== String(profile.data?.avatar_url ?? '').trim()) {
+    const { error } = await supabase.from('team_members').update({ avatar_url: avatarUrl }).eq('email', email);
+    if (error) console.error('avatar cache failed', error.message);
+  }
 
   return {
     ok,
@@ -178,7 +183,7 @@ export async function loadStudioAccess(supabase: TeamSupabase, user: User | null
     canVault: superAdmin || (grants.count ?? 0) > 0,
     displayName: displayName || email,
     jobTitle: String(profile.data?.job_title ?? '').trim(),
-    avatarUrl: oauthAvatar(user),
+    avatarUrl,
     byProject,
   };
 }

@@ -1335,11 +1335,66 @@ html.js-reveal .is-home .section-head.is-in .kicker::before {
   grid-template-columns: minmax(8rem, 0.4fr) 1fr;
 }
 
-.team-list a.project-hit {
+.team-list a.vault-hit {
   display: flex;
   align-items: center;
-  gap: 0.85rem;
+  justify-content: space-between;
+  gap: 1rem;
   text-align: left;
+}
+
+.team-list a.vault-hit > span {
+  display: grid;
+  gap: 0.15rem;
+  min-width: 0;
+}
+
+.face-pile {
+  display: flex;
+  list-style: none;
+  margin: 0.35rem 0 0;
+  padding: 0;
+  flex-shrink: 0;
+}
+
+.team-list .face-pile,
+.vault-share .face-pile {
+  margin: 0;
+}
+
+.vault-share {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin-bottom: 1rem;
+}
+
+.vault-share h2 {
+  margin: 0;
+}
+
+.face-pile li {
+  position: relative;
+}
+
+.face-pile li + li {
+  margin-left: -0.4rem;
+}
+
+.face {
+  display: grid;
+  place-items: center;
+  width: 1.75rem;
+  height: 1.75rem;
+  border: 2px solid var(--surface);
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--gold) 28%, var(--canvas));
+  object-fit: cover;
+  font-size: 0.68rem;
+  font-weight: 600;
+  color: var(--ink);
 }
 
 .team-list a.project-hit > span {

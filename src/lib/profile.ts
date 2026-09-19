@@ -11,6 +11,52 @@ export function oauthAvatar(user: User | null) {
   return String(meta.avatar_url || meta.picture || '').trim();
 }
 
+export type PersonFace = {
+  email: string;
+  name: string;
+  avatarUrl: string;
+};
+
+export function personInitial(name: string, email = '') {
+  const fromName = name.trim();
+  if (fromName && !fromName.includes('@')) return fromName.slice(0, 1).toUpperCase();
+  return (email || fromName).slice(0, 1).toUpperCase() || '?';
+}
+
+export function personFace(
+  email: string,
+  people: Pick<TeamMember, 'email' | 'display_name' | 'avatar_url'>[] = [],
+  fallbackAvatar = '',
+): PersonFace {
+  const row = people.find((person) => person.email === email);
+  const name = row?.display_name?.trim() || email;
+  return {
+    email,
+    name,
+    avatarUrl: (row?.avatar_url || fallbackAvatar).trim(),
+  };
+}
+
+export function sharedFaces(
+  emails: string[],
+  people: Pick<TeamMember, 'email' | 'display_name' | 'avatar_url'>[] = [],
+  extras: PersonFace[] = [],
+) {
+  const faces: PersonFace[] = [];
+  const seen = new Set<string>();
+  for (const person of extras) {
+    if (!person.email || seen.has(person.email)) continue;
+    seen.add(person.email);
+    faces.push(person);
+  }
+  for (const email of emails) {
+    if (!email || seen.has(email)) continue;
+    seen.add(email);
+    faces.push(personFace(email, people));
+  }
+  return faces;
+}
+
 export function personLabel(
   email: string,
   people: Pick<TeamMember, 'email' | 'display_name'>[] = [],

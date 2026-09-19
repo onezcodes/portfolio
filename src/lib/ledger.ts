@@ -48,6 +48,7 @@ export type TeamMember = {
   display_name: string;
   job_title: string;
   phone: string;
+  avatar_url: string;
   created_at: string;
 };
 
