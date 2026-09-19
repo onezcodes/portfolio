@@ -2613,6 +2613,12 @@ i.cal-event {
   max-width: 22rem;
 }
 
+.team-oauth {
+  display: grid;
+  gap: 0.85rem;
+  margin: 0;
+}
+
 .team-oauth .btn {
   width: 100%;
 }

@@ -18,7 +18,12 @@ export function createTeamSupabase(request: Request, cookies: AstroCookies) {
       },
       setAll(cookiesToSet: { name: string; value: string; options: CookieOptions }[], _headers: Record<string, string>) {
         cookiesToSet.forEach(({ name, value, options }) => {
-          cookies.set(name, value, options);
+          cookies.set(name, value, {
+            ...options,
+            path: options.path ?? '/',
+            sameSite: options.sameSite ?? 'lax',
+            secure: import.meta.env.PROD || options.secure,
+          });
         });
       },
     },
