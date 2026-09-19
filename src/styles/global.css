@@ -1052,15 +1052,22 @@ html.js-reveal .is-home .section-head.is-in .kicker::before {
 }
 
 .team-body .team-header {
-  gap: 1rem;
-  flex-wrap: wrap;
-  height: auto;
+  gap: 0.5rem;
+  flex-wrap: nowrap;
+  height: 100%;
   min-height: var(--header);
-  padding-block: 0.65rem;
+  padding-block: 0;
+}
+
+.team-header .nav-panel {
+  flex: 1 1 auto;
+  min-width: 0;
+  justify-content: flex-end;
 }
 
 .team-nav {
   flex-wrap: wrap;
+  justify-content: flex-end;
 }
 
 .team-user {
@@ -1161,6 +1168,8 @@ html.js-reveal .is-home .section-head.is-in .kicker::before {
 .team-page {
   display: grid;
   gap: 2rem;
+  width: min(58rem, 100%);
+  margin-inline: auto;
   padding-block: 2.25rem 3rem;
 }
 
@@ -1335,18 +1344,55 @@ html.js-reveal .is-home .section-head.is-in .kicker::before {
   grid-template-columns: minmax(8rem, 0.4fr) 1fr;
 }
 
-.team-list a.vault-hit {
+.team-list a.vault-hit,
+.team-list a.project-hit {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 1rem;
+  justify-content: flex-start;
+  gap: 0.85rem;
   text-align: left;
 }
 
-.team-list a.vault-hit > span {
+.team-list a.vault-hit > span,
+.team-list a.project-hit > span {
   display: grid;
   gap: 0.15rem;
   min-width: 0;
+  flex: 1;
+}
+
+.member-filter {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.4rem;
+  margin: 0 0 0.75rem;
+}
+
+.member-filter a {
+  display: grid;
+  place-items: center;
+  min-height: 2.15rem;
+  padding: 0.15rem 0.7rem;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  text-decoration: none;
+  color: var(--ink);
+  font-size: 0.85rem;
+}
+
+.member-filter a .face {
+  border-color: var(--canvas);
+}
+
+.member-filter a[aria-current='page'] {
+  border-color: var(--ink);
+  background: var(--surface);
+}
+
+.member-filter a:has(.face) {
+  padding: 0.1rem;
+  border-radius: 50%;
 }
 
 .face-pile {
@@ -1358,7 +1404,8 @@ html.js-reveal .is-home .section-head.is-in .kicker::before {
 }
 
 .team-list .face-pile,
-.vault-share .face-pile {
+.vault-share .face-pile,
+.member-filter .face {
   margin: 0;
 }
 
@@ -1395,12 +1442,6 @@ html.js-reveal .is-home .section-head.is-in .kicker::before {
   font-size: 0.68rem;
   font-weight: 600;
   color: var(--ink);
-}
-
-.team-list a.project-hit > span {
-  display: grid;
-  gap: 0.15rem;
-  min-width: 0;
 }
 
 .project-tabs {
@@ -1558,7 +1599,17 @@ fieldset.role-picks {
 .team-split {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 2rem;
+  gap: 1.25rem;
+  align-items: start;
+}
+
+.overview-lead:not(:has(> :nth-child(2))) {
+  grid-template-columns: 1fr;
+}
+
+.team-card .section-head {
+  max-width: none;
+  margin-bottom: 1rem;
 }
 
 .team-split .section-head {
@@ -1597,10 +1648,88 @@ fieldset.role-picks {
   text-decoration: none;
 }
 
+.member-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.member-hit {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem 1rem;
+  padding: 0.9rem 0;
+  border-top: 1px solid var(--line);
+}
+
+.member-hit:last-child {
+  padding-bottom: 0;
+}
+
+.member-id {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  min-width: 0;
+}
+
+.member-id > span {
+  display: grid;
+  gap: 0.12rem;
+  min-width: 0;
+}
+
+.member-id .face {
+  width: 2.25rem;
+  height: 2.25rem;
+  flex-shrink: 0;
+}
+
 .member-actions {
   display: flex;
   flex-wrap: wrap;
-  gap: 0.4rem;
+  align-items: center;
+  gap: 0.35rem 0.15rem;
+  margin-left: auto;
+}
+
+.status-pill {
+  display: inline-flex;
+  align-items: center;
+  min-height: 1.6rem;
+  padding: 0.15rem 0.6rem;
+  border-radius: 999px;
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+}
+
+.status-pill.is-joined {
+  background: color-mix(in srgb, var(--gold) 28%, var(--canvas));
+  color: var(--ink);
+}
+
+.status-pill.is-wait {
+  background: color-mix(in srgb, var(--ink) 6%, var(--canvas));
+  color: var(--muted);
+  font-weight: 500;
+}
+
+.btn-text {
+  min-height: 2.25rem;
+  padding: 0 0.65rem;
+  border: 0;
+  background: none;
+  color: var(--muted);
+  font: inherit;
+  font-size: 0.88rem;
+  cursor: pointer;
+}
+
+.btn-text:hover {
+  color: var(--ink);
 }
 
 .check-line {
@@ -1627,6 +1756,12 @@ fieldset.role-picks {
   width: 100%;
   border-collapse: collapse;
   margin-top: 1.25rem;
+}
+
+.table-scroll {
+  overflow-x: auto;
+  max-width: 100%;
+  -webkit-overflow-scrolling: touch;
 }
 
 .team-table th,
@@ -2029,6 +2164,10 @@ fieldset.role-picks {
   flex: none;
 }
 
+#calendar {
+  scroll-margin-top: calc(var(--header) + 0.75rem);
+}
+
 .cal-head {
   display: flex;
   justify-content: space-between;
@@ -2070,7 +2209,7 @@ fieldset.role-picks {
 }
 
 .cal-day {
-  min-height: 6.4rem;
+  min-height: 5.25rem;
   padding: 0.4rem 0.4rem 0.5rem;
   border-right: 1px solid var(--line);
   border-bottom: 1px solid var(--line);
@@ -2105,6 +2244,8 @@ fieldset.role-picks {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  text-decoration: none;
+  color: inherit;
 }
 
 i.cal-event {
@@ -2170,6 +2311,13 @@ i.cal-event {
   gap: 0.15rem;
   padding: 0.7rem 0;
   border-bottom: 1px solid var(--line);
+}
+
+.cal-list a {
+  display: grid;
+  gap: 0.15rem;
+  text-decoration: none;
+  color: inherit;
 }
 
 .cal-list span {
@@ -2417,6 +2565,33 @@ i.cal-event {
   .cal-more {
     font-size: 0.55rem;
   }
+
+  .team-list a.project-hit,
+  .team-list a.vault-hit {
+    flex-wrap: wrap;
+  }
+
+  .member-hit {
+    align-items: flex-start;
+  }
+
+  .member-actions {
+    width: 100%;
+    margin-left: 0;
+    padding-left: 3rem;
+  }
+
+  .hub-logo-edit {
+    flex-direction: column;
+  }
+
+  .ie-month {
+    width: 1.7rem;
+  }
+
+  .ie-col {
+    width: 0.5rem;
+  }
 }
 
 .team-flash {
@@ -2578,6 +2753,40 @@ i.cal-event {
     margin-left: 0;
     width: 100%;
     justify-content: space-between;
+  }
+
+  .team-header .nav-panel .btn {
+    width: 100%;
+  }
+
+  .team-profile {
+    min-height: 44px;
+  }
+
+  .project-tabs {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .project-tabs a {
+    flex: none;
+  }
+
+  .cal-head {
+    align-items: flex-start;
+  }
+
+  .cal-nav {
+    flex-wrap: wrap;
+  }
+
+  .secret-row {
+    grid-template-columns: 1fr;
+  }
+
+  .quick-actions .btn {
+    flex: 1 1 auto;
   }
 }
 

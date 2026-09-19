@@ -839,6 +839,7 @@ const stageOpen = Boolean(stage && stage.status !== 'done' && !milestones.every(
         entries.length === 0 ? (
           <p class="muted">No entries yet.</p>
         ) : (
+          <div class="table-scroll">
           <table class="team-table">
             <thead>
               <tr>
@@ -872,6 +873,7 @@ const stageOpen = Boolean(stage && stage.status !== 'done' && !milestones.every(
               ))}
             </tbody>
           </table>
+          </div>
         )
       }
     </section>

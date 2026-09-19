@@ -9,6 +9,8 @@ export type CalEvent = {
   kind: CalKind;
   title: string;
   detail: string;
+  href?: string;
+  project?: string;
 };
 
 export type CalCell = {
@@ -84,6 +86,66 @@ export function projectEvents(
     });
   }
   }
+  return events.sort((a, b) => a.date.localeCompare(b.date) || a.title.localeCompare(b.title));
+}
+
+function eventTab(kind: CalKind, canFinance: boolean) {
+  if (!canFinance) return 'schedule';
+  if (kind === 'contribution') return 'funding';
+  if (kind === 'income' || kind === 'expense') return 'ledger';
+  return 'schedule';
+}
+
+export function studioEvents(
+  projects: { id: string; name: string; started_on: string | null }[],
+  milestones: Milestone[],
+  contributions: (Pick<Contribution, 'amount' | 'currency' | 'occurred_on' | 'member_email' | 'notes'> & {
+    project_id: string;
+  })[],
+  entries: Pick<LedgerEntry, 'kind' | 'amount' | 'currency' | 'occurred_on' | 'category' | 'notes' | 'project_id'>[],
+  access: {
+    canSchedule: (projectId: string) => boolean;
+    canFinance: (projectId: string) => boolean;
+    includeOverhead?: boolean;
+  },
+): CalEvent[] {
+  const events: CalEvent[] = [];
+
+  for (const project of projects) {
+    const schedule = access.canSchedule(project.id);
+    const finance = access.canFinance(project.id);
+    if (!schedule && !finance) continue;
+    const rows = projectEvents(
+      schedule ? project.started_on : null,
+      schedule ? milestones.filter((row) => row.project_id === project.id) : [],
+      finance ? contributions.filter((row) => row.project_id === project.id) : [],
+      finance ? entries.filter((row) => row.project_id === project.id) : [],
+      finance,
+    );
+    for (const event of rows) {
+      events.push({
+        ...event,
+        project: project.name,
+        href: `/team/projects/${project.id}?tab=${eventTab(event.kind, finance)}&month=${event.date.slice(0, 7)}#calendar`,
+        title: `${project.name} · ${event.title}`,
+      });
+    }
+  }
+
+  if (access.includeOverhead) {
+    for (const row of entries) {
+      if (row.project_id) continue;
+      events.push({
+        date: row.occurred_on,
+        kind: row.kind,
+        title: `Overhead · ${row.kind === 'income' ? '+' : '−'} ${money(row.amount, row.currency)}`,
+        detail: row.category || row.notes || (row.kind === 'income' ? 'Income' : 'Expense'),
+        href: '/team/ledger',
+        project: 'Overhead',
+      });
+    }
+  }
+
   return events.sort((a, b) => a.date.localeCompare(b.date) || a.title.localeCompare(b.title));
 }
 

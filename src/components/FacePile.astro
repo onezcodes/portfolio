@@ -4,16 +4,17 @@ import { personInitial, type PersonFace } from '../lib/profile';
 interface Props {
   people: PersonFace[];
   limit?: number;
+  label?: string;
 }
 
-const { people, limit = 6 } = Astro.props;
+const { people, limit = 6, label = 'Shared with' } = Astro.props;
 const shown = people.slice(0, limit);
 const extra = people.length - shown.length;
 ---
 
 {
   people.length > 0 && (
-    <ul class="face-pile" aria-label="Shared with">
+    <ul class="face-pile" aria-label={label}>
       {shown.map((person) => (
         <li title={person.name}>
           {person.avatarUrl ? (

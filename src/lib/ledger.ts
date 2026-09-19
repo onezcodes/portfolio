@@ -50,6 +50,7 @@ export type TeamMember = {
   phone: string;
   avatar_url: string;
   created_at: string;
+  last_seen_at: string | null;
 };
 
 export function money(amount: number | string, currency = 'THB') {

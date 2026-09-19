@@ -7,7 +7,12 @@ import sitemap from '@astrojs/sitemap';
 export default defineConfig({
   site: 'https://www.onezcodes.com',
   output: 'server',
-  adapter: process.env.VERCEL ? vercel() : node({ mode: 'standalone' }),
+  adapter: process.env.VERCEL ? vercel({ imageService: true }) : node({ mode: 'standalone' }),
+  vite: {
+    ssr: {
+      external: ['sharp'],
+    },
+  },
   trailingSlash: 'never',
   compressHTML: true,
   prefetch: {

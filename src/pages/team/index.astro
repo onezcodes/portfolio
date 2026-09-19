@@ -1,23 +1,27 @@
 ---
 import Team from '../../layouts/Team.astro';
 import TeamFlash from '../../components/TeamFlash.astro';
-import { remainingLabel } from '../../lib/funding';
+import { remainingLabel, type Contribution } from '../../lib/funding';
 import IncomeExpenseChart from '../../components/IncomeExpenseChart.astro';
-import { money, todayIso, totalsByCurrency, type LedgerEntry, type Project } from '../../lib/ledger';
+import { money, todayIso, totalsByCurrency, type LedgerEntry, type Project, type TeamMember } from '../../lib/ledger';
 import { stagesByProject, type Milestone } from '../../lib/milestones';
 import { capsFor } from '../../lib/access';
 import { CREDENTIAL_STALE_DAYS, isStaleCredential, type CredentialRecord } from '../../lib/credentials';
 import { eventHref, eventTitle, formatEventTime, type StudioEvent } from '../../lib/events';
 import { logoHrefs } from '../../lib/projectHub';
 import ProjectMark from '../../components/ProjectMark.astro';
+import FacePile from '../../components/FacePile.astro';
+import { facesByProject } from '../../lib/profile';
+import ProjectCalendar from '../../components/ProjectCalendar.astro';
+import { parseMonth, studioEvents } from '../../lib/calendar';
 
 const supabase = Astro.locals.supabase;
 const studio = Astro.locals.studio;
 const ledgerSelect = 'kind, amount, currency, project_id, occurred_on, category';
 
-const [{ data: projects }, { data: entries }, { data: contribs }, { data: milestoneRows }, { data: eventRows }, creds] =
+const [{ data: projects }, { data: entries }, { data: contribs }, { data: milestoneRows }, { data: eventRows }, creds, { data: crewRows }, { data: memberRows }] =
   await Promise.all([
-    supabase.from('projects').select('id, name, client, status, logo_url').order('updated_at', { ascending: false }),
+    supabase.from('projects').select('id, name, client, status, logo_url, started_on').order('updated_at', { ascending: false }),
     studio?.canLedger
       ? supabase.from('ledger_entries').select(ledgerSelect).order('occurred_on', { ascending: false })
       : Promise.resolve({ data: [] }),
@@ -29,6 +33,8 @@ const [{ data: projects }, { data: entries }, { data: contribs }, { data: milest
     studio?.canVault
       ? supabase.from('studio_credentials').select('id, title, updated_at')
       : Promise.resolve({ data: [] }),
+    supabase.from('project_members').select('project_id, email'),
+    supabase.from('team_members').select('email, display_name, avatar_url').order('email'),
   ]);
 
 const projectRows = (projects ?? []) as Project[];
@@ -50,6 +56,30 @@ const staleVault = ((creds.data ?? []) as Pick<CredentialRecord, 'id' | 'title' 
   isStaleCredential(item.updated_at),
 );
 const marks = await logoHrefs(supabase, projectRows);
+const crewFaces = facesByProject(
+  (crewRows ?? []) as { project_id: string; email: string }[],
+  (memberRows ?? []) as Pick<TeamMember, 'email' | 'display_name' | 'avatar_url'>[],
+);
+const visibleProjects = studio
+  ? projectRows.filter((project) => capsFor(studio, project.id).assigned)
+  : [];
+const calCursor = parseMonth(Astro.url.searchParams.get('month'), new Date());
+const calendarEvents = studio
+  ? studioEvents(
+      visibleProjects,
+      (milestoneRows ?? []) as Milestone[],
+      (contribRows ?? []) as Pick<Contribution, 'amount' | 'currency' | 'occurred_on' | 'member_email' | 'notes' | 'project_id'>[],
+      allEntries,
+      {
+        canSchedule: (projectId) => capsFor(studio, projectId).canSchedule,
+        canFinance: (projectId) => capsFor(studio, projectId).canFinance,
+        includeOverhead: studio.canLedger,
+      },
+    )
+  : [];
+const calendarHasMoney = calendarEvents.some(
+  (event) => event.kind === 'contribution' || event.kind === 'income' || event.kind === 'expense',
+);
 ---
 
 <Team title="Overview">
@@ -76,8 +106,40 @@ const marks = await logoHrefs(supabase, projectRows);
     </nav>
     <TeamFlash />
 
-    {
-      (overdue.length > 0 || currentWork.length > 0 || staleVault.length > 0) && (
+    <section class="team-split overview-lead">
+      <div class="team-card">
+      <div class="section-head tight">
+        <h2>Projects</h2>
+        <a href="/team/projects">All projects</a>
+      </div>
+      {
+        projectRows.length === 0 ? (
+          <p class="muted">No projects yet.</p>
+        ) : (
+          <ul class="team-list">
+            {projectRows.slice(0, 8).map((project) => (
+              <li>
+                <a class="project-hit" href={`/team/projects/${project.id}`}>
+                  <ProjectMark name={project.name} src={marks.get(project.logo_url)} />
+                  <span>
+                    <strong>{project.name}</strong>
+                    <span>
+                      {project.client || 'No client'} · {stages.get(project.id) || project.status}
+                      {studio && capsFor(studio, project.id).canFinance
+                        ? ` · ${remainingLabel(project.id, contribRows, expenseRows)}`
+                        : ''}
+                    </span>
+                  </span>
+                  <FacePile people={crewFaces.get(project.id) ?? []} label="Assigned" />
+                </a>
+              </li>
+            ))}
+          </ul>
+        )
+      }
+      </div>
+      {
+        (overdue.length > 0 || currentWork.length > 0 || staleVault.length > 0) && (
         <section class="team-card">
           <h2>Needs attention</h2>
           {overdue.length > 0 && (
@@ -130,6 +192,24 @@ const marks = await logoHrefs(supabase, projectRows);
         </section>
       )
     }
+    </section>
+
+    {
+      visibleProjects.length > 0 && (
+        <ProjectCalendar
+          cursor={calCursor}
+          today={today}
+          events={calendarEvents}
+          monthHref={(month) => `/team?month=${month}`}
+          showMoney={calendarHasMoney}
+          lede={
+            calendarHasMoney
+              ? 'Stages and money dates for projects you can access.'
+              : 'Stages and start dates for projects you can access.'
+          }
+        />
+      )
+    }
 
     {
       studio?.canLedger && (
@@ -166,40 +246,9 @@ const marks = await logoHrefs(supabase, projectRows);
       )
     }
 
-    <section class="team-split">
-      <div>
-        <div class="section-head tight">
-          <h2>Projects</h2>
-          <a href="/team/projects">All projects</a>
-        </div>
-        {
-          projectRows.length === 0 ? (
-            <p class="muted">No projects yet.</p>
-          ) : (
-            <ul class="team-list">
-              {projectRows.slice(0, 8).map((project) => (
-                <li>
-                  <a class="project-hit" href={`/team/projects/${project.id}`}>
-                    <ProjectMark name={project.name} src={marks.get(project.logo_url)} />
-                    <span>
-                      <strong>{project.name}</strong>
-                      <span>
-                        {project.client || 'No client'} · {stages.get(project.id) || project.status}
-                        {studio && capsFor(studio, project.id).canFinance
-                          ? ` · ${remainingLabel(project.id, contribRows, expenseRows)}`
-                          : ''}
-                      </span>
-                    </span>
-                  </a>
-                </li>
-              ))}
-            </ul>
-          )
-        }
-      </div>
-      {
-        studio?.canLedger && (
-      <div>
+    {
+      studio?.canLedger && (
+      <section>
         <div class="section-head tight">
           <h2>Recent entries</h2>
           <a href="/team/ledger">Full ledger</a>
@@ -226,10 +275,9 @@ const marks = await logoHrefs(supabase, projectRows);
             </ul>
           )
         }
-      </div>
-        )
-      }
-    </section>
+      </section>
+      )
+    }
 
     {
       activity.length > 0 && (

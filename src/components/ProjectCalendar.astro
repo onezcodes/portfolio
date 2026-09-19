@@ -13,23 +13,45 @@ import type { Milestone } from '../lib/milestones';
 interface Props {
   cursor: Date;
   today: string;
-  startedOn: string | null;
-  milestones: Milestone[];
-  contributions: Pick<Contribution, 'amount' | 'currency' | 'occurred_on' | 'member_email' | 'notes'>[];
-  entries: Pick<LedgerEntry, 'kind' | 'amount' | 'currency' | 'occurred_on' | 'category' | 'notes'>[];
+  startedOn?: string | null;
+  milestones?: Milestone[];
+  contributions?: Pick<Contribution, 'amount' | 'currency' | 'occurred_on' | 'member_email' | 'notes'>[];
+  entries?: Pick<LedgerEntry, 'kind' | 'amount' | 'currency' | 'occurred_on' | 'category' | 'notes'>[];
   monthHref: (month: string) => string;
   showMoney?: boolean;
+  events?: CalEvent[];
+  lede?: string;
 }
 
-const { cursor, today, startedOn, milestones, contributions, entries, monthHref, showMoney = true } = Astro.props;
-const events = projectEvents(startedOn, milestones, contributions, entries, showMoney);
+const {
+  cursor,
+  today,
+  startedOn = null,
+  milestones = [],
+  contributions = [],
+  entries = [],
+  monthHref,
+  showMoney = true,
+  events: givenEvents,
+  lede,
+} = Astro.props;
+const events = givenEvents ?? projectEvents(startedOn, milestones, contributions, entries, showMoney);
 const cells = monthGrid(cursor, events, today);
 const key = monthKey(cursor);
 const heading = cursor.toLocaleDateString('en-GB', { month: 'long', year: 'numeric' });
 const monthEvents = events.filter((event) => event.date.startsWith(key));
+const moneyOnCal = showMoney || events.some((event) => event.kind === 'contribution' || event.kind === 'income' || event.kind === 'expense');
+const caption =
+  lede ??
+  (showMoney ? 'Stages, funding, and ledger dates for this project.' : 'Stages and start date for this project.');
 const weekdays = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 const prev = shiftMonth(cursor, -1);
 const next = shiftMonth(cursor, 1);
+
+function monthLink(month: string) {
+  const href = monthHref(month);
+  return href.includes('#') ? href : `${href}#calendar`;
+}
 
 function pretty(iso: string) {
   return new Date(`${iso}T12:00:00`).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' });
@@ -44,18 +66,18 @@ function kindLabel(kind: CalEvent['kind']) {
 }
 ---
 
-<section class="team-card">
+<section class="team-card" id="calendar">
   <div class="cal-head">
     <div class="pay-head">
       <h2>Calendar</h2>
       <p class="muted">
-        {heading}. {showMoney ? 'Stages, funding, and ledger dates for this project.' : 'Stages and start date for this project.'}
+        {heading}. {caption}
       </p>
     </div>
     <nav class="cal-nav" aria-label="Calendar month">
-      <a class="btn btn-ghost" href={monthHref(prev)}>Previous</a>
-      <a class="btn btn-ghost" href={monthHref(monthKey(new Date()))}>Today</a>
-      <a class="btn btn-ghost" href={monthHref(next)}>Next</a>
+      <a class="btn btn-ghost" href={monthLink(prev)}>Previous</a>
+      <a class="btn btn-ghost" href={monthLink(monthKey(new Date()))}>Today</a>
+      <a class="btn btn-ghost" href={monthLink(next)}>Next</a>
     </nav>
   </div>
 
@@ -70,8 +92,16 @@ function kindLabel(kind: CalEvent['kind']) {
         <span class="cal-num">{cell.day}</span>
         <ul>
           {cell.events.slice(0, 3).map((event) => (
-            <li class={`cal-event ${event.kind}`} title={`${event.title} · ${event.detail}`}>
-              {event.title}
+            <li>
+              {event.href ? (
+                <a class={`cal-event ${event.kind}`} href={event.href} title={`${event.title} · ${event.detail}`}>
+                  {event.title}
+                </a>
+              ) : (
+                <span class={`cal-event ${event.kind}`} title={`${event.title} · ${event.detail}`}>
+                  {event.title}
+                </span>
+              )}
             </li>
           ))}
           {cell.events.length > 3 && <li class="cal-more">+{cell.events.length - 3}</li>}
@@ -82,9 +112,9 @@ function kindLabel(kind: CalEvent['kind']) {
 
   <p class="cal-legend">
     <span><i class="cal-event milestone"></i> Stage</span>
-    {showMoney && <span><i class="cal-event contribution"></i> Funding</span>}
-    {showMoney && <span><i class="cal-event income"></i> Income</span>}
-    {showMoney && <span><i class="cal-event expense"></i> Expense</span>}
+    {moneyOnCal && <span><i class="cal-event contribution"></i> Funding</span>}
+    {moneyOnCal && <span><i class="cal-event income"></i> Income</span>}
+    {moneyOnCal && <span><i class="cal-event expense"></i> Expense</span>}
     <span><i class="cal-event start"></i> Start</span>
   </p>
 
@@ -95,14 +125,44 @@ function kindLabel(kind: CalEvent['kind']) {
       <ol class="cal-list">
         {monthEvents.map((event) => (
           <li>
-            <strong>{pretty(event.date)}</strong>
-            <span>
-              {kindLabel(event.kind)} · {event.title}
-              {event.detail ? ` · ${event.detail}` : ''}
-            </span>
+            {event.href ? (
+              <a href={event.href}>
+                <strong>{pretty(event.date)}</strong>
+                <span>
+                  {kindLabel(event.kind)} · {event.title}
+                  {event.detail ? ` · ${event.detail}` : ''}
+                </span>
+              </a>
+            ) : (
+              <>
+                <strong>{pretty(event.date)}</strong>
+                <span>
+                  {kindLabel(event.kind)} · {event.title}
+                  {event.detail ? ` · ${event.detail}` : ''}
+                </span>
+              </>
+            )}
           </li>
         ))}
       </ol>
     )
   }
 </section>
+
+<script>
+  function keepCalendarInView() {
+    if (location.hash !== '#calendar') return;
+    const calendar = document.getElementById('calendar');
+    if (!calendar) return;
+    const pin = () => calendar.scrollIntoView({ block: 'start', behavior: 'instant' });
+    pin();
+    requestAnimationFrame(pin);
+  }
+
+  keepCalendarInView();
+  if (!window.__ocCalPin) {
+    window.__ocCalPin = true;
+    document.addEventListener('astro:after-swap', keepCalendarInView);
+    document.addEventListener('astro:page-load', keepCalendarInView);
+  }
+</script>

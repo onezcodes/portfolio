@@ -1,7 +1,6 @@
 ---
 import '@fontsource-variable/outfit/wght.css';
 import '../styles/global.css';
-import { Image } from 'astro:assets';
 import logo from '../assets/logo.webp';
 import { site } from '../data/site';
 import { emailOf, isSuperAdmin } from '../lib/supabase';
@@ -54,46 +53,58 @@ function current(href: string) {
     <header class="site-header">
       <div class="wrap header-inner team-header">
         <a class="brand" href="/team" data-astro-prefetch="hover">
-          <Image src={logo} alt="" width={40} height={40} densities={[1]} />
+          <img src={logo.src} alt="" width="40" height="40" />
           <span class="brand-name">
             <strong>Team</strong>
             <span>{site.name}</span>
           </span>
         </a>
-        <nav aria-label="Team">
-          <ul class="nav-links team-nav">
+        <button
+          class="menu-toggle"
+          id="menu-toggle"
+          type="button"
+          aria-expanded="false"
+          aria-controls="nav-panel"
+        >
+          <span class="sr-only">Menu</span>
+          <span class="menu-toggle-bars" aria-hidden="true"></span>
+        </button>
+        <div class="nav-panel" id="nav-panel">
+          <nav aria-label="Team">
+            <ul class="nav-links team-nav">
+              {
+                links.map((item) => (
+                  <li>
+                    <a href={item.href} data-astro-prefetch="hover" aria-current={current(item.href) ? 'page' : undefined}>
+                      {item.label}
+                    </a>
+                  </li>
+                ))
+              }
+            </ul>
+          </nav>
+          <div class="team-user">
             {
-              links.map((item) => (
-                <li>
-                  <a href={item.href} data-astro-prefetch="hover" aria-current={current(item.href) ? 'page' : undefined}>
-                    {item.label}
-                  </a>
-                </li>
-              ))
-            }
-          </ul>
-        </nav>
-        <div class="team-user">
-          {
-            email && (
-              <a class="team-profile" href="/team/profile" data-astro-prefetch="hover" aria-current={path === '/team/profile' ? 'page' : undefined}>
-                {studio?.avatarUrl ? (
-                  <img class="team-avatar" src={studio.avatarUrl} alt="" width="32" height="32" />
-                ) : (
-                  <span class="team-avatar team-avatar-fallback" aria-hidden="true">
-                    {label.slice(0, 1).toUpperCase()}
+              email && (
+                <a class="team-profile" href="/team/profile" data-astro-prefetch="hover" aria-current={path === '/team/profile' ? 'page' : undefined}>
+                  {studio?.avatarUrl ? (
+                    <img class="team-avatar" src={studio.avatarUrl} alt="" width="32" height="32" />
+                  ) : (
+                    <span class="team-avatar team-avatar-fallback" aria-hidden="true">
+                      {label.slice(0, 1).toUpperCase()}
+                    </span>
+                  )}
+                  <span>
+                    <strong>{label}</strong>
+                    <span>{studio?.jobTitle || email}</span>
                   </span>
-                )}
-                <span>
-                  <strong>{label}</strong>
-                  <span>{studio?.jobTitle || email}</span>
-                </span>
-              </a>
-            )
-          }
-          <form method="post" action="/auth/logout">
-            <button class="btn btn-ghost" type="submit">Sign out</button>
-          </form>
+                </a>
+              )
+            }
+            <form method="post" action="/auth/logout">
+              <button class="btn btn-ghost" type="submit">Sign out</button>
+            </form>
+          </div>
         </div>
       </div>
     </header>

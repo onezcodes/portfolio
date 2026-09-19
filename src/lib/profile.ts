@@ -57,6 +57,35 @@ export function sharedFaces(
   return faces;
 }
 
+export function facesByProject(
+  assignments: { project_id: string; email: string }[],
+  people: Pick<TeamMember, 'email' | 'display_name' | 'avatar_url'>[] = [],
+) {
+  const emailsByProject = new Map<string, string[]>();
+  for (const row of assignments) {
+    const list = emailsByProject.get(row.project_id) ?? [];
+    list.push(row.email);
+    emailsByProject.set(row.project_id, list);
+  }
+  const faces = new Map<string, PersonFace[]>();
+  for (const [id, emails] of emailsByProject) {
+    faces.set(id, sharedFaces(emails, people));
+  }
+  return faces;
+}
+
+export function assignedPeople(
+  assignments: { email: string }[],
+  people: Pick<TeamMember, 'email' | 'display_name' | 'avatar_url'>[] = [],
+) {
+  return sharedFaces(
+    [...new Set(assignments.map((row) => row.email))].sort((a, b) =>
+      personFace(a, people).name.localeCompare(personFace(b, people).name),
+    ),
+    people,
+  );
+}
+
 export function personLabel(
   email: string,
   people: Pick<TeamMember, 'email' | 'display_name'>[] = [],

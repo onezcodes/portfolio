@@ -12,6 +12,26 @@ import { ClientRouter } from 'astro:transitions';
     });
     document.addEventListener('astro:page-load', () => {
       document.documentElement.classList.remove('is-navigating');
+      bindAppMenu();
+    });
+    bindAppMenu();
+  }
+
+  function bindAppMenu() {
+    const toggle = document.getElementById('menu-toggle');
+    const panel = document.getElementById('nav-panel');
+    if (!toggle || !panel || toggle.dataset.bound === '1') return;
+    toggle.dataset.bound = '1';
+    toggle.addEventListener('click', () => {
+      const open = toggle.getAttribute('aria-expanded') === 'true';
+      toggle.setAttribute('aria-expanded', String(!open));
+      panel.classList.toggle('is-open', !open);
+    });
+    panel.querySelectorAll('a').forEach((link) => {
+      link.addEventListener('click', () => {
+        toggle.setAttribute('aria-expanded', 'false');
+        panel.classList.remove('is-open');
+      });
     });
   }
 </script>

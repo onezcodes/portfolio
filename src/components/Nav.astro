@@ -1,5 +1,4 @@
 ---
-import { Image } from 'astro:assets';
 import logo from '../assets/logo.webp';
 import { site, nav } from '../data/site';
 
@@ -9,7 +8,7 @@ const path = Astro.url.pathname;
 <header class="site-header">
   <div class="wrap header-inner">
     <a class="brand" href="/" data-astro-prefetch="hover">
-      <Image src={logo} alt="" width={40} height={40} densities={[1]} />
+      <img src={logo.src} alt="" width="40" height="40" />
       <span class="brand-name">
         <strong>{site.name}</strong>
         <span>{site.tagline}</span>

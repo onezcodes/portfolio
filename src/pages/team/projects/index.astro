@@ -4,11 +4,13 @@ import TeamFlash from '../../../components/TeamFlash.astro';
 import { remainingLabel } from '../../../lib/funding';
 import { projectFromForm } from '../../../lib/forms';
 import { logEvent } from '../../../lib/events';
-import type { LedgerEntry, Project } from '../../../lib/ledger';
+import type { LedgerEntry, Project, TeamMember } from '../../../lib/ledger';
 import { stagesByProject, type Milestone } from '../../../lib/milestones';
 import { capsFor } from '../../../lib/access';
 import { logoHrefs } from '../../../lib/projectHub';
 import ProjectMark from '../../../components/ProjectMark.astro';
+import FacePile from '../../../components/FacePile.astro';
+import { assignedPeople, facesByProject, personInitial, personLabel } from '../../../lib/profile';
 
 const supabase = Astro.locals.supabase;
 const user = Astro.locals.user;
@@ -42,22 +44,33 @@ if (Astro.request.method === 'POST') {
   return Astro.redirect(`/team/projects/${data.id}?notice=created`);
 }
 
-const [{ data }, { data: contribs }, { data: expenses }, { data: milestoneRows }] = await Promise.all([
-  supabase.from('projects').select('id, name, client, status, logo_url, updated_at').order('updated_at', { ascending: false }),
-  studio?.canLedger
-    ? supabase.from('project_contributions').select('project_id, amount, currency')
-    : Promise.resolve({ data: [] }),
-  studio?.canLedger
-    ? supabase.from('ledger_entries').select('project_id, amount, currency, kind')
-    : Promise.resolve({ data: [] }),
-  supabase.from('project_milestones').select('project_id, title, status, estimated_on, sort_order'),
-]);
+const [{ data }, { data: contribs }, { data: expenses }, { data: milestoneRows }, { data: crewRows }, { data: memberRows }] =
+  await Promise.all([
+    supabase.from('projects').select('id, name, client, status, logo_url, updated_at').order('updated_at', { ascending: false }),
+    studio?.canLedger
+      ? supabase.from('project_contributions').select('project_id, amount, currency')
+      : Promise.resolve({ data: [] }),
+    studio?.canLedger
+      ? supabase.from('ledger_entries').select('project_id, amount, currency, kind')
+      : Promise.resolve({ data: [] }),
+    supabase.from('project_milestones').select('project_id, title, status, estimated_on, sort_order'),
+    supabase.from('project_members').select('project_id, email'),
+    supabase.from('team_members').select('email, display_name, avatar_url').order('email'),
+  ]);
 const projects = (data ?? []) as Project[];
 const contribRows = contribs ?? [];
 const expenseRows = (expenses ?? []) as Pick<LedgerEntry, 'project_id' | 'amount' | 'currency' | 'kind'>[];
 const stages = stagesByProject((milestoneRows ?? []) as Milestone[]);
+const people = (memberRows ?? []) as Pick<TeamMember, 'email' | 'display_name' | 'avatar_url'>[];
+const assignments = (crewRows ?? []) as { project_id: string; email: string }[];
+const crewFaces = facesByProject(assignments, people);
+const assignees = assignedPeople(assignments, people);
+const memberFilter = Astro.url.searchParams.get('member')?.trim().toLowerCase() ?? '';
+const visible = memberFilter
+  ? projects.filter((project) => (crewFaces.get(project.id) ?? []).some((person) => person.email === memberFilter))
+  : projects;
 const creating = Astro.url.searchParams.has('new') || Astro.url.searchParams.get('error') === 'invalid';
-const marks = await logoHrefs(supabase, projects);
+const marks = await logoHrefs(supabase, visible);
 ---
 
 <Team title="Projects">
@@ -116,11 +129,40 @@ const marks = await logoHrefs(supabase, projects);
     <section>
       <h2 class="team-h2">{creating ? 'All projects' : 'Projects'}</h2>
       {
-        projects.length === 0 ? (
-          <p class="muted">None yet.</p>
+        assignees.length > 0 && (
+          <nav class="member-filter" aria-label="Filter by assigned person">
+            <a href="/team/projects" aria-current={memberFilter ? undefined : 'page'}>
+              Everyone
+            </a>
+            {assignees.map((person) => (
+              <a
+                href={`/team/projects?member=${encodeURIComponent(person.email)}`}
+                title={person.name}
+                aria-current={memberFilter === person.email ? 'page' : undefined}
+              >
+                {person.avatarUrl ? (
+                  <img class="face" src={person.avatarUrl} alt="" width="28" height="28" />
+                ) : (
+                  <span class="face" aria-hidden="true">
+                    {personInitial(person.name, person.email)}
+                  </span>
+                )}
+                <span class="sr-only">{person.name}</span>
+              </a>
+            ))}
+          </nav>
+        )
+      }
+      {
+        visible.length === 0 ? (
+          <p class="muted">
+            {projects.length === 0
+              ? 'None yet.'
+              : `No projects assigned to ${personLabel(memberFilter, people)}.`}
+          </p>
         ) : (
           <ul class="team-list">
-            {projects.map((project) => (
+            {visible.map((project) => (
               <li>
                 <a class="project-hit" href={`/team/projects/${project.id}`}>
                   <ProjectMark name={project.name} src={marks.get(project.logo_url)} />
@@ -133,6 +175,7 @@ const marks = await logoHrefs(supabase, projects);
                         : ''}
                     </span>
                   </span>
+                  <FacePile people={crewFaces.get(project.id) ?? []} label="Assigned" />
                 </a>
               </li>
             ))}
