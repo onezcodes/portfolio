@@ -1,0 +1,21 @@
+---
+interface Props {
+  path: string;
+  href?: string;
+  alt?: string;
+  size?: 'slip' | 'qr';
+}
+
+const { path, href, alt = 'Voucher slip', size = 'slip' } = Astro.props;
+const image = href && (/\.(jpe?g|png|gif|webp)(\?|#|$)/i.test(path) || /\.(jpe?g|png|gif|webp)(\?|#|$)/i.test(href));
+---
+
+{
+  href ? (
+    <a class="team-voucher-link" href={href} target="_blank" rel="noopener noreferrer">
+      {image ? <img class={size === 'qr' ? 'team-qr' : 'team-voucher'} src={href} alt={alt} /> : 'Open'}
+    </a>
+  ) : (
+    <span class="muted">—</span>
+  )
+}

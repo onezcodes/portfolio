@@ -1,0 +1,123 @@
+---
+import '@fontsource-variable/outfit/wght.css';
+import '../styles/global.css';
+import { Image } from 'astro:assets';
+import logo from '../assets/logo.webp';
+import { site } from '../data/site';
+import { emailOf, isSuperAdmin } from '../lib/supabase';
+
+interface Props {
+  title: string;
+}
+
+const { title } = Astro.props;
+const user = Astro.locals.user;
+const email = emailOf(user);
+const admin = isSuperAdmin(user);
+const studio = Astro.locals.studio;
+const canLedger = studio?.canLedger ?? admin;
+const canVault = studio?.canVault ?? admin;
+const path = Astro.url.pathname.replace(/\/+$/, '') || '/team';
+const pageTitle = `${title} · Team · ${site.name}`;
+const label = studio?.displayName || email;
+
+const links = [
+  { href: '/team', label: 'Overview' },
+  { href: '/team/projects', label: 'Projects' },
+  ...(canLedger ? [{ href: '/team/ledger', label: 'Ledger' }] : []),
+  ...(canVault ? [{ href: '/team/credentials', label: 'Credentials' }] : []),
+  { href: '/team/activity', label: 'Activity' },
+  ...(admin ? [{ href: '/team/members', label: 'Team' }] : []),
+];
+
+function current(href: string) {
+  if (href === '/team') return path === '/team';
+  return path === href || path.startsWith(`${href}/`);
+}
+---
+
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>{pageTitle}</title>
+    <meta name="robots" content="noindex, nofollow" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <meta name="theme-color" content="#FAFAF8" />
+    <meta name="color-scheme" content="light" />
+  </head>
+  <body class="team-body">
+    <a class="skip-link" href="#main">Skip to content</a>
+    <header class="site-header">
+      <div class="wrap header-inner team-header">
+        <a class="brand" href="/team">
+          <Image src={logo} alt="" width={80} height={80} densities={[1, 2]} />
+          <span class="brand-name">
+            <strong>Team</strong>
+            <span>{site.name}</span>
+          </span>
+        </a>
+        <nav aria-label="Team">
+          <ul class="nav-links team-nav">
+            {
+              links.map((item) => (
+                <li>
+                  <a href={item.href} aria-current={current(item.href) ? 'page' : undefined}>
+                    {item.label}
+                  </a>
+                </li>
+              ))
+            }
+          </ul>
+        </nav>
+        <div class="team-user">
+          {
+            email && (
+              <a class="team-profile" href="/team/profile" aria-current={path === '/team/profile' ? 'page' : undefined}>
+                {studio?.avatarUrl ? (
+                  <img class="team-avatar" src={studio.avatarUrl} alt="" width="32" height="32" />
+                ) : (
+                  <span class="team-avatar team-avatar-fallback" aria-hidden="true">
+                    {label.slice(0, 1).toUpperCase()}
+                  </span>
+                )}
+                <span>
+                  <strong>{label}</strong>
+                  <span>{studio?.jobTitle || email}</span>
+                </span>
+              </a>
+            )
+          }
+          <form method="post" action="/auth/logout">
+            <button class="btn btn-ghost" type="submit">Sign out</button>
+          </form>
+        </div>
+      </div>
+    </header>
+    <main id="main" class="team-main">
+      <slot />
+    </main>
+    <footer class="team-foot wrap">
+      <a href="/">Public site</a>
+    </footer>
+    <script is:inline>
+      document.addEventListener('click', async (event) => {
+        const target = event.target;
+        if (!(target instanceof Element)) return;
+        const button = target.closest('[data-copy]');
+        if (!(button instanceof HTMLElement)) return;
+        const field = document.getElementById(button.getAttribute('data-copy') || '');
+        if (!field) return;
+        const text = 'value' in field ? field.value : field.textContent;
+        try {
+          await navigator.clipboard.writeText(String(text || ''));
+          button.textContent = 'Copied';
+          setTimeout(() => {
+            button.textContent = 'Copy';
+          }, 1200);
+        } catch {}
+      });
+    </script>
+  </body>
+</html>

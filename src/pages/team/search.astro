@@ -1,0 +1,112 @@
+---
+import Team from '../../layouts/Team.astro';
+import type { CredentialRecord } from '../../lib/credentials';
+import type { Project, TeamMember } from '../../lib/ledger';
+import { logoHrefs } from '../../lib/projectHub';
+import ProjectMark from '../../components/ProjectMark.astro';
+
+const q = Astro.url.searchParams.get('q')?.trim().slice(0, 80) ?? '';
+const studio = Astro.locals.studio;
+const supabase = Astro.locals.supabase;
+const pattern = q ? `%${q.replace(/[%_,]/g, '')}%` : '';
+
+let projects: Pick<Project, 'id' | 'name' | 'client' | 'logo_url'>[] = [];
+let credentials: Pick<CredentialRecord, 'id' | 'title' | 'website'>[] = [];
+let people: Pick<TeamMember, 'email' | 'display_name'>[] = [];
+
+if (pattern) {
+  const [{ data: projectRows }, creds, members] = await Promise.all([
+    supabase.from('projects').select('id, name, client, logo_url').or(`name.ilike.${pattern},client.ilike.${pattern}`).limit(20),
+    studio?.canVault
+      ? supabase.from('studio_credentials').select('id, title, website').ilike('title', pattern).limit(20)
+      : Promise.resolve({ data: [] }),
+    studio?.superAdmin
+      ? supabase
+          .from('team_members')
+          .select('email, display_name')
+          .or(`email.ilike.${pattern},display_name.ilike.${pattern}`)
+          .limit(20)
+      : Promise.resolve({ data: [] }),
+  ]);
+  projects = (projectRows ?? []) as Pick<Project, 'id' | 'name' | 'client' | 'logo_url'>[];
+  credentials = (creds.data ?? []) as Pick<CredentialRecord, 'id' | 'title' | 'website'>[];
+  people = (members.data ?? []) as Pick<TeamMember, 'email' | 'display_name'>[];
+}
+
+const empty = Boolean(q) && projects.length === 0 && credentials.length === 0 && people.length === 0;
+const marks = await logoHrefs(supabase, projects);
+---
+
+<Team title="Search">
+  <div class="wrap team-page">
+    <header class="team-intro">
+      <p class="kicker">Studio</p>
+      <h1>Search</h1>
+      <p class="lede">Find a project, credential, or (if you are super admin) a team email.</p>
+    </header>
+    <form class="search-form" method="get" action="/team/search">
+      <label class="sr-only" for="q">Search</label>
+      <input id="q" name="q" value={q} placeholder="Project, client, credential…" />
+      <button class="btn" type="submit">Search</button>
+    </form>
+
+    {
+      !q ? (
+        <p class="muted">Type a name to search.</p>
+      ) : empty ? (
+        <p class="muted">No matches for “{q}”.</p>
+      ) : (
+        <>
+          {projects.length > 0 && (
+            <section>
+              <h2 class="team-h2">Projects</h2>
+              <ul class="team-list">
+                {projects.map((project) => (
+                  <li>
+                    <a class="project-hit" href={`/team/projects/${project.id}`}>
+                      <ProjectMark name={project.name} src={marks.get(project.logo_url)} />
+                      <span>
+                        <strong>{project.name}</strong>
+                        <span>{project.client || 'No client'}</span>
+                      </span>
+                    </a>
+                  </li>
+                ))}
+              </ul>
+            </section>
+          )}
+          {credentials.length > 0 && (
+            <section>
+              <h2 class="team-h2">Credentials</h2>
+              <ul class="team-list">
+                {credentials.map((item) => (
+                  <li>
+                    <a href={`/team/credentials/${item.id}`}>
+                      <strong>{item.title}</strong>
+                      <span>{item.website || 'No website'}</span>
+                    </a>
+                  </li>
+                ))}
+              </ul>
+            </section>
+          )}
+          {people.length > 0 && (
+            <section>
+              <h2 class="team-h2">Team</h2>
+              <ul class="team-list">
+                {people.map((member) => (
+                  <li>
+                    <a href="/team/members">
+                      <strong>{member.display_name?.trim() || member.email}</strong>
+                      <span>{member.display_name?.trim() ? member.email : 'Whitelist'}</span>
+                    </a>
+                  </li>
+                ))}
+              </ul>
+            </section>
+          )}
+        </>
+      )
+    }
+  </div>
+</Team>

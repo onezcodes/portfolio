@@ -1,0 +1,140 @@
+---
+import Team from '../../../layouts/Team.astro';
+import TeamFlash from '../../../components/TeamFlash.astro';
+import { remainingLabel } from '../../../lib/funding';
+import { projectFromForm } from '../../../lib/forms';
+import { logEvent } from '../../../lib/events';
+import type { LedgerEntry, Project } from '../../../lib/ledger';
+import { stagesByProject, type Milestone } from '../../../lib/milestones';
+import { capsFor } from '../../../lib/access';
+import { logoHrefs } from '../../../lib/projectHub';
+import ProjectMark from '../../../components/ProjectMark.astro';
+
+const supabase = Astro.locals.supabase;
+const user = Astro.locals.user;
+const studio = Astro.locals.studio;
+
+if (Astro.request.method === 'POST') {
+  const form = await Astro.request.formData();
+  const payload = projectFromForm(form);
+  if (!payload) {
+    return Astro.redirect('/team/projects?new=1&error=invalid');
+  }
+  const { data, error } = await supabase
+    .from('projects')
+    .insert({
+      ...payload,
+      created_by: user?.id ?? null,
+    })
+    .select('id, name')
+    .single();
+  if (error || !data) {
+    console.error(error?.message);
+    return Astro.redirect('/team/projects?new=1&error=invalid');
+  }
+  await logEvent(supabase, studio?.email ?? '', {
+    action: 'create',
+    entityType: 'project',
+    entityId: data.id,
+    projectId: data.id,
+    detail: data.name,
+  });
+  return Astro.redirect(`/team/projects/${data.id}?notice=created`);
+}
+
+const { data } = await supabase.from('projects').select('*').order('updated_at', { ascending: false });
+const projects = (data ?? []) as Project[];
+const [{ data: contribs }, { data: expenses }, { data: milestoneRows }] = await Promise.all([
+  supabase.from('project_contributions').select('project_id, amount, currency'),
+  supabase.from('ledger_entries').select('project_id, amount, currency, kind'),
+  supabase.from('project_milestones').select('project_id, title, status, estimated_on, sort_order'),
+]);
+const contribRows = contribs ?? [];
+const expenseRows = (expenses ?? []) as Pick<LedgerEntry, 'project_id' | 'amount' | 'currency' | 'kind'>[];
+const stages = stagesByProject((milestoneRows ?? []) as Milestone[]);
+const creating = Astro.url.searchParams.has('new') || Astro.url.searchParams.get('error') === 'invalid';
+const marks = await logoHrefs(supabase, projects);
+---
+
+<Team title="Projects">
+  <div class="wrap team-page">
+    <header class="team-intro">
+      <p class="kicker">Projects</p>
+      <h1>Internal jobs</h1>
+      <p class="lede">Client, status, and notes for the team. These do not appear on /work.</p>
+    </header>
+    <nav class="quick-actions" aria-label="Quick actions">
+      <a class="btn" href="/team/projects?new=1">New project</a>
+      {studio?.canLedger && <a class="btn btn-ghost" href="/team/ledger">Studio ledger</a>}
+    </nav>
+    <TeamFlash />
+
+    {
+      creating && (
+        <section class="team-card" id="new-project">
+          <h2>New project</h2>
+          <form class="form team-form" method="post">
+            <p class="field">
+              <label for="name">Name</label>
+              <input id="name" name="name" required />
+            </p>
+            <div class="team-form-row">
+              <p class="field">
+                <label for="client">Client</label>
+                <input id="client" name="client" />
+              </p>
+              <p class="field">
+                <label for="status">Status</label>
+                <select id="status" name="status">
+                  <option value="active">Active</option>
+                  <option value="paused">Paused</option>
+                  <option value="done">Done</option>
+                </select>
+              </p>
+              <p class="field">
+                <label for="started_on">Started</label>
+                <input id="started_on" name="started_on" type="date" />
+              </p>
+            </div>
+            <p class="field">
+              <label for="notes">Notes</label>
+              <textarea id="notes" name="notes" rows="3"></textarea>
+            </p>
+            <div class="ms-tools">
+              <button class="btn" type="submit">Create project</button>
+              <a class="ms-text" href="/team/projects">Cancel</a>
+            </div>
+          </form>
+        </section>
+      )
+    }
+
+    <section>
+      <h2 class="team-h2">{creating ? 'All projects' : 'Projects'}</h2>
+      {
+        projects.length === 0 ? (
+          <p class="muted">None yet.</p>
+        ) : (
+          <ul class="team-list">
+            {projects.map((project) => (
+              <li>
+                <a class="project-hit" href={`/team/projects/${project.id}`}>
+                  <ProjectMark name={project.name} src={marks.get(project.logo_url)} />
+                  <span>
+                    <strong>{project.name}</strong>
+                    <span>
+                      {project.client || 'No client'} · {project.status} · {stages.get(project.id) || 'No stages yet'}
+                      {studio && capsFor(studio, project.id).canFinance
+                        ? ` · ${remainingLabel(project.id, contribRows, expenseRows)}`
+                        : ''}
+                    </span>
+                  </span>
+                </a>
+              </li>
+            ))}
+          </ul>
+        )
+      }
+    </section>
+  </div>
+</Team>

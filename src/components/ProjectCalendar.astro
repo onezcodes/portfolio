@@ -1,0 +1,108 @@
+---
+import {
+  monthGrid,
+  monthKey,
+  projectEvents,
+  shiftMonth,
+  type CalEvent,
+} from '../lib/calendar';
+import type { Contribution } from '../lib/funding';
+import type { LedgerEntry } from '../lib/ledger';
+import type { Milestone } from '../lib/milestones';
+
+interface Props {
+  cursor: Date;
+  today: string;
+  startedOn: string | null;
+  milestones: Milestone[];
+  contributions: Pick<Contribution, 'amount' | 'currency' | 'occurred_on' | 'member_email' | 'notes'>[];
+  entries: Pick<LedgerEntry, 'kind' | 'amount' | 'currency' | 'occurred_on' | 'category' | 'notes'>[];
+  monthHref: (month: string) => string;
+  showMoney?: boolean;
+}
+
+const { cursor, today, startedOn, milestones, contributions, entries, monthHref, showMoney = true } = Astro.props;
+const events = projectEvents(startedOn, milestones, contributions, entries, showMoney);
+const cells = monthGrid(cursor, events, today);
+const key = monthKey(cursor);
+const heading = cursor.toLocaleDateString('en-GB', { month: 'long', year: 'numeric' });
+const monthEvents = events.filter((event) => event.date.startsWith(key));
+const weekdays = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+const prev = shiftMonth(cursor, -1);
+const next = shiftMonth(cursor, 1);
+
+function pretty(iso: string) {
+  return new Date(`${iso}T12:00:00`).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' });
+}
+
+function kindLabel(kind: CalEvent['kind']) {
+  if (kind === 'milestone') return 'Stage';
+  if (kind === 'contribution') return 'Funding';
+  if (kind === 'income') return 'Income';
+  if (kind === 'expense') return 'Expense';
+  return 'Start';
+}
+---
+
+<section class="team-card">
+  <div class="cal-head">
+    <div class="pay-head">
+      <h2>Calendar</h2>
+      <p class="muted">
+        {heading}. {showMoney ? 'Stages, funding, and ledger dates for this project.' : 'Stages and start date for this project.'}
+      </p>
+    </div>
+    <nav class="cal-nav" aria-label="Calendar month">
+      <a class="btn btn-ghost" href={monthHref(prev)}>Previous</a>
+      <a class="btn btn-ghost" href={monthHref(monthKey(new Date()))}>Today</a>
+      <a class="btn btn-ghost" href={monthHref(next)}>Next</a>
+    </nav>
+  </div>
+
+  <ol class="cal-week" aria-hidden="true">
+    {weekdays.map((day) => (
+      <li>{day}</li>
+    ))}
+  </ol>
+  <ol class="cal-grid">
+    {cells.map((cell) => (
+      <li class:list={['cal-day', { muted: !cell.inMonth, today: cell.today }]}>
+        <span class="cal-num">{cell.day}</span>
+        <ul>
+          {cell.events.slice(0, 3).map((event) => (
+            <li class={`cal-event ${event.kind}`} title={`${event.title} · ${event.detail}`}>
+              {event.title}
+            </li>
+          ))}
+          {cell.events.length > 3 && <li class="cal-more">+{cell.events.length - 3}</li>}
+        </ul>
+      </li>
+    ))}
+  </ol>
+
+  <p class="cal-legend">
+    <span><i class="cal-event milestone"></i> Stage</span>
+    {showMoney && <span><i class="cal-event contribution"></i> Funding</span>}
+    {showMoney && <span><i class="cal-event income"></i> Income</span>}
+    {showMoney && <span><i class="cal-event expense"></i> Expense</span>}
+    <span><i class="cal-event start"></i> Start</span>
+  </p>
+
+  {
+    monthEvents.length === 0 ? (
+      <p class="muted">Nothing dated in {heading}.</p>
+    ) : (
+      <ol class="cal-list">
+        {monthEvents.map((event) => (
+          <li>
+            <strong>{pretty(event.date)}</strong>
+            <span>
+              {kindLabel(event.kind)} · {event.title}
+              {event.detail ? ` · ${event.detail}` : ''}
+            </span>
+          </li>
+        ))}
+      </ol>
+    )
+  }
+</section>

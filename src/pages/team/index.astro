@@ -1,0 +1,254 @@
+---
+import Team from '../../layouts/Team.astro';
+import TeamFlash from '../../components/TeamFlash.astro';
+import { remainingLabel } from '../../lib/funding';
+import IncomeExpenseChart from '../../components/IncomeExpenseChart.astro';
+import { money, todayIso, totalsByCurrency, type LedgerEntry, type Project } from '../../lib/ledger';
+import { stagesByProject, type Milestone } from '../../lib/milestones';
+import { capsFor } from '../../lib/access';
+import { CREDENTIAL_STALE_DAYS, isStaleCredential, type CredentialRecord } from '../../lib/credentials';
+import { eventHref, eventTitle, formatEventTime, type StudioEvent } from '../../lib/events';
+import { logoHrefs } from '../../lib/projectHub';
+import ProjectMark from '../../components/ProjectMark.astro';
+
+const supabase = Astro.locals.supabase;
+const studio = Astro.locals.studio;
+
+const [{ data: projects }, { data: entries }, { data: contribs }, { data: milestoneRows }, { data: eventRows }, creds] =
+  await Promise.all([
+    supabase.from('projects').select('*').order('updated_at', { ascending: false }),
+    supabase.from('ledger_entries').select('*').order('occurred_on', { ascending: false }).limit(12),
+    supabase.from('project_contributions').select('project_id, amount, currency'),
+    supabase.from('project_milestones').select('project_id, title, status, estimated_on, sort_order'),
+    supabase.from('studio_events').select('*').order('created_at', { ascending: false }).limit(8),
+    studio?.canVault
+      ? supabase.from('studio_credentials').select('id, title, updated_at')
+      : Promise.resolve({ data: [] }),
+  ]);
+
+const projectRows = (projects ?? []) as Project[];
+const recent = (entries ?? []) as LedgerEntry[];
+
+const { data: allEntries } = await supabase.from('ledger_entries').select('kind, amount, currency, project_id, occurred_on');
+const totals = totalsByCurrency((allEntries ?? []) as LedgerEntry[]);
+const expenseRows = (allEntries ?? []) as LedgerEntry[];
+const contribRows = contribs ?? [];
+const stages = stagesByProject((milestoneRows ?? []) as Milestone[]);
+
+const byProject = new Map(projectRows.map((project) => [project.id, project.name]));
+const today = todayIso();
+const overdue = ((milestoneRows ?? []) as Milestone[]).filter(
+  (row) => row.estimated_on && row.estimated_on < today && row.status !== 'done',
+);
+const currentWork = ((milestoneRows ?? []) as Milestone[]).filter((row) => row.status === 'current');
+const activity = (eventRows ?? []) as StudioEvent[];
+const staleVault = ((creds.data ?? []) as Pick<CredentialRecord, 'id' | 'title' | 'updated_at'>[]).filter((item) =>
+  isStaleCredential(item.updated_at),
+);
+const marks = await logoHrefs(supabase, projectRows);
+---
+
+<Team title="Overview">
+  <div class="wrap team-page">
+    <header class="team-intro">
+      <p class="kicker">Overview</p>
+      <h1>{studio?.canLedger ? 'Studio books' : 'Your jobs'}</h1>
+      <p class="lede">
+        {studio?.canLedger
+          ? 'Internal projects, income, and expenses. Nothing here is published to the public site.'
+          : 'Projects you can access. Schedule and progress only — funding stays with leads and collaborators.'}
+      </p>
+      <form class="search-form" method="get" action="/team/search">
+        <label class="sr-only" for="q">Search the team app</label>
+        <input id="q" name="q" placeholder="Search projects or credentials" />
+        <button class="btn" type="submit">Search</button>
+      </form>
+    </header>
+    <nav class="quick-actions" aria-label="Quick actions">
+      <a class="btn" href="/team/projects?new=1">New project</a>
+      {studio?.canLedger && <a class="btn btn-ghost" href="/team/ledger">Add ledger entry</a>}
+      {studio?.canVault && <a class="btn btn-ghost" href="/team/credentials">Shared credentials</a>}
+      {studio?.superAdmin && <a class="btn btn-ghost" href="/team/members">Whitelist email</a>}
+    </nav>
+    <TeamFlash />
+
+    {
+      (overdue.length > 0 || currentWork.length > 0 || staleVault.length > 0) && (
+        <section class="team-card">
+          <h2>Needs attention</h2>
+          {overdue.length > 0 && (
+            <>
+              <p class="muted">Stages past their estimate</p>
+              <ul class="team-list">
+                {overdue.slice(0, 6).map((row) => (
+                  <li>
+                    <a href={`/team/projects/${row.project_id}?tab=schedule`}>
+                      <strong>{row.title}</strong>
+                      <span>
+                        {byProject.get(row.project_id) || 'Project'} · est. {row.estimated_on}
+                      </span>
+                    </a>
+                  </li>
+                ))}
+              </ul>
+            </>
+          )}
+          {currentWork.length > 0 && (
+            <>
+              <p class="muted">Current stage</p>
+              <ul class="team-list">
+                {currentWork.slice(0, 6).map((row) => (
+                  <li>
+                    <a href={`/team/projects/${row.project_id}?tab=schedule`}>
+                      <strong>{row.title}</strong>
+                      <span>{byProject.get(row.project_id) || 'Project'}</span>
+                    </a>
+                  </li>
+                ))}
+              </ul>
+            </>
+          )}
+          {staleVault.length > 0 && (
+            <>
+              <p class="muted">Credentials not updated in {CREDENTIAL_STALE_DAYS}+ days</p>
+              <ul class="team-list">
+                {staleVault.slice(0, 6).map((item) => (
+                  <li>
+                    <a href={`/team/credentials/${item.id}`}>
+                      <strong>{item.title}</strong>
+                      <span>Review password and keys</span>
+                    </a>
+                  </li>
+                ))}
+              </ul>
+            </>
+          )}
+        </section>
+      )
+    }
+
+    {
+      studio?.canLedger && (
+        <>
+          <section class="team-totals" aria-label="Totals">
+            {
+              totals.length === 0 ? (
+                <p class="muted">No ledger entries yet.</p>
+              ) : (
+                totals.map((row) => (
+                  <article class="team-stat">
+                    <p class="kicker">{row.currency}</p>
+                    <dl>
+                      <div>
+                        <dt>Income</dt>
+                        <dd>{money(row.income, row.currency)}</dd>
+                      </div>
+                      <div>
+                        <dt>Expense</dt>
+                        <dd>{money(row.expense, row.currency)}</dd>
+                      </div>
+                      <div>
+                        <dt>Profit</dt>
+                        <dd>{money(row.profit, row.currency)}</dd>
+                      </div>
+                    </dl>
+                  </article>
+                ))
+              )
+            }
+          </section>
+          <IncomeExpenseChart entries={(allEntries ?? []) as LedgerEntry[]} />
+        </>
+      )
+    }
+
+    <section class="team-split">
+      <div>
+        <div class="section-head tight">
+          <h2>Projects</h2>
+          <a href="/team/projects">All projects</a>
+        </div>
+        {
+          projectRows.length === 0 ? (
+            <p class="muted">No projects yet.</p>
+          ) : (
+            <ul class="team-list">
+              {projectRows.slice(0, 8).map((project) => (
+                <li>
+                  <a class="project-hit" href={`/team/projects/${project.id}`}>
+                    <ProjectMark name={project.name} src={marks.get(project.logo_url)} />
+                    <span>
+                      <strong>{project.name}</strong>
+                      <span>
+                        {project.client || 'No client'} · {stages.get(project.id) || project.status}
+                        {studio && capsFor(studio, project.id).canFinance
+                          ? ` · ${remainingLabel(project.id, contribRows, expenseRows)}`
+                          : ''}
+                      </span>
+                    </span>
+                  </a>
+                </li>
+              ))}
+            </ul>
+          )
+        }
+      </div>
+      {
+        studio?.canLedger && (
+      <div>
+        <div class="section-head tight">
+          <h2>Recent entries</h2>
+          <a href="/team/ledger">Full ledger</a>
+        </div>
+        {
+          recent.length === 0 ? (
+            <p class="muted">No income or expenses yet.</p>
+          ) : (
+            <ul class="team-list">
+              {recent.map((entry) => (
+                <li>
+                  <span>
+                    <strong>
+                      {entry.kind === 'income' ? '+' : '−'}
+                      {money(entry.amount, entry.currency)}
+                    </strong>
+                    <span>
+                      {entry.occurred_on} · {entry.project_id ? byProject.get(entry.project_id) || 'Project' : 'Overhead'}
+                      {entry.category ? ` · ${entry.category}` : ''}
+                    </span>
+                  </span>
+                </li>
+              ))}
+            </ul>
+          )
+        }
+      </div>
+        )
+      }
+    </section>
+
+    {
+      activity.length > 0 && (
+        <section>
+          <div class="section-head tight">
+            <h2>Activity</h2>
+            <a href="/team/activity">All activity</a>
+          </div>
+          <ul class="team-list">
+            {activity.map((row) => (
+              <li>
+                <a href={eventHref(row)}>
+                  <strong>{eventTitle(row)}</strong>
+                  <span>
+                    {formatEventTime(row.created_at)} · {row.actor_email}
+                    {row.detail ? ` · ${row.detail}` : ''}
+                  </span>
+                </a>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )
+    }
+  </div>
+</Team>

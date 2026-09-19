@@ -1,0 +1,123 @@
+---
+import Team from '../../layouts/Team.astro';
+import TeamFlash from '../../components/TeamFlash.astro';
+import LedgerForm from '../../components/LedgerForm.astro';
+import VoucherLink from '../../components/VoucherLink.astro';
+import IncomeExpenseChart from '../../components/IncomeExpenseChart.astro';
+import { money, type LedgerEntry, type Project } from '../../lib/ledger';
+import { createLedgerEntry, removeLedgerEntry, voucherHrefs } from '../../lib/vouchers';
+import { logEvent } from '../../lib/events';
+
+const supabase = Astro.locals.supabase;
+const user = Astro.locals.user;
+const studio = Astro.locals.studio;
+
+if (!studio?.canLedger) {
+  return Astro.redirect('/team?error=forbidden');
+}
+
+if (Astro.request.method === 'POST') {
+  const form = await Astro.request.formData();
+  const intent = String(form.get('intent') ?? '');
+
+  if (intent === 'delete-entry') {
+    const entryId = String(form.get('entry_id') ?? '');
+    if (!entryId) return Astro.redirect('/team/ledger?error=invalid');
+    const result = await removeLedgerEntry(supabase, entryId);
+    if (!result.error) {
+      await logEvent(supabase, studio?.email ?? '', {
+        action: 'delete',
+        entityType: 'ledger',
+        entityId: entryId,
+      });
+    }
+    return Astro.redirect(result.error ? '/team/ledger?error=invalid' : '/team/ledger?notice=deleted');
+  }
+
+  const result = await createLedgerEntry(supabase, form, user?.id ?? null);
+  if (result.error) return Astro.redirect(`/team/ledger?error=${result.error}`);
+  await logEvent(supabase, studio?.email ?? '', { action: 'create', entityType: 'ledger' });
+  return Astro.redirect('/team/ledger?notice=created');
+}
+
+const [{ data: projectRows }, { data: entryRows }] = await Promise.all([
+  supabase.from('projects').select('id, name').order('name'),
+  supabase.from('ledger_entries').select('*').order('occurred_on', { ascending: false }),
+]);
+
+const projects = (projectRows ?? []) as Pick<Project, 'id' | 'name'>[];
+const entries = (entryRows ?? []) as LedgerEntry[];
+const names = new Map(projects.map((project) => [project.id, project.name]));
+const slips = await voucherHrefs(supabase, entries);
+---
+
+<Team title="Ledger">
+  <div class="wrap team-page">
+    <header class="team-intro">
+      <p class="kicker">Ledger</p>
+      <h1>Income and expense</h1>
+      <p class="lede">Assign a project or leave it as overhead.</p>
+    </header>
+    <nav class="quick-actions" aria-label="Ledger actions">
+      <a class="btn btn-ghost" href="/team/ledger.csv">Export CSV</a>
+    </nav>
+    <TeamFlash />
+
+    <IncomeExpenseChart entries={entries} />
+
+    <section class="team-card">
+      <h2>New entry</h2>
+      <LedgerForm action="/team/ledger" projects={projects} />
+    </section>
+
+    <section>
+      <h2 class="team-h2">All entries</h2>
+      {
+        entries.length === 0 ? (
+          <p class="muted">Nothing recorded yet.</p>
+        ) : (
+          <table class="team-table">
+            <thead>
+              <tr>
+                <th>Date</th>
+                <th>Project</th>
+                <th>Type</th>
+                <th>Amount</th>
+                <th>Category</th>
+                <th>Slip</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody>
+              {entries.map((entry) => (
+                <tr>
+                  <td>{entry.occurred_on}</td>
+                  <td>
+                    {entry.project_id ? (
+                      <a href={`/team/projects/${entry.project_id}`}>{names.get(entry.project_id) ?? 'Project'}</a>
+                    ) : (
+                      'Overhead'
+                    )}
+                  </td>
+                  <td>{entry.kind}</td>
+                  <td>{money(entry.amount, entry.currency)}</td>
+                  <td>{entry.category || entry.notes || '—'}</td>
+                  <td>
+                    <VoucherLink path={entry.voucher_url} href={slips.get(entry.voucher_url)} />
+                  </td>
+                  <td>
+                    <form method="post">
+                      <input type="hidden" name="intent" value="delete-entry" />
+                      <input type="hidden" name="entry_id" value={entry.id} />
+                      <button class="btn btn-ghost" type="submit">Remove</button>
+                    </form>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )
+      }
+    </section>
+  </div>
+</Team>

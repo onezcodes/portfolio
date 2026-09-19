@@ -1,9 +1,13 @@
 // @ts-check
 import { defineConfig } from 'astro/config';
+import node from '@astrojs/node';
+import vercel from '@astrojs/vercel';
 import sitemap from '@astrojs/sitemap';
 
 export default defineConfig({
   site: 'https://www.onezcodes.com',
+  output: 'server',
+  adapter: process.env.VERCEL ? vercel() : node({ mode: 'standalone' }),
   trailingSlash: 'never',
   compressHTML: true,
   prefetch: {
@@ -12,10 +16,10 @@ export default defineConfig({
   integrations: [
     sitemap({
       lastmod: new Date(),
-      filter: (page) =>
-        !['/robots.txt', '/llms.txt', '/site.webmanifest', '/404'].some((skip) =>
-          page.includes(skip),
-        ),
+      filter: (page) => {
+        const skip = ['/robots.txt', '/llms.txt', '/site.webmanifest', '/404', '/team', '/auth'];
+        return !skip.some((path) => page.includes(path));
+      },
       serialize(item) {
         const path = new URL(item.url).pathname.replace(/\/+$/, '') || '/';
         const priority =

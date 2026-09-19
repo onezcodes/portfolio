@@ -1,0 +1,115 @@
+---
+import Team from '../../layouts/Team.astro';
+import TeamFlash from '../../components/TeamFlash.astro';
+import { logEvent, formatEventTime } from '../../lib/events';
+import type { TeamMember } from '../../lib/ledger';
+import { oauthAvatar, oauthName } from '../../lib/profile';
+import { emailOf } from '../../lib/supabase';
+
+const supabase = Astro.locals.supabase;
+const user = Astro.locals.user;
+const studio = Astro.locals.studio;
+const email = studio?.email || emailOf(user);
+
+if (!email) return Astro.redirect('/team/login');
+
+if (Astro.request.method === 'POST') {
+  const form = await Astro.request.formData();
+  const display_name = String(form.get('display_name') ?? '').trim().slice(0, 80);
+  const job_title = String(form.get('job_title') ?? '').trim().slice(0, 80);
+  const phone = String(form.get('phone') ?? '').trim().slice(0, 40);
+
+  const { data: existing } = await supabase.from('team_members').select('email').eq('email', email).maybeSingle();
+  if (!existing) return Astro.redirect('/team/profile?error=invalid');
+  const { error } = await supabase
+    .from('team_members')
+    .update({ display_name, job_title, phone })
+    .eq('email', email);
+  if (error) {
+    console.error(error.message);
+    return Astro.redirect('/team/profile?error=invalid');
+  }
+  await logEvent(supabase, email, { action: 'update', entityType: 'profile', detail: display_name || email });
+  return Astro.redirect('/team/profile?notice=saved');
+}
+
+const { data } = await supabase.from('team_members').select('*').eq('email', email).maybeSingle();
+const row = data as TeamMember | null;
+const name = row?.display_name?.trim() || oauthName(user);
+const avatar = oauthAvatar(user);
+const provider = user?.app_metadata?.provider || 'oauth';
+const joined = row?.created_at
+  ? new Date(row.created_at).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })
+  : '';
+const lastSignIn = user?.last_sign_in_at ? formatEventTime(user.last_sign_in_at) : '';
+---
+
+<Team title="Profile">
+  <div class="wrap team-page">
+    <header class="team-intro">
+      <p class="kicker">You</p>
+      <h1>Profile</h1>
+      <p class="lede">Your name shows across the team app. Sign-in email stays the same.</p>
+    </header>
+    <TeamFlash />
+
+    <section class="team-card">
+      <div class="profile-id">
+        {
+          avatar ? (
+            <img class="profile-photo" src={avatar} alt="" width="72" height="72" />
+          ) : (
+            <span class="profile-photo profile-photo-fallback" aria-hidden="true">
+              {(name || email).slice(0, 1).toUpperCase()}
+            </span>
+          )
+        }
+        <div>
+          <strong>{name || email}</strong>
+          <p class="muted">{email}</p>
+        </div>
+      </div>
+
+      <dl class="profile-facts">
+        <div>
+          <dt>Email</dt>
+          <dd>{email}</dd>
+        </div>
+        <div>
+          <dt>Joined</dt>
+          <dd>{joined || '—'}</dd>
+        </div>
+        <div>
+          <dt>Sign-in</dt>
+          <dd>{provider}</dd>
+        </div>
+        {
+          lastSignIn && (
+            <div>
+              <dt>Last sign-in</dt>
+              <dd>{lastSignIn}</dd>
+            </div>
+          )
+        }
+      </dl>
+
+      <form class="form team-form" method="post">
+        <p class="field">
+          <label for="display_name">Name</label>
+          <input id="display_name" name="display_name" value={name} maxlength="80" placeholder="How the team should see you" />
+        </p>
+        <div class="team-form-row">
+          <p class="field">
+            <label for="job_title">Title</label>
+            <input id="job_title" name="job_title" value={row?.job_title ?? ''} maxlength="80" placeholder="Producer, engineer…" />
+          </p>
+          <p class="field">
+            <label for="phone">Phone</label>
+            <input id="phone" name="phone" value={row?.phone ?? ''} maxlength="40" inputmode="tel" autocomplete="tel" />
+          </p>
+        </div>
+        <button class="btn" type="submit">Save profile</button>
+      </form>
+    </section>
+  </div>
+</Team>

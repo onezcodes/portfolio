@@ -1,0 +1,174 @@
+---
+import {
+  currentStage,
+  milestoneProgress,
+  sortMilestones,
+  type Milestone,
+} from '../lib/milestones';
+import { todayIso } from '../lib/ledger';
+
+interface Props {
+  milestones: Milestone[];
+  openAdd?: boolean;
+  canPlan?: boolean;
+  canProgress?: boolean;
+}
+
+const { milestones: raw, openAdd = false, canPlan = true, canProgress = true } = Astro.props;
+const milestones = sortMilestones(raw);
+const stage = currentStage(milestones);
+const progress = milestoneProgress(milestones);
+const doneCount = milestones.filter((row) => row.status === 'done').length;
+const today = todayIso();
+const allDone = milestones.length > 0 && doneCount === milestones.length;
+
+function pretty(iso: string | null) {
+  if (!iso) return 'No date';
+  const date = new Date(`${iso}T12:00:00`);
+  const sameYear = date.getFullYear() === new Date(`${today}T12:00:00`).getFullYear();
+  return date.toLocaleDateString('en-GB', {
+    day: 'numeric',
+    month: 'short',
+    ...(sameYear ? {} : { year: 'numeric' }),
+  });
+}
+
+function late(row: Milestone) {
+  return Boolean(row.estimated_on && row.status !== 'done' && row.estimated_on < today);
+}
+
+function statusCopy(row: Milestone) {
+  if (late(row)) return 'Late';
+  if (row.status === 'current') return 'Current';
+  if (row.status === 'done') return 'Done';
+  return 'Upcoming';
+}
+---
+
+<section class="team-card ms-card">
+  <div class="pay-head">
+    <h2>Milestones</h2>
+    <p class="muted">
+      {
+        milestones.length === 0
+          ? 'Dates set the order. Add stages as the job actually runs.'
+          : allDone
+            ? `Complete · ${stage?.title ?? 'All stages'}`
+            : stage
+              ? `${stage.title} · ${pretty(stage.estimated_on)} · ${doneCount} of ${milestones.length} done`
+              : `${doneCount} of ${milestones.length} done`
+      }
+    </p>
+  </div>
+
+  {
+    milestones.length === 0 ? (
+      canPlan ? (
+        <form method="post" class="ms-seed">
+          <input type="hidden" name="intent" value="seed-milestones" />
+          <p class="muted">Start with Brief, Design, Build, Review, and Launch — two weeks apart.</p>
+          <button class="btn" type="submit">Add typical stages</button>
+        </form>
+      ) : (
+        <p class="muted">No stages yet.</p>
+      )
+    ) : (
+      <ol class="ms-timeline">
+        {milestones.map((row) => (
+          <li class={`ms-row ${row.status}${late(row) ? ' late' : ''}`}>
+            <time class="ms-date" datetime={row.estimated_on ?? undefined}>
+              {pretty(row.estimated_on)}
+            </time>
+            <span class="ms-rail" aria-hidden="true">
+              <span class="ms-dot"></span>
+            </span>
+            <div class="ms-body">
+              <div class="ms-copy">
+                <strong>{row.title}</strong>
+                <span class={`ms-chip ${late(row) ? 'late' : row.status}`}>{statusCopy(row)}</span>
+              </div>
+              <div class="ms-tools">
+                {
+                  canProgress && row.status === 'current' && (
+                    <form method="post">
+                      <input type="hidden" name="intent" value="milestone-done" />
+                      <input type="hidden" name="milestone_id" value={row.id} />
+                      <button class="btn" type="submit">Mark done</button>
+                    </form>
+                  )
+                }
+                {
+                  canProgress && row.status === 'pending' && (
+                    <form method="post">
+                      <input type="hidden" name="intent" value="milestone-current" />
+                      <input type="hidden" name="milestone_id" value={row.id} />
+                      <button class="ms-text" type="submit">Set current</button>
+                    </form>
+                  )
+                }
+                {
+                  canProgress && row.status === 'done' && (
+                    <form method="post">
+                      <input type="hidden" name="intent" value="milestone-reopen" />
+                      <input type="hidden" name="milestone_id" value={row.id} />
+                      <button class="ms-text" type="submit">Reopen</button>
+                    </form>
+                  )
+                }
+                {
+                  canPlan && (
+                    <details class="ms-more">
+                      <summary>Edit</summary>
+                      <form class="form team-form" method="post">
+                        <input type="hidden" name="intent" value="update-milestone" />
+                        <input type="hidden" name="milestone_id" value={row.id} />
+                        <div class="team-form-row">
+                          <p class="field">
+                            <label for={`ms_title_${row.id}`}>Stage</label>
+                            <input id={`ms_title_${row.id}`} name="title" required value={row.title} />
+                          </p>
+                          <p class="field">
+                            <label for={`ms_date_${row.id}`}>Date</label>
+                            <input id={`ms_date_${row.id}`} name="estimated_on" type="date" value={row.estimated_on ?? ''} />
+                          </p>
+                        </div>
+                        <button class="btn" type="submit">Save</button>
+                      </form>
+                      <form method="post" class="ms-remove" onsubmit="return confirm('Remove this stage?')">
+                        <input type="hidden" name="intent" value="delete-milestone" />
+                        <input type="hidden" name="milestone_id" value={row.id} />
+                        <button class="ms-text" type="submit">Remove</button>
+                      </form>
+                    </details>
+                  )
+                }
+              </div>
+            </div>
+          </li>
+        ))}
+      </ol>
+    )
+  }
+
+  {
+    canPlan && (
+      <details class="pay-edit" id="add-stage" open={openAdd || milestones.length === 0}>
+        <summary>Add a stage</summary>
+        <form class="form team-form" method="post">
+          <input type="hidden" name="intent" value="add-milestone" />
+          <div class="team-form-row">
+            <p class="field">
+              <label for="ms_title">Stage</label>
+              <input id="ms_title" name="title" required placeholder="Design, launch…" />
+            </p>
+            <p class="field">
+              <label for="ms_date">Date</label>
+              <input id="ms_date" name="estimated_on" type="date" />
+            </p>
+          </div>
+          <button class="btn" type="submit">Add stage</button>
+        </form>
+      </details>
+    )
+  }
+</section>

@@ -1,0 +1,141 @@
+---
+import Team from '../../layouts/Team.astro';
+import TeamFlash from '../../components/TeamFlash.astro';
+import { emailFromForm } from '../../lib/ledger';
+import { logEvent } from '../../lib/events';
+import { mailConfigured, sendTeamInvite } from '../../lib/mail';
+import { emailOf, isSuperAdmin, SUPER_ADMIN_EMAIL } from '../../lib/supabase';
+import type { TeamMember } from '../../lib/ledger';
+
+if (!isSuperAdmin(Astro.locals.user)) {
+  return Astro.redirect('/team?error=forbidden');
+}
+
+const supabase = Astro.locals.supabase;
+const actor = emailOf(Astro.locals.user);
+
+if (Astro.request.method === 'POST') {
+  const form = await Astro.request.formData();
+  const intent = String(form.get('intent') ?? 'add');
+  const email = emailFromForm(form.get('email'));
+  if (!email) return Astro.redirect('/team/members?error=invalid');
+
+  if (intent === 'remove') {
+    if (email === SUPER_ADMIN_EMAIL) {
+      return Astro.redirect('/team/members?error=keep-admin');
+    }
+    const { error } = await supabase.from('team_members').delete().eq('email', email);
+    if (error) return Astro.redirect('/team/members?error=forbidden');
+    await logEvent(supabase, actor, { action: 'remove', entityType: 'member', detail: email });
+    return Astro.redirect('/team/members?notice=removed');
+  }
+
+  if (intent === 'invite') {
+    if (email === SUPER_ADMIN_EMAIL) {
+      return Astro.redirect('/team/members?error=invalid');
+    }
+    const { data } = await supabase.from('team_members').select('email').eq('email', email).maybeSingle();
+    if (!data) return Astro.redirect('/team/members?error=not-found');
+    const mail = await sendTeamInvite(email, Astro.request);
+    if (mail.error === 'setup') return Astro.redirect('/team/members?error=mail-setup');
+    if (mail.error) return Astro.redirect('/team/members?error=mail-failed');
+    await logEvent(supabase, actor, { action: 'invite', entityType: 'member', detail: email });
+    return Astro.redirect('/team/members?notice=invited');
+  }
+
+  if (email === SUPER_ADMIN_EMAIL) {
+    return Astro.redirect('/team/members?error=duplicate');
+  }
+
+  const sendInvite = form.get('send_invite') === '1';
+  const { error } = await supabase.from('team_members').insert({ email, role: 'member' });
+  if (error) {
+    if (error.code === '23505') return Astro.redirect('/team/members?error=duplicate');
+    console.error(error.message);
+    return Astro.redirect('/team/members?error=invalid');
+  }
+
+  if (!sendInvite) {
+    await logEvent(supabase, actor, { action: 'add', entityType: 'member', detail: email });
+    return Astro.redirect('/team/members?notice=added');
+  }
+  const mail = await sendTeamInvite(email, Astro.request);
+  await logEvent(supabase, actor, { action: 'add', entityType: 'member', detail: email });
+  if (mail.error) return Astro.redirect('/team/members?notice=added-no-mail');
+  return Astro.redirect('/team/members?notice=added-invited');
+}
+
+const { data } = await supabase.from('team_members').select('*').order('role').order('email');
+const members = (data ?? []) as TeamMember[];
+const canMail = mailConfigured();
+---
+
+<Team title="Team">
+  <div class="wrap team-page">
+    <header class="team-intro">
+      <p class="kicker">Whitelist</p>
+      <h1>Who can sign in</h1>
+      <p class="lede">
+        Only these emails can use Google or GitHub login. Super admin is always {SUPER_ADMIN_EMAIL}.
+        We email an invitation with the sign-in link.
+      </p>
+    </header>
+    <TeamFlash />
+
+    <section class="team-card">
+      <h2>Add a team email</h2>
+      {
+        !canMail && (
+          <p class="muted">Invitation emails are not set up yet. You can still add the address.</p>
+        )
+      }
+      <form class="form team-form" method="post">
+        <input type="hidden" name="intent" value="add" />
+        <p class="field">
+          <label for="email">Email</label>
+          <input id="email" name="email" type="email" required placeholder="teammate@example.com" />
+        </p>
+        <label class="check-line">
+          <input type="checkbox" name="send_invite" value="1" checked={canMail} />
+          Send an invitation email
+        </label>
+        <button class="btn" type="submit">{canMail ? 'Whitelist and invite' : 'Whitelist'}</button>
+      </form>
+    </section>
+
+    <section>
+      <h2 class="team-h2">Current list</h2>
+      <ul class="team-list">
+        {
+          members.map((member) => (
+            <li class="team-member-row">
+              <span>
+                <strong>{member.display_name?.trim() || member.email}</strong>
+                <span>
+                  {member.display_name?.trim() ? member.email : ''}
+                  {member.display_name?.trim() ? ' · ' : ''}
+                  {member.job_title?.trim() ? `${member.job_title} · ` : ''}
+                  {member.role === 'super_admin' ? 'Super admin' : 'Member'}
+                </span>
+              </span>
+              {member.email !== SUPER_ADMIN_EMAIL && (
+                <div class="member-actions">
+                  <form method="post">
+                    <input type="hidden" name="intent" value="invite" />
+                    <input type="hidden" name="email" value={member.email} />
+                    <button class="btn btn-ghost" type="submit">Invite</button>
+                  </form>
+                  <form method="post">
+                    <input type="hidden" name="intent" value="remove" />
+                    <input type="hidden" name="email" value={member.email} />
+                    <button class="btn btn-ghost" type="submit">Remove</button>
+                  </form>
+                </div>
+              )}
+            </li>
+          ))
+        }
+      </ul>
+    </section>
+  </div>
+</Team>

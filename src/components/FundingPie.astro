@@ -1,0 +1,72 @@
+---
+import { donutPath, fundingPies, type Contribution } from '../lib/funding';
+import { money } from '../lib/ledger';
+
+interface Props {
+  contributions: Pick<Contribution, 'member_email' | 'amount' | 'currency'>[];
+}
+
+const { contributions } = Astro.props;
+const pies = fundingPies(contributions);
+const cx = 60;
+const cy = 60;
+const outer = 52;
+const inner = 36;
+---
+
+{
+  pies.some((pie) => pie.slices.length > 0) && (
+    <div class="fund-pies">
+      {pies.map((pie) => {
+        let angle = 0;
+        const arcs = pie.slices.map((slice) => {
+          const start = angle;
+          const end = angle + slice.percent * 3.6;
+          angle = end;
+          return {
+            ...slice,
+            start,
+            end,
+            full: slice.percent >= 99.95,
+            path: donutPath(cx, cy, outer, inner, start, end),
+          };
+        });
+        const amountLabel = new Intl.NumberFormat('en-TH', {
+          maximumFractionDigits: 2,
+          minimumFractionDigits: Number.isInteger(pie.funded) ? 0 : 2,
+        }).format(pie.funded);
+        return (
+          <figure class="fund-pie">
+            <div class="fund-pie-ring">
+              <svg viewBox="0 0 120 120" role="img" aria-label={`${pie.currency} contributions by team member`}>
+                {arcs.map((slice) =>
+                  slice.full ? (
+                    <g>
+                      <circle class={`fund-slice m${slice.tone}`} cx={cx} cy={cy} r={outer} />
+                      <circle class="fund-hole" cx={cx} cy={cy} r={inner} />
+                    </g>
+                  ) : (
+                    <path class={`fund-slice m${slice.tone}`} d={slice.path} />
+                  ),
+                )}
+              </svg>
+              <div class="fund-pie-center">
+                <span>{pie.currency}</span>
+                <strong>{amountLabel}</strong>
+                <span>in</span>
+              </div>
+            </div>
+            <figcaption>
+              {arcs.map((slice) => (
+                <span>
+                  <span class={`ie-dot m${slice.tone}`}></span>
+                  {slice.label} {money(slice.amount, pie.currency)} · {Math.round(slice.percent)}%
+                </span>
+              ))}
+            </figcaption>
+          </figure>
+        );
+      })}
+    </div>
+  )
+}

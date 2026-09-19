@@ -1,0 +1,41 @@
+---
+import Team from '../../layouts/Team.astro';
+import { eventHref, eventTitle, formatEventTime, type StudioEvent } from '../../lib/events';
+
+const { data } = await Astro.locals.supabase
+  .from('studio_events')
+  .select('*')
+  .order('created_at', { ascending: false })
+  .limit(80);
+
+const events = (data ?? []) as StudioEvent[];
+---
+
+<Team title="Activity">
+  <div class="wrap team-page">
+    <header class="team-intro">
+      <p class="kicker">Studio</p>
+      <h1>Activity</h1>
+      <p class="lede">Recent changes you are allowed to see. Secret values are never stored here — only that someone revealed a field.</p>
+    </header>
+    {
+      events.length === 0 ? (
+        <p class="muted">Nothing logged yet.</p>
+      ) : (
+        <ul class="team-list activity-list">
+          {events.map((row) => (
+            <li>
+              <a href={eventHref(row)}>
+                <strong>{eventTitle(row)}</strong>
+                <span>
+                  {formatEventTime(row.created_at)} · {row.actor_email}
+                  {row.detail ? ` · ${row.detail}` : ''}
+                </span>
+              </a>
+            </li>
+          ))}
+        </ul>
+      )
+    }
+  </div>
+</Team>

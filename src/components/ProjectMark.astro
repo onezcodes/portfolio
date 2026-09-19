@@ -1,0 +1,20 @@
+---
+interface Props {
+  name: string;
+  src?: string;
+  size?: 'sm' | 'lg';
+}
+
+const { name, src = '', size = 'sm' } = Astro.props;
+const initial = name.trim().slice(0, 1).toUpperCase() || 'P';
+---
+
+{
+  src ? (
+    <img class:list={['project-mark', size]} src={src} alt="" width={size === 'lg' ? 72 : 40} height={size === 'lg' ? 72 : 40} />
+  ) : (
+    <span class:list={['project-mark', 'project-mark-fallback', size]} aria-hidden="true">
+      {initial}
+    </span>
+  )
+}

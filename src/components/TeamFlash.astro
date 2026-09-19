@@ -1,0 +1,47 @@
+---
+const notices: Record<string, string> = {
+  saved: 'Saved.',
+  created: 'Created.',
+  deleted: 'Deleted.',
+  added: 'Email added to the team list.',
+  invited: 'Invitation email sent.',
+  'added-invited': 'Added to the team and invitation email sent.',
+  'added-no-mail': 'Added to the team, but the invitation email did not send.',
+  removed: 'Email removed from the team list.',
+  granted: 'Access saved. New viewers were emailed.',
+  'granted-no-mail': 'Access saved, but some invitation emails did not send.',
+};
+
+const errors: Record<string, string> = {
+  invalid: 'Check the form and try again.',
+  forbidden: 'You cannot do that.',
+  'not-found': 'That record was not found.',
+  duplicate: 'That email is already on the list.',
+  'keep-admin': 'The super admin account cannot be removed.',
+  'keep-lead': 'Keep at least one lead on this project.',
+  'too-large': 'That voucher image is over 5 MB.',
+  'mail-setup': 'Invitation email is not set up yet. Add a Resend API key, then try Invite again.',
+  'mail-failed': 'The email did not send. Try again in a moment.',
+  'vault-setup': 'Credential encryption is not set up yet.',
+};
+
+const notice = Astro.url.searchParams.get('notice');
+const error = Astro.url.searchParams.get('error');
+const noticeText = notice ? notices[notice] : null;
+const errorText = error ? (errors[error] ?? 'Something went wrong.') : null;
+---
+
+{
+  noticeText && (
+    <p class="team-flash team-flash-ok" role="status">
+      {noticeText}
+    </p>
+  )
+}
+{
+  errorText && (
+    <p class="team-flash team-flash-err" role="alert">
+      {errorText}
+    </p>
+  )
+}

@@ -1,0 +1,122 @@
+---
+interface Props {
+  bankName: string;
+  accountNumber: string;
+  qrHref?: string;
+  qrPath: string;
+  funded?: string;
+  remaining?: string;
+  spent?: string;
+}
+
+const { bankName, accountNumber, qrHref, qrPath, funded, remaining, spent } = Astro.props;
+const hasAccount = Boolean(bankName || accountNumber || qrPath);
+---
+
+<section class="pay-block" id="pay" aria-labelledby="pay-title">
+  <div class="pay-head">
+    <h2 id="pay-title">Pay into this project</h2>
+    <p class="muted">Scan the QR or transfer to the studio account. Team contributions land here; expenses come out of it.</p>
+  </div>
+
+  {
+    hasAccount ? (
+      <article class="pay-card">
+        <div class="pay-qr">
+          {qrHref ? (
+            <a href={qrHref} target="_blank" rel="noopener noreferrer">
+              <img src={qrHref} alt={`QR for ${bankName || 'project account'}`} />
+            </a>
+          ) : (
+            <div class="pay-qr-empty" aria-hidden="true">QR</div>
+          )}
+        </div>
+        <div class="pay-meta">
+          <p class="pay-kicker">Main account</p>
+          <p class="pay-bank">{bankName || 'Bank'}</p>
+          {
+            accountNumber && (
+              <div class="pay-account-row">
+                <p class="pay-account">{accountNumber}</p>
+                <button class="btn btn-ghost pay-copy" type="button" data-copy={accountNumber}>
+                  Copy
+                </button>
+              </div>
+            )
+          }
+          <p class="muted">PromptPay / bank transfer</p>
+          <div class="pay-balance">
+            <p class="pay-kicker">Current fund</p>
+            <p class="pay-total">{remaining || 'THB 0'}</p>
+            <p class="muted">
+              In {funded || 'THB 0'}
+              {spent ? ` · Out ${spent}` : ''}
+            </p>
+          </div>
+        </div>
+      </article>
+    ) : (
+      <article class="pay-card pay-card-empty">
+        <div class="pay-qr">
+          <div class="pay-qr-empty" aria-hidden="true">QR</div>
+        </div>
+        <div class="pay-meta">
+          <p class="pay-kicker">Main account</p>
+          <p class="pay-bank">No account yet</p>
+          <p class="muted">Add the bank and QR the team should pay to.</p>
+          <div class="pay-balance">
+            <p class="pay-kicker">Current fund</p>
+            <p class="pay-total">{remaining || 'THB 0'}</p>
+            <p class="muted">
+              In {funded || 'THB 0'}
+              {spent ? ` · Out ${spent}` : ''}
+            </p>
+          </div>
+        </div>
+      </article>
+    )
+  }
+
+  <details class="pay-edit">
+    <summary>{hasAccount ? 'Update account' : 'Add account'}</summary>
+    <form class="form team-form" method="post" enctype="multipart/form-data">
+      <input type="hidden" name="intent" value="update-funding" />
+      <div class="team-form-row">
+        <p class="field">
+          <label for="bank_name">Bank</label>
+          <input id="bank_name" name="bank_name" value={bankName} placeholder="Kasikorn" />
+        </p>
+        <p class="field">
+          <label for="account_number">Account number</label>
+          <input id="account_number" name="account_number" value={accountNumber} placeholder="000-0-00000-0" />
+        </p>
+      </div>
+      <div class="pay-upload">
+        <label class="pay-file" for="qr">
+          <span>Replace QR</span>
+          <input id="qr" name="qr" type="file" accept="image/jpeg,image/png,image/webp,image/gif" />
+        </label>
+        <p class="field">
+          <label for="qr_url">Or image link</label>
+          <input id="qr_url" name="qr_url" type="url" placeholder="https://…" />
+        </p>
+      </div>
+      <button class="btn" type="submit">Save</button>
+    </form>
+  </details>
+</section>
+
+<script>
+  document.querySelectorAll<HTMLButtonElement>('[data-copy]').forEach((button) => {
+    button.addEventListener('click', async () => {
+      const value = button.dataset.copy;
+      if (!value) return;
+      await navigator.clipboard.writeText(value);
+      const previous = button.textContent;
+      button.textContent = 'Copied';
+      window.setTimeout(() => {
+        button.textContent = previous;
+      }, 1400);
+    });
+  });
+</script>

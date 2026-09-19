@@ -1,0 +1,980 @@
+---
+import Team from '../../../layouts/Team.astro';
+import TeamFlash from '../../../components/TeamFlash.astro';
+import LedgerForm from '../../../components/LedgerForm.astro';
+import VoucherLink from '../../../components/VoucherLink.astro';
+import BankPayCard from '../../../components/BankPayCard.astro';
+import IncomeExpenseChart from '../../../components/IncomeExpenseChart.astro';
+import FundingPie from '../../../components/FundingPie.astro';
+import MilestoneTrack from '../../../components/MilestoneTrack.astro';
+import ProjectCalendar from '../../../components/ProjectCalendar.astro';
+import { parseMonth } from '../../../lib/calendar';
+import { projectFromForm } from '../../../lib/forms';
+import { money, todayIso, totalsByCurrency, type LedgerEntry, type Project, type TeamMember } from '../../../lib/ledger';
+import {
+  addContribution,
+  contributionsByMember,
+  fundTransactions,
+  fundingByCurrency,
+  removeContribution,
+  updateProjectBank,
+  type Contribution,
+} from '../../../lib/funding';
+import { createLedgerEntry, removeLedgerEntry, voucherHrefs } from '../../../lib/vouchers';
+import {
+  addMilestone,
+  removeMilestone,
+  seedMilestones,
+  setMilestoneStatus,
+  stageLabel,
+  currentStage,
+  updateMilestone,
+  sortMilestones,
+  type Milestone,
+} from '../../../lib/milestones';
+import { sendProjectInvite } from '../../../lib/mail';
+import { logEvent } from '../../../lib/events';
+import { personLabel } from '../../../lib/profile';
+import SecretField from '../../../components/SecretField.astro';
+import ProjectMark from '../../../components/ProjectMark.astro';
+import { decryptSecret, vaultReady, websiteHref } from '../../../lib/credentials';
+import {
+  extraLinksOf,
+  hubFromForm,
+  loginPasswordFromForm,
+  logoFromForm,
+  PROJECT_URL_FIELDS,
+  projectLinks,
+} from '../../../lib/projectHub';
+import { isHttpUrl } from '../../../lib/vouchers';
+import {
+  allowedIntent,
+  capsFor,
+  parseRoles,
+  pickTab,
+  ROLE_META,
+  roleLabels,
+  rolesFromForm,
+  tabForIntent,
+  wouldDropLastLead,
+  type ProjectMemberRow,
+  type ProjectTab,
+} from '../../../lib/access';
+
+function projectHref(
+  projectId: string,
+  opts: { tab?: ProjectTab; month?: string | null; notice?: string; error?: string; action?: string } = {},
+) {
+  const params = new URLSearchParams();
+  params.set('tab', opts.tab ?? 'schedule');
+  if (opts.month) params.set('month', opts.month);
+  if (opts.action) params.set('action', opts.action);
+  if (opts.notice) params.set('notice', opts.notice);
+  if (opts.error) params.set('error', opts.error);
+  return `/team/projects/${projectId}?${params}`;
+}
+
+const supabase = Astro.locals.supabase;
+const user = Astro.locals.user;
+const studio = Astro.locals.studio;
+const { id } = Astro.params;
+if (!id) {
+  return Astro.redirect('/team/projects');
+}
+if (!studio) {
+  return Astro.redirect('/team/login');
+}
+
+const caps = capsFor(studio, id);
+if (!caps.assigned) {
+  return Astro.redirect('/team/projects?error=forbidden');
+}
+
+let revealedLogin = false;
+
+if (Astro.request.method === 'POST') {
+  const form = await Astro.request.formData();
+  const intent = String(form.get('intent') ?? 'update');
+  const requestedTab = String(form.get('tab') ?? '');
+  const tab = caps.tabs.some((item) => item.id === requestedTab)
+    ? (requestedTab as ProjectTab)
+    : pickTab(tabForIntent(intent), caps);
+  const bounce = (flash: { notice?: string; error?: string }) =>
+    Astro.redirect(projectHref(id, { tab, ...flash }));
+  const actor = studio.email;
+  const track = (action: string, detail = '', entityType = 'project') =>
+    logEvent(supabase, actor, { action, entityType, entityId: id, projectId: id, detail });
+
+  if (!allowedIntent(intent, caps)) {
+    return bounce({ error: 'forbidden' });
+  }
+
+  if (intent === 'reveal') {
+    if (String(form.get('field') ?? '') !== 'password') return bounce({ error: 'invalid' });
+    revealedLogin = true;
+    await track('reveal', 'login password');
+  } else if (intent === 'delete') {
+    const { data: current } = await supabase.from('projects').select('logo_url, qr_url').eq('id', id).maybeSingle();
+    const { error } = await supabase.from('projects').delete().eq('id', id);
+    if (error) return bounce({ error: 'invalid' });
+    const stored = [current?.logo_url, current?.qr_url].filter((path): path is string => Boolean(path) && !isHttpUrl(path));
+    if (stored.length > 0) await supabase.storage.from('vouchers').remove(stored);
+    await track('delete');
+    return Astro.redirect('/team/projects?notice=deleted');
+  }
+
+  if (intent === 'create-entry') {
+    const result = await createLedgerEntry(supabase, form, user?.id ?? null, id);
+    if (result.error) return bounce({ error: result.error });
+    await track('create', '', 'ledger');
+    return bounce({ notice: 'created' });
+  }
+
+  if (intent === 'delete-entry') {
+    const entryId = String(form.get('entry_id') ?? '');
+    if (!entryId) return bounce({ error: 'invalid' });
+    const result = await removeLedgerEntry(supabase, entryId, id);
+    if (result.error) return bounce({ error: 'invalid' });
+    await track('delete', '', 'ledger');
+    return bounce({ notice: 'deleted' });
+  }
+
+  if (intent === 'update-funding') {
+    if (!user?.id) return bounce({ error: 'invalid' });
+    const { data: current } = await supabase.from('projects').select('qr_url').eq('id', id).maybeSingle();
+    const result = await updateProjectBank(supabase, form, id, user.id, current?.qr_url ?? '');
+    if (result.error) return bounce({ error: result.error });
+    await track('update', 'pay details');
+    return bounce({ notice: 'saved' });
+  }
+
+  if (intent === 'add-contribution') {
+    const result = await addContribution(supabase, form, id, user?.id ?? null);
+    if (result.error) return bounce({ error: result.error });
+    await track('create', '', 'contribution');
+    return bounce({ notice: 'created' });
+  }
+
+  if (intent === 'delete-contribution') {
+    const contribId = String(form.get('contribution_id') ?? '');
+    if (!contribId) return bounce({ error: 'invalid' });
+    const result = await removeContribution(supabase, contribId, id);
+    if (result.error) return bounce({ error: 'invalid' });
+    await track('delete', '', 'contribution');
+    return bounce({ notice: 'deleted' });
+  }
+
+  if (intent === 'add-milestone') {
+    const result = await addMilestone(supabase, form, id);
+    if (result.error) return bounce({ error: result.error });
+    await track('create', '', 'milestone');
+    return bounce({ notice: 'created' });
+  }
+
+  if (intent === 'seed-milestones') {
+    const { data: current } = await supabase.from('projects').select('started_on').eq('id', id).maybeSingle();
+    const result = await seedMilestones(supabase, id, current?.started_on ?? null);
+    if (result.error) return bounce({ error: result.error });
+    await track('create', 'seeded', 'milestone');
+    return bounce({ notice: 'created' });
+  }
+
+  if (intent === 'update-milestone') {
+    const result = await updateMilestone(supabase, form, id);
+    if (result.error) return bounce({ error: 'invalid' });
+    await track('update', '', 'milestone');
+    return bounce({ notice: 'saved' });
+  }
+
+  if (intent === 'milestone-current' || intent === 'milestone-done' || intent === 'milestone-reopen') {
+    const milestoneId = String(form.get('milestone_id') ?? '');
+    if (!milestoneId) return bounce({ error: 'invalid' });
+    const status = intent === 'milestone-current' ? 'current' : intent === 'milestone-done' ? 'done' : 'pending';
+    const result = await setMilestoneStatus(supabase, id, milestoneId, status);
+    if (result.error) return bounce({ error: 'invalid' });
+    await track('status', status, 'milestone');
+    return bounce({ notice: 'saved' });
+  }
+
+  if (intent === 'delete-milestone') {
+    const milestoneId = String(form.get('milestone_id') ?? '');
+    if (!milestoneId) return bounce({ error: 'invalid' });
+    const result = await removeMilestone(supabase, milestoneId, id);
+    if (result.error) return bounce({ error: 'invalid' });
+    await track('delete', '', 'milestone');
+    return bounce({ notice: 'deleted' });
+  }
+
+  if (intent === 'add-member') {
+    const email = String(form.get('email') ?? '').trim().toLowerCase();
+    const roles = rolesFromForm(form);
+    if (!email || roles.length === 0) return bounce({ error: 'invalid' });
+    const { error } = await supabase.from('project_members').insert({ project_id: id, email, roles });
+    if (error) {
+      if (error.code === '23505') return bounce({ error: 'duplicate' });
+      console.error(error.message);
+      return bounce({ error: 'invalid' });
+    }
+    await track('member_add', email);
+    if (form.get('send_invite') === '1') {
+      const { data: named } = await supabase.from('projects').select('name').eq('id', id).maybeSingle();
+      const labels = ROLE_META.filter((role) => roles.includes(role.id)).map((role) => role.label);
+      const mail = await sendProjectInvite(email, named?.name ?? 'a project', labels, Astro.request);
+      return bounce({ notice: mail.error ? 'added-no-mail' : 'added-invited' });
+    }
+    return bounce({ notice: 'created' });
+  }
+
+  if (intent === 'update-member') {
+    const email = String(form.get('email') ?? '').trim().toLowerCase();
+    const roles = rolesFromForm(form);
+    if (!email || roles.length === 0) return bounce({ error: 'invalid' });
+    const { data: crewNow } = await supabase.from('project_members').select('email, roles').eq('project_id', id);
+    if (wouldDropLastLead((crewNow ?? []) as ProjectMemberRow[], email, roles)) {
+      return bounce({ error: 'keep-lead' });
+    }
+    const { error } = await supabase.from('project_members').update({ roles }).eq('project_id', id).eq('email', email);
+    if (error) return bounce({ error: 'invalid' });
+    await track('member_update', email);
+    return bounce({ notice: 'saved' });
+  }
+
+  if (intent === 'remove-member') {
+    const email = String(form.get('email') ?? '').trim().toLowerCase();
+    if (!email) return bounce({ error: 'invalid' });
+    const { data: crewNow } = await supabase.from('project_members').select('email, roles').eq('project_id', id);
+    if (wouldDropLastLead((crewNow ?? []) as ProjectMemberRow[], email, null)) {
+      return bounce({ error: 'keep-lead' });
+    }
+    const { error } = await supabase.from('project_members').delete().eq('project_id', id).eq('email', email);
+    if (error) return bounce({ error: 'invalid' });
+    await track('member_remove', email);
+    return bounce({ notice: 'deleted' });
+  }
+
+  if (!revealedLogin) {
+    if (!user?.id) return bounce({ error: 'invalid' });
+    const payload = projectFromForm(form);
+    const hub = hubFromForm(form);
+    if (!payload || !hub) return bounce({ error: 'invalid' });
+    const { data: current } = await supabase
+      .from('projects')
+      .select('logo_url, login_password_enc')
+      .eq('id', id)
+      .maybeSingle();
+    const logo = await logoFromForm(form, supabase, user.id, current?.logo_url ?? '');
+    if ('error' in logo) return bounce({ error: logo.error });
+    const password = loginPasswordFromForm(form, current?.login_password_enc ?? '');
+    if ('error' in password) return bounce({ error: password.error });
+    const { error } = await supabase.from('projects').update({ ...payload, ...hub, ...logo, ...password }).eq('id', id);
+    if (error) {
+      console.error(error.message);
+      return bounce({ error: 'invalid' });
+    }
+    await track('update', payload.name);
+    return bounce({ notice: 'saved' });
+  }
+}
+
+const { data: project, error } = await supabase.from('projects').select('*').eq('id', id).maybeSingle();
+if (error || !project) {
+  return Astro.redirect('/team/projects?error=not-found');
+}
+
+const row = project as Project;
+const [{ data: entryRows }, { data: contribRows }, { data: memberRows }, { data: milestoneRows }, { data: crewRows }] =
+  await Promise.all([
+    supabase.from('ledger_entries').select('*').eq('project_id', id).order('occurred_on', { ascending: false }),
+    supabase.from('project_contributions').select('*').eq('project_id', id).order('occurred_on', { ascending: false }),
+    supabase.from('team_members').select('*').order('email'),
+    supabase.from('project_milestones').select('*').eq('project_id', id).order('sort_order'),
+    supabase.from('project_members').select('email, roles').eq('project_id', id).order('email'),
+  ]);
+const entries = (entryRows ?? []) as LedgerEntry[];
+const contributions = (contribRows ?? []) as Contribution[];
+const members = (memberRows ?? []) as TeamMember[];
+const milestones = sortMilestones((milestoneRows ?? []) as Milestone[]);
+const crew = (crewRows ?? []) as ProjectMemberRow[];
+const onProject = new Set(crew.map((person) => person.email));
+const invitees = members.filter((member) => !onProject.has(member.email));
+const totals = totalsByCurrency(entries);
+const expenses = entries.filter((entry) => entry.kind === 'expense');
+const funding = fundingByCurrency(contributions, expenses);
+const byMember = contributionsByMember(contributions);
+const txs = fundTransactions(contributions, expenses);
+const primaryFund = funding[0];
+const fundRemaining = funding.map((item) => money(item.remaining, item.currency)).join(' · ');
+const fundIn = funding.map((item) => money(item.funded, item.currency)).join(' · ');
+const fundOut = funding.map((item) => money(item.spent, item.currency)).join(' · ');
+const slips = await voucherHrefs(supabase, [
+  ...entries,
+  ...contributions.map((row) => ({ voucher_url: row.voucher_url })),
+]);
+const qrHrefs = await voucherHrefs(supabase, [{ voucher_url: row.qr_url }, { voucher_url: row.logo_url }]);
+const qrHref = qrHrefs.get(row.qr_url);
+const logoHref = qrHrefs.get(row.logo_url) ?? '';
+const links = projectLinks(row);
+const extraLinks = extraLinksOf(row.extra_links);
+const extraRows =
+  extraLinks.length === 0
+    ? [
+        { label: '', url: '' },
+        { label: '', url: '' },
+        { label: '', url: '' },
+      ]
+    : extraLinks.length >= 8
+      ? extraLinks
+      : [...extraLinks, { label: '', url: '' }];
+const loginPassword = revealedLogin ? decryptSecret(row.login_password_enc) : '';
+const today = todayIso();
+const calCursor = parseMonth(Astro.url.searchParams.get('month'), new Date());
+const tab = pickTab(Astro.url.searchParams.get('tab'), caps);
+const action = Astro.url.searchParams.get('action') ?? '';
+const stage = currentStage(milestones);
+const stageOpen = Boolean(stage && stage.status !== 'done' && !milestones.every((row) => row.status === 'done'));
+---
+
+<Team title={row.name}>
+  <div class="wrap team-page">
+    <header class="team-intro project-intro">
+      <ProjectMark name={row.name} src={logoHref} size="lg" />
+      <div>
+        <p class="kicker">Project</p>
+        <h1>{row.name}</h1>
+        <p class="lede">
+          {row.client || 'No client recorded'} · {row.status} · {stageLabel(milestones)}
+          {caps.canFinance && primaryFund ? ` · ${fundRemaining} left` : ''}
+          {' · '}
+          {caps.roleLabels.join(' · ')}
+        </p>
+        {
+          links.length > 0 && (
+            <nav class="project-links" aria-label="Project links">
+              {links.map((link) => (
+                <a href={link.href} target="_blank" rel="noopener noreferrer">
+                  {link.label}
+                </a>
+              ))}
+            </nav>
+          )
+        }
+      </div>
+    </header>
+    <nav class="quick-actions" aria-label="Quick actions">
+      {
+        caps.canProgress && stageOpen && stage && (
+          <form method="post">
+            <input type="hidden" name="intent" value="milestone-done" />
+            <input type="hidden" name="tab" value="schedule" />
+            <input type="hidden" name="milestone_id" value={stage.id} />
+            <button class="btn" type="submit">Mark {stage.title} done</button>
+          </form>
+        )
+      }
+      {
+        caps.canPlan && (
+          <a class="btn btn-ghost" href={projectHref(row.id, { tab: 'schedule', action: 'stage' })}>Add stage</a>
+        )
+      }
+      {
+        caps.canFinance && (
+          <>
+            <a class="btn btn-ghost" href={projectHref(row.id, { tab: 'funding', action: 'contribute' })}>
+              Add contribution
+            </a>
+            <a class="btn btn-ghost" href={projectHref(row.id, { tab: 'ledger', action: 'expense' })}>Add expense</a>
+            <a class="btn btn-ghost" href={`${projectHref(row.id, { tab: 'funding' })}#pay`}>Pay details</a>
+          </>
+        )
+      }
+      {
+        caps.canPeople && (
+          <a class="btn btn-ghost" href={`${projectHref(row.id, { tab: 'people', action: 'invite' })}#add-person`}>Add person</a>
+        )
+      }
+      {
+        caps.canDetails && (
+          <a class="btn btn-ghost" href={projectHref(row.id, { tab: 'details' })}>Links and login</a>
+        )
+      }
+    </nav>
+    <TeamFlash />
+
+    <nav class="project-tabs" aria-label="Project sections">
+      {
+        caps.tabs.map((item) => (
+          <a href={projectHref(row.id, { tab: item.id })} aria-current={tab === item.id ? 'page' : undefined}>
+            {item.label}
+          </a>
+        ))
+      }
+    </nav>
+
+    <div class="project-panel">
+      {
+        tab === 'schedule' && (
+          <>
+            <MilestoneTrack
+              milestones={milestones}
+              openAdd={action === 'stage'}
+              canPlan={caps.canPlan}
+              canProgress={caps.canProgress}
+            />
+            <ProjectCalendar
+              cursor={calCursor}
+              today={today}
+              startedOn={row.started_on}
+              milestones={milestones}
+              contributions={contributions}
+              entries={entries}
+              monthHref={(month) => projectHref(row.id, { tab: 'schedule', month })}
+              showMoney={caps.canFinance}
+            />
+          </>
+        )
+      }
+
+      {
+        tab === 'funding' && (
+          <>
+    <section class="team-totals" aria-label="Funding">
+      {
+        funding.length === 0 ? (
+          <p class="muted">No team funding yet. Add contributions below. Expenses come out of this pot.</p>
+        ) : (
+          funding.map((item) => (
+            <article class="team-stat">
+              <p class="kicker">{item.currency} funding</p>
+              <dl>
+                <div>
+                  <dt>Contributed</dt>
+                  <dd>{money(item.funded, item.currency)}</dd>
+                </div>
+                <div>
+                  <dt>Expenses</dt>
+                  <dd>{money(item.spent, item.currency)}</dd>
+                </div>
+                <div>
+                  <dt>Remaining</dt>
+                  <dd>{money(item.remaining, item.currency)}</dd>
+                </div>
+              </dl>
+            </article>
+          ))
+        )
+      }
+    </section>
+
+    <BankPayCard
+      bankName={row.bank_name}
+      accountNumber={row.account_number}
+      qrHref={qrHref}
+      qrPath={row.qr_url}
+      remaining={primaryFund ? fundRemaining : money(0, 'THB')}
+      funded={primaryFund ? fundIn : money(0, 'THB')}
+      spent={primaryFund ? fundOut : money(0, 'THB')}
+    />
+
+    <section class="team-card">
+      <div class="pay-head">
+        <h2>Team funding</h2>
+        <p class="muted">
+          Current total {primaryFund ? fundRemaining : money(0, 'THB')}. Contributions in, expenses out.
+        </p>
+      </div>
+
+      <FundingPie contributions={contributions} />
+
+      {
+        byMember.length > 0 && (
+          <ul class="contrib-people">
+            {byMember.map((member) => (
+              <li>
+                <span class="contrib-avatar" aria-hidden="true">
+                  {member.email.slice(0, 1).toUpperCase()}
+                </span>
+                <span>
+                  <strong>{member.email}</strong>
+                  <span>{member.totals.map((total) => money(total.amount, total.currency)).join(' · ')}</span>
+                </span>
+              </li>
+            ))}
+          </ul>
+        )
+      }
+
+      <details class="pay-edit" id="record-contribution" open={action === 'contribute' || contributions.length === 0}>
+        <summary>Record a contribution</summary>
+        <form class="form team-form" method="post" enctype="multipart/form-data">
+          <input type="hidden" name="intent" value="add-contribution" />
+          <input type="hidden" name="tab" value="funding" />
+          <div class="team-form-row">
+            <p class="field">
+              <label for="member_email">Member</label>
+              <select id="member_email" name="member_email" required>
+                <option value="">Select</option>
+                {members.map((member) => (
+                  <option value={member.email}>{member.email}</option>
+                ))}
+              </select>
+            </p>
+            <p class="field">
+              <label for="contrib_amount">Amount</label>
+              <input id="contrib_amount" name="amount" type="number" min="0.01" step="0.01" required />
+            </p>
+            <p class="field">
+              <label for="contrib_currency">Currency</label>
+              <input id="contrib_currency" name="currency" value="THB" maxlength="8" required />
+            </p>
+            <p class="field">
+              <label for="contrib_date">Date</label>
+              <input id="contrib_date" name="occurred_on" type="date" value={today} required />
+            </p>
+          </div>
+          <p class="field">
+            <label for="contrib_notes">Note</label>
+            <input id="contrib_notes" name="notes" placeholder="Optional" />
+          </p>
+          <p class="field">
+            <label for="contrib_voucher">Voucher slip</label>
+            <input id="contrib_voucher" name="voucher" type="file" accept="image/jpeg,image/png,image/webp,image/gif" />
+          </p>
+          <p class="field">
+            <label for="contrib_voucher_url">Or slip URL</label>
+            <input id="contrib_voucher_url" name="voucher_url" type="url" placeholder="https://" />
+          </p>
+          <button class="btn" type="submit">Add</button>
+        </form>
+      </details>
+
+      <h3 class="tx-heading">Transactions</h3>
+      {
+        txs.length === 0 ? (
+          <p class="muted">No transactions yet.</p>
+        ) : (
+          <ol class="tx-log" aria-label="Fund transactions">
+            {txs.map((tx) => (
+              <li class={tx.kind === 'in' ? 'tx-in' : 'tx-out'}>
+                <span>
+                  <strong>
+                    {tx.kind === 'in' ? '+' : '−'}
+                    {money(tx.amount, tx.currency)}
+                  </strong>
+                  <span>
+                    {tx.title} · {tx.date}
+                    {tx.detail ? ` · ${tx.detail}` : ''}
+                  </span>
+                </span>
+                <div class="tx-actions">
+                  <VoucherLink path={tx.voucher_url} href={slips.get(tx.voucher_url)} />
+                  {tx.delete && (
+                    <form method="post">
+                      <input type="hidden" name="tab" value="funding" />
+                      <input type="hidden" name="intent" value={tx.delete.intent} />
+                      <input
+                        type="hidden"
+                        name={tx.delete.intent === 'delete-contribution' ? 'contribution_id' : 'entry_id'}
+                        value={tx.delete.id}
+                      />
+                      <button class="btn btn-ghost" type="submit">Remove</button>
+                    </form>
+                  )}
+                </div>
+              </li>
+            ))}
+          </ol>
+        )
+      }
+    </section>
+          </>
+        )
+      }
+
+      {
+        tab === 'details' && (
+    <section class="team-card">
+      <div class="pay-head">
+        <h2>Workspace</h2>
+        <p class="muted">Logo, URLs, Slack, and login for this job. Nothing here is published on /work.</p>
+      </div>
+      <dl class="profile-facts">
+        <div>
+          <dt>Client</dt>
+          <dd>{row.client || '—'}</dd>
+        </div>
+        <div>
+          <dt>Status</dt>
+          <dd>{row.status}</dd>
+        </div>
+        <div>
+          <dt>Started</dt>
+          <dd>{row.started_on || '—'}</dd>
+        </div>
+      </dl>
+      {
+        row.notes && (
+          <p class="hub-notes">{row.notes}</p>
+        )
+      }
+      <h3 class="tx-heading">Login</h3>
+      <p class="muted">Password stays hidden until you reveal it. Each reveal is written to Activity.</p>
+      <SecretField id="view_login_user" label="Username" value={row.login_username} />
+      <SecretField id="view_login_email" label="Login email" value={row.login_email} />
+      {
+        row.login_url && (
+          <p class="field">
+            <label>Login page</label>
+            <a href={websiteHref(row.login_url)} target="_blank" rel="noopener noreferrer">
+              {row.login_url}
+            </a>
+          </p>
+        )
+      }
+      <SecretField
+        id="view_login_password"
+        label="Password"
+        revealField="password"
+        extras={[{ name: 'tab', value: 'details' }]}
+        hasValue={Boolean(row.login_password_enc)}
+        revealed={revealedLogin}
+        value={loginPassword}
+      />
+
+      {
+        caps.canEditDetails ? (
+          <form class="form team-form" method="post" enctype="multipart/form-data">
+            <input type="hidden" name="intent" value="update" />
+            <input type="hidden" name="tab" value="details" />
+            <h3 class="tx-heading">Edit</h3>
+            <div class="hub-logo-edit">
+              <ProjectMark name={row.name} src={logoHref} size="lg" />
+              <div>
+                <p class="field">
+                  <label for="logo">Logo</label>
+                  <input id="logo" name="logo" type="file" accept="image/jpeg,image/png,image/webp,image/gif" />
+                </p>
+                <p class="field">
+                  <label for="logo_url">Or image link</label>
+                  <input id="logo_url" name="logo_url" type="url" placeholder="https://" />
+                </p>
+                {
+                  row.logo_url && (
+                    <label class="check-line">
+                      <input type="checkbox" name="clear_logo" value="1" />
+                      Remove logo
+                    </label>
+                  )
+                }
+              </div>
+            </div>
+            <p class="field">
+              <label for="name">Name</label>
+              <input id="name" name="name" required value={row.name} />
+            </p>
+            <div class="team-form-row">
+              <p class="field">
+                <label for="client">Client</label>
+                <input id="client" name="client" value={row.client} />
+              </p>
+              <p class="field">
+                <label for="status">Status</label>
+                <select id="status" name="status">
+                  <option value="active" selected={row.status === 'active'}>Active</option>
+                  <option value="paused" selected={row.status === 'paused'}>Paused</option>
+                  <option value="done" selected={row.status === 'done'}>Done</option>
+                </select>
+              </p>
+              <p class="field">
+                <label for="started_on">Started</label>
+                <input id="started_on" name="started_on" type="date" value={row.started_on ?? ''} />
+              </p>
+            </div>
+            <p class="field">
+              <label for="notes">Notes</label>
+              <textarea id="notes" name="notes" rows="3">{row.notes}</textarea>
+            </p>
+            <h3 class="tx-heading">URLs</h3>
+            <div class="team-form-row">
+              {
+                PROJECT_URL_FIELDS.map((field) => (
+                  <p class="field">
+                    <label for={field.key}>{field.label}</label>
+                    <input
+                      id={field.key}
+                      name={field.key}
+                      type="url"
+                      value={row[field.key]}
+                      placeholder={field.placeholder}
+                    />
+                  </p>
+                ))
+              }
+            </div>
+            <h3 class="tx-heading">More links</h3>
+            <p class="muted">Figma, TestFlight, analytics, or anything else this job needs.</p>
+            {
+              extraRows.map((link, index) => (
+                <div class="team-form-row extra-link-row">
+                  <p class="field">
+                    <label for={`extra_label_${index}`}>Label</label>
+                    <input id={`extra_label_${index}`} name="extra_label" value={link.label} placeholder="Figma" />
+                  </p>
+                  <p class="field">
+                    <label for={`extra_url_${index}`}>URL</label>
+                    <input id={`extra_url_${index}`} name="extra_url" type="url" value={link.url} placeholder="https://" />
+                  </p>
+                </div>
+              ))
+            }
+            <h3 class="tx-heading">Login</h3>
+            {
+              !vaultReady() && (
+                <p class="muted">Set CREDENTIALS_SECRET to store a password. URLs still save.</p>
+              )
+            }
+            <div class="team-form-row">
+              <p class="field">
+                <label for="login_username">Username</label>
+                <input id="login_username" name="login_username" value={row.login_username} autocomplete="off" />
+              </p>
+              <p class="field">
+                <label for="login_email">Login email</label>
+                <input
+                  id="login_email"
+                  name="login_email"
+                  type="email"
+                  value={row.login_email}
+                  autocomplete="off"
+                />
+              </p>
+            </div>
+            <p class="field">
+              <label for="login_password">Password</label>
+              <input
+                id="login_password"
+                name="login_password"
+                type="password"
+                autocomplete="new-password"
+                placeholder={row.login_password_enc ? 'Unchanged' : ''}
+                disabled={!vaultReady()}
+              />
+            </p>
+            <div class="hero-actions">
+              <button class="btn" type="submit">Save workspace</button>
+            </div>
+          </form>
+        ) : null
+      }
+      {
+        caps.canDelete && (
+      <form class="team-danger" method="post" onsubmit="return confirm('Delete this project and its ledger entries?')">
+        <input type="hidden" name="intent" value="delete" />
+        <button class="btn btn-ghost" type="submit">Delete project</button>
+      </form>
+        )
+      }
+    </section>
+        )
+      }
+
+      {
+        tab === 'ledger' && (
+          <>
+            {
+              totals.length > 0 && (
+                <section class="team-totals" aria-label="Income and profit">
+                  {totals.map((item) => (
+                    <article class="team-stat">
+                      <p class="kicker">{item.currency} ledger</p>
+                      <dl>
+                        <div>
+                          <dt>Income</dt>
+                          <dd>{money(item.income, item.currency)}</dd>
+                        </div>
+                        <div>
+                          <dt>Expense</dt>
+                          <dd>{money(item.expense, item.currency)}</dd>
+                        </div>
+                        <div>
+                          <dt>Profit</dt>
+                          <dd>{money(item.profit, item.currency)}</dd>
+                        </div>
+                      </dl>
+                    </article>
+                  ))}
+                </section>
+              )
+            }
+
+            <IncomeExpenseChart entries={entries} />
+
+    <section class="team-card">
+      <h2>Income and expense</h2>
+      <p class="muted">Expenses come out of team funding.</p>
+      <LedgerForm
+        action={`/team/projects/${row.id}`}
+        projectId={row.id}
+        defaultKind={action === 'expense' ? 'expense' : 'income'}
+      />
+      {
+        entries.length === 0 ? (
+          <p class="muted">No entries yet.</p>
+        ) : (
+          <table class="team-table">
+            <thead>
+              <tr>
+                <th>Date</th>
+                <th>Type</th>
+                <th>Amount</th>
+                <th>Category</th>
+                <th>Slip</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody>
+              {entries.map((entry) => (
+                <tr>
+                  <td>{entry.occurred_on}</td>
+                  <td>{entry.kind}</td>
+                  <td>{money(entry.amount, entry.currency)}</td>
+                  <td>{entry.category || entry.notes || '—'}</td>
+                  <td>
+                    <VoucherLink path={entry.voucher_url} href={slips.get(entry.voucher_url)} />
+                  </td>
+                  <td>
+                    <form method="post">
+                      <input type="hidden" name="intent" value="delete-entry" />
+                      <input type="hidden" name="tab" value="ledger" />
+                      <input type="hidden" name="entry_id" value={entry.id} />
+                      <button class="btn btn-ghost" type="submit">Remove</button>
+                    </form>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )
+      }
+    </section>
+          </>
+        )
+      }
+
+      {
+        tab === 'people' && caps.canPeople && (
+          <section class="team-card">
+            <div class="pay-head">
+              <h2>People</h2>
+              <p class="muted">
+                Access is per project. A person can hold more than one role. Only studio-whitelisted emails can be added.
+              </p>
+            </div>
+            <ul class="role-picks" aria-label="Role meanings">
+              {ROLE_META.map((role) => (
+                <li>
+                  <strong>{role.label}</strong>
+                  <span class="muted">{role.hint}</span>
+                </li>
+              ))}
+            </ul>
+            {
+              crew.length === 0 ? (
+                <p class="muted">Nobody assigned yet.</p>
+              ) : (
+                crew.map((person) => (
+                  <article class="people-row">
+                    <header>
+                      <div>
+                        <strong>{personLabel(person.email, members)}</strong>
+                        {
+                          personLabel(person.email, members) !== person.email && (
+                            <span class="muted">{person.email}</span>
+                          )
+                        }
+                        <span class="role-chips">
+                          {roleLabels(person.roles).map((label) => (
+                            <span class="role-chip">{label}</span>
+                          ))}
+                        </span>
+                      </div>
+                      <form method="post" onsubmit="return confirm('Remove this person from the project?')">
+                        <input type="hidden" name="intent" value="remove-member" />
+                        <input type="hidden" name="tab" value="people" />
+                        <input type="hidden" name="email" value={person.email} />
+                        <button class="btn btn-ghost" type="submit">Remove</button>
+                      </form>
+                    </header>
+                    <form class="form team-form" method="post">
+                      <input type="hidden" name="intent" value="update-member" />
+                      <input type="hidden" name="tab" value="people" />
+                      <input type="hidden" name="email" value={person.email} />
+                      <fieldset class="role-picks">
+                        <legend class="muted">Roles</legend>
+                        {ROLE_META.map((role) => (
+                          <label>
+                            <input
+                              type="checkbox"
+                              name="roles"
+                              value={role.id}
+                              checked={parseRoles(person.roles).includes(role.id)}
+                            />
+                            <span>
+                              {role.label}
+                              <span>{role.hint}</span>
+                            </span>
+                          </label>
+                        ))}
+                      </fieldset>
+                      <button class="btn" type="submit">Save roles</button>
+                    </form>
+                  </article>
+                ))
+              )
+            }
+            <h3 class="tx-heading" id="add-person">Add from the studio list</h3>
+            {
+              invitees.length === 0 ? (
+                <p class="muted">Everyone on the whitelist is already on this project.</p>
+              ) : (
+                <form class="form team-form" method="post">
+                  <input type="hidden" name="intent" value="add-member" />
+                  <input type="hidden" name="tab" value="people" />
+                  <p class="field">
+                    <label for="people_email">Email</label>
+                    <select id="people_email" name="email" required>
+                      <option value="">Select</option>
+                      {invitees.map((member) => (
+                        <option value={member.email}>
+                          {personLabel(member.email, members) === member.email
+                            ? member.email
+                            : `${personLabel(member.email, members)} · ${member.email}`}
+                        </option>
+                      ))}
+                    </select>
+                  </p>
+                  <fieldset class="role-picks">
+                    <legend class="muted">Roles</legend>
+                    {ROLE_META.map((role) => (
+                      <label>
+                        <input type="checkbox" name="roles" value={role.id} />
+                        <span>
+                          {role.label}
+                          <span>{role.hint}</span>
+                        </span>
+                      </label>
+                    ))}
+                  </fieldset>
+                  <label class="check-line">
+                    <input type="checkbox" name="send_invite" value="1" checked />
+                    Email them about this project
+                  </label>
+                  <button class="btn" type="submit">Add to project</button>
+                </form>
+              )
+            }
+          </section>
+        )
+      }
+    </div>
+  </div>
+</Team>

@@ -1,0 +1,53 @@
+import { createServerClient, parseCookieHeader, type CookieOptions } from '@supabase/ssr';
+import type { AstroCookies } from 'astro';
+import type { User } from '@supabase/supabase-js';
+
+export const SUPER_ADMIN_EMAIL = 'onezcodes@gmail.com';
+
+export function supabaseConfigured() {
+  return Boolean(import.meta.env.PUBLIC_SUPABASE_URL && import.meta.env.PUBLIC_SUPABASE_ANON_KEY);
+}
+
+export type TeamSupabase = ReturnType<typeof createTeamSupabase>;
+
+export function createTeamSupabase(request: Request, cookies: AstroCookies) {
+  return createServerClient(import.meta.env.PUBLIC_SUPABASE_URL, import.meta.env.PUBLIC_SUPABASE_ANON_KEY, {
+    cookies: {
+      getAll() {
+        return parseCookieHeader(request.headers.get('Cookie') ?? '');
+      },
+      setAll(cookiesToSet: { name: string; value: string; options: CookieOptions }[], _headers: Record<string, string>) {
+        cookiesToSet.forEach(({ name, value, options }) => {
+          cookies.set(name, value, options);
+        });
+      },
+    },
+  });
+}
+
+export function siteUrl(request?: Request) {
+  const fromEnv = import.meta.env.PUBLIC_SITE_URL?.replace(/\/+$/, '');
+  if (fromEnv) return fromEnv;
+  if (request) return new URL(request.url).origin;
+  return 'https://www.onezcodes.com';
+}
+
+export function emailOf(user: User | null) {
+  return user?.email?.trim().toLowerCase() ?? '';
+}
+
+export function isSuperAdmin(user: User | null) {
+  return emailOf(user) === SUPER_ADMIN_EMAIL;
+}
+
+export async function isTeamMember(supabase: TeamSupabase, user: User | null) {
+  const email = emailOf(user);
+  if (!email) return false;
+  if (email === SUPER_ADMIN_EMAIL) return true;
+  const { data, error } = await supabase.from('team_members').select('email').eq('email', email).maybeSingle();
+  if (error) {
+    console.error('team_members lookup failed', error.message);
+    return false;
+  }
+  return Boolean(data);
+}

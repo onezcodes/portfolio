@@ -1,0 +1,72 @@
+---
+import { incomeExpenseCharts, money, type LedgerEntry } from '../lib/ledger';
+
+interface Props {
+  entries: Pick<LedgerEntry, 'kind' | 'amount' | 'currency' | 'occurred_on'>[];
+  title?: string;
+}
+
+const { entries, title = 'Income and expense' } = Astro.props;
+const charts = incomeExpenseCharts(entries);
+---
+
+{
+  charts.length > 0 && (
+    <section class="ie-charts" aria-label={title}>
+      {charts.map((chart) => {
+        const peak = Math.max(...chart.months.flatMap((month) => [month.income, month.expense]), 1);
+        const mix = chart.income + chart.expense;
+        const incomeShare = mix > 0 ? (chart.income / mix) * 100 : 50;
+        const expenseShare = mix > 0 ? (chart.expense / mix) * 100 : 50;
+        return (
+          <article class="ie-chart">
+            <header class="ie-head">
+              <div>
+                <p class="kicker">{chart.currency} ledger</p>
+                <h2>{title}</h2>
+              </div>
+              <p class="ie-legend">
+                <span>
+                  <span class="ie-dot income"></span> Income {money(chart.income, chart.currency)}
+                </span>
+                <span>
+                  <span class="ie-dot expense"></span> Expense {money(chart.expense, chart.currency)}
+                </span>
+              </p>
+            </header>
+
+            <div
+              class="ie-split"
+              role="img"
+              aria-label={`Income ${Math.round(incomeShare)} percent, expense ${Math.round(expenseShare)} percent`}
+            >
+              <span class="ie-split-in" style={`width:${incomeShare}%`}></span>
+              <span class="ie-split-out" style={`width:${expenseShare}%`}></span>
+            </div>
+
+            <p class="muted ie-caption">Last 6 months</p>
+            <div class="ie-bars" role="img" aria-label={`${chart.currency} income versus expense by month`}>
+              {chart.months.map((month) => (
+                <div class="ie-month">
+                  <div class="ie-pair">
+                    <span
+                      class="ie-col income"
+                      style={`height:${month.income > 0 ? Math.max((month.income / peak) * 100, 3) : 0}%`}
+                      title={`${month.label} income ${money(month.income, chart.currency)}`}
+                    ></span>
+                    <span
+                      class="ie-col expense"
+                      style={`height:${month.expense > 0 ? Math.max((month.expense / peak) * 100, 3) : 0}%`}
+                      title={`${month.label} expense ${money(month.expense, chart.currency)}`}
+                    ></span>
+                  </div>
+                  <span class="ie-label">{month.label}</span>
+                </div>
+              ))}
+            </div>
+          </article>
+        );
+      })}
+    </section>
+  )
+}
