@@ -27,14 +27,13 @@ import {
   seedMilestones,
   setMilestoneStatus,
   stageLabel,
-  currentStage,
   updateMilestone,
   sortMilestones,
   type Milestone,
 } from '../../../lib/milestones';
 import { sendProjectInvite } from '../../../lib/mail';
 import { logEvent } from '../../../lib/events';
-import { personLabel } from '../../../lib/profile';
+import { personFace, personInitial, personLabel } from '../../../lib/profile';
 import SecretField from '../../../components/SecretField.astro';
 import ProjectMark from '../../../components/ProjectMark.astro';
 import { decryptSecret, vaultReady, websiteHref } from '../../../lib/credentials';
@@ -337,6 +336,10 @@ const qrHref = slips.get(row.qr_url);
 const logoHref = slips.get(row.logo_url) ?? '';
 const links = projectLinks(row);
 const extraLinks = extraLinksOf(row.extra_links);
+const editing = action === 'edit' && caps.canEditDetails;
+const peopleEditing = tab === 'people' && action === 'edit';
+const peopleInvite = tab === 'people' && (action === 'invite' || action === 'edit');
+const hasLogin = Boolean(row.login_username || row.login_email || row.login_url || row.login_password_enc);
 const extraRows =
   extraLinks.length === 0
     ? [
@@ -349,8 +352,6 @@ const extraRows =
       : [...extraLinks, { label: '', url: '' }];
 const loginPassword = revealedLogin ? decryptSecret(row.login_password_enc) : '';
 const today = todayIso();
-const stage = currentStage(milestones);
-const stageOpen = Boolean(stage && stage.status !== 'done' && !milestones.every((item) => item.status === 'done'));
 ---
 
 <Team title={row.name}>
@@ -381,18 +382,16 @@ const stageOpen = Boolean(stage && stage.status !== 'done' && !milestones.every(
     </header>
     <nav class="quick-actions" aria-label="Quick actions">
       {
-        caps.canProgress && stageOpen && stage && (
-          <form method="post">
-            <input type="hidden" name="intent" value="milestone-done" />
-            <input type="hidden" name="tab" value="schedule" />
-            <input type="hidden" name="milestone_id" value={stage.id} />
-            <button class="btn" type="submit">Mark {stage.title} done</button>
-          </form>
-        )
-      }
-      {
-        caps.canPlan && (
-          <a class="btn btn-ghost" href={projectHref(row.id, { tab: 'schedule', action: 'stage' })}>Add stage</a>
+        row.meeting_url && (
+          <a
+            class="btn"
+            href={websiteHref(row.meeting_url)}
+            target="_blank"
+            rel="noopener noreferrer"
+            data-astro-reload
+          >
+            Join meeting
+          </a>
         )
       }
       {
@@ -413,7 +412,9 @@ const stageOpen = Boolean(stage && stage.status !== 'done' && !milestones.every(
       }
       {
         caps.canDetails && (
-          <a class="btn btn-ghost" href={projectHref(row.id, { tab: 'details' })}>Links and login</a>
+          <a class="btn btn-ghost" href={projectHref(row.id, { tab: 'details', action: caps.canEditDetails ? 'edit' : undefined })}>
+            {caps.canEditDetails ? 'Edit workspace' : 'Links and login'}
+          </a>
         )
       }
     </nav>
@@ -612,59 +613,94 @@ const stageOpen = Boolean(stage && stage.status !== 'done' && !milestones.every(
       {
         tab === 'details' && (
     <section class="team-card">
-      <div class="pay-head">
+      <div class="pay-head workspace-head">
         <h2>Workspace</h2>
-        <p class="muted">Logo, URLs, Slack, and login for this job. Nothing here is published on /work.</p>
+        {
+          caps.canEditDetails && (
+            editing ? (
+              <a class="btn btn-ghost" href={projectHref(row.id, { tab: 'details' })}>View</a>
+            ) : (
+              <a class="btn btn-ghost" href={projectHref(row.id, { tab: 'details', action: 'edit' })}>Edit</a>
+            )
+          )
+        }
       </div>
-      <dl class="profile-facts">
-        <div>
-          <dt>Client</dt>
-          <dd>{row.client || '—'}</dd>
-        </div>
-        <div>
-          <dt>Status</dt>
-          <dd>{row.status}</dd>
-        </div>
-        <div>
-          <dt>Started</dt>
-          <dd>{row.started_on || '—'}</dd>
-        </div>
-      </dl>
+      <p class="muted">Logo, URLs, Slack, and login for this job. Nothing here is published on /work.</p>
       {
-        row.notes && (
-          <p class="hub-notes">{row.notes}</p>
+        !editing && (
+          <>
+            <dl class="profile-facts">
+              <div>
+                <dt>Client</dt>
+                <dd>{row.client || '—'}</dd>
+              </div>
+              <div>
+                <dt>Status</dt>
+                <dd>{row.status}</dd>
+              </div>
+              <div>
+                <dt>Started</dt>
+                <dd>{row.started_on || '—'}</dd>
+              </div>
+            </dl>
+            {row.notes && <p class="hub-notes">{row.notes}</p>}
+            {
+              links.length > 0 && (
+                <div class="fact-list">
+                  {links.map((link) => (
+                    <div class="fact">
+                      <p class="fact-label">{link.label}</p>
+                      <p class="fact-body">
+                        <a class="fact-value" href={link.href} target="_blank" rel="noopener noreferrer">
+                          {link.url}
+                        </a>
+                      </p>
+                    </div>
+                  ))}
+                </div>
+              )
+            }
+            {
+              hasLogin && (
+                <>
+                  <h3 class="tx-heading">Login</h3>
+                  <p class="muted">Password stays hidden until you reveal it. Each reveal is written to Activity.</p>
+                  <div class="fact-list">
+                    <SecretField id="view_login_user" label="Username" value={row.login_username} />
+                    <SecretField id="view_login_email" label="Login email" value={row.login_email} />
+                    {row.login_url && (
+                      <div class="fact">
+                        <p class="fact-label">Login page</p>
+                        <p class="fact-body">
+                          <a class="fact-value" href={websiteHref(row.login_url)} target="_blank" rel="noopener noreferrer">
+                            {row.login_url}
+                          </a>
+                        </p>
+                      </div>
+                    )}
+                    <SecretField
+                      id="view_login_password"
+                      label="Password"
+                      revealField="password"
+                      extras={[{ name: 'tab', value: 'details' }]}
+                      hasValue={Boolean(row.login_password_enc)}
+                      revealed={revealedLogin}
+                      value={loginPassword}
+                    />
+                  </div>
+                </>
+              )
+            }
+          </>
         )
       }
-      <h3 class="tx-heading">Login</h3>
-      <p class="muted">Password stays hidden until you reveal it. Each reveal is written to Activity.</p>
-      <SecretField id="view_login_user" label="Username" value={row.login_username} />
-      <SecretField id="view_login_email" label="Login email" value={row.login_email} />
-      {
-        row.login_url && (
-          <p class="field">
-            <label>Login page</label>
-            <a href={websiteHref(row.login_url)} target="_blank" rel="noopener noreferrer">
-              {row.login_url}
-            </a>
-          </p>
-        )
-      }
-      <SecretField
-        id="view_login_password"
-        label="Password"
-        revealField="password"
-        extras={[{ name: 'tab', value: 'details' }]}
-        hasValue={Boolean(row.login_password_enc)}
-        revealed={revealedLogin}
-        value={loginPassword}
-      />
 
       {
-        caps.canEditDetails ? (
+        editing ? (
           <form class="form team-form" method="post" enctype="multipart/form-data">
             <input type="hidden" name="intent" value="update" />
             <input type="hidden" name="tab" value="details" />
-            <h3 class="tx-heading">Edit</h3>
+            <h3 class="tx-heading">Logo and identity</h3>
             <div class="hub-logo-edit">
               <ProjectMark name={row.name} src={logoHref} size="lg" />
               <div>
@@ -785,7 +821,7 @@ const stageOpen = Boolean(stage && stage.status !== 'done' && !milestones.every(
         ) : null
       }
       {
-        caps.canDelete && (
+        editing && caps.canDelete && (
       <form class="team-danger" method="post" onsubmit="return confirm('Delete this project and its ledger entries?')">
         <input type="hidden" name="intent" value="delete" />
         <button class="btn btn-ghost" type="submit">Delete project</button>
@@ -884,45 +920,51 @@ const stageOpen = Boolean(stage && stage.status !== 'done' && !milestones.every(
       {
         tab === 'people' && caps.canPeople && (
           <section class="team-card">
-            <div class="pay-head">
+            <div class="pay-head workspace-head">
               <h2>People</h2>
-              <p class="muted">
-                Access is per project. A person can hold more than one role. Only studio-whitelisted emails can be added.
-              </p>
+              <nav class="quick-actions" aria-label="People actions">
+                {
+                  peopleEditing ? (
+                    <a class="btn btn-ghost" href={projectHref(row.id, { tab: 'people' })}>View</a>
+                  ) : (
+                    <a class="btn btn-ghost" href={projectHref(row.id, { tab: 'people', action: 'edit' })}>Edit</a>
+                  )
+                }
+                {
+                  !peopleInvite && invitees.length > 0 && (
+                    <a class="btn btn-ghost" href={`${projectHref(row.id, { tab: 'people', action: 'invite' })}#add-person`}>
+                      Add person
+                    </a>
+                  )
+                }
+              </nav>
             </div>
-            <ul class="role-picks" aria-label="Role meanings">
-              {ROLE_META.map((role) => (
-                <li>
-                  <strong>{role.label}</strong>
-                  <span class="muted">{role.hint}</span>
-                </li>
-              ))}
-            </ul>
+            <p class="muted">Access is per project. A person can hold more than one role.</p>
             {
               crew.length === 0 ? (
                 <p class="muted">Nobody assigned yet.</p>
-              ) : (
-                crew.map((person) => (
+              ) : peopleEditing ? (
+                crew.map((person) => {
+                  const face = personFace(person.email, members);
+                  return (
                   <article class="people-row">
                     <header>
-                      <div>
-                        <strong>{personLabel(person.email, members)}</strong>
-                        {
-                          personLabel(person.email, members) !== person.email && (
-                            <span class="muted">{person.email}</span>
-                          )
-                        }
-                        <span class="role-chips">
-                          {roleLabels(person.roles).map((label) => (
-                            <span class="role-chip">{label}</span>
-                          ))}
+                      <div class="member-id">
+                        {face.avatarUrl ? (
+                          <img class="face" src={face.avatarUrl} alt="" width="36" height="36" />
+                        ) : (
+                          <span class="face" aria-hidden="true">{personInitial(face.name, face.email)}</span>
+                        )}
+                        <span>
+                          <strong>{face.name}</strong>
+                          {face.name !== person.email && <span class="muted">{person.email}</span>}
                         </span>
                       </div>
                       <form method="post" onsubmit="return confirm('Remove this person from the project?')">
                         <input type="hidden" name="intent" value="remove-member" />
                         <input type="hidden" name="tab" value="people" />
                         <input type="hidden" name="email" value={person.email} />
-                        <button class="btn btn-ghost" type="submit">Remove</button>
+                        <button class="btn-text" type="submit">Remove</button>
                       </form>
                     </header>
                     <form class="form team-form" method="post">
@@ -949,48 +991,83 @@ const stageOpen = Boolean(stage && stage.status !== 'done' && !milestones.every(
                       <button class="btn" type="submit">Save roles</button>
                     </form>
                   </article>
-                ))
+                  );
+                })
+              ) : (
+                <ul class="member-list">
+                  {crew.map((person) => {
+                    const face = personFace(person.email, members);
+                    return (
+                      <li class="member-hit">
+                        <div class="member-id">
+                          {face.avatarUrl ? (
+                            <img class="face" src={face.avatarUrl} alt="" width="36" height="36" />
+                          ) : (
+                            <span class="face" aria-hidden="true">{personInitial(face.name, face.email)}</span>
+                          )}
+                          <span>
+                            <strong>{face.name}</strong>
+                            {face.name !== person.email && <span>{person.email}</span>}
+                          </span>
+                        </div>
+                        <div class="member-actions">
+                          <span class="role-chips">
+                            {roleLabels(person.roles).map((label) => (
+                              <span class="role-chip">{label}</span>
+                            ))}
+                          </span>
+                        </div>
+                      </li>
+                    );
+                  })}
+                </ul>
               )
             }
-            <h3 class="tx-heading" id="add-person">Add from the studio list</h3>
             {
-              invitees.length === 0 ? (
-                <p class="muted">Everyone on the whitelist is already on this project.</p>
-              ) : (
-                <form class="form team-form" method="post">
-                  <input type="hidden" name="intent" value="add-member" />
-                  <input type="hidden" name="tab" value="people" />
-                  <p class="field">
-                    <label for="people_email">Email</label>
-                    <select id="people_email" name="email" required>
-                      <option value="">Select</option>
-                      {invitees.map((member) => (
-                        <option value={member.email}>
-                          {personLabel(member.email, members) === member.email
-                            ? member.email
-                            : `${personLabel(member.email, members)} · ${member.email}`}
-                        </option>
-                      ))}
-                    </select>
-                  </p>
-                  <fieldset class="role-picks">
-                    <legend class="muted">Roles</legend>
-                    {ROLE_META.map((role) => (
-                      <label>
-                        <input type="checkbox" name="roles" value={role.id} />
-                        <span>
-                          {role.label}
-                          <span>{role.hint}</span>
-                        </span>
-                      </label>
-                    ))}
-                  </fieldset>
-                  <label class="check-line">
-                    <input type="checkbox" name="send_invite" value="1" checked />
-                    Email them about this project
-                  </label>
-                  <button class="btn" type="submit">Add to project</button>
-                </form>
+              peopleInvite && (
+                <>
+                  <h3 class="tx-heading" id="add-person">Add from the studio list</h3>
+                  {
+                    invitees.length === 0 ? (
+                      <p class="muted">Everyone on the whitelist is already on this project.</p>
+                    ) : (
+                      <form class="form team-form" method="post">
+                        <input type="hidden" name="intent" value="add-member" />
+                        <input type="hidden" name="tab" value="people" />
+                        <p class="field">
+                          <label for="people_email">Email</label>
+                          <select id="people_email" name="email" required>
+                            <option value="">Select</option>
+                            {invitees.map((member) => (
+                              <option value={member.email}>
+                                {personLabel(member.email, members) === member.email
+                                  ? member.email
+                                  : `${personLabel(member.email, members)} · ${member.email}`}
+                              </option>
+                            ))}
+                          </select>
+                        </p>
+                        <fieldset class="role-picks">
+                          <legend class="muted">Roles</legend>
+                          {ROLE_META.map((role) => (
+                            <label>
+                              <input type="checkbox" name="roles" value={role.id} />
+                              <span>
+                                {role.label}
+                                <span>{role.hint}</span>
+                              </span>
+                            </label>
+                          ))}
+                        </fieldset>
+                        <label class="check-line">
+                          <input type="checkbox" name="send_invite" value="1" checked />
+                          Email them about this project
+                        </label>
+                        <button class="btn" type="submit">Add to project</button>
+                      </form>
+                    )
+                  }
+                </>
               )
             }
           </section>

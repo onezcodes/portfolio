@@ -1,6 +1,14 @@
 import { site } from '../data/site';
 import { siteUrl } from './supabase';
 
+const gold = '#FFB800';
+const ink = '#171614';
+const canvas = '#FAFAF8';
+const surface = '#FFFFFF';
+const muted = '#6B6660';
+const line = '#E8E4DC';
+const font = `'Outfit', 'Segoe UI', 'Helvetica Neue', Arial, sans-serif`;
+
 export function mailConfigured() {
   return Boolean(import.meta.env.RESEND_API_KEY);
 }
@@ -9,18 +17,66 @@ function fromAddress() {
   return import.meta.env.MAIL_FROM?.trim() || 'Onez Codes <onboarding@resend.dev>';
 }
 
-function wrapHtml(body: string) {
+function escapeHtml(value: string) {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
+function wrapHtml(inner: string) {
+  const origin = site.url.replace(/\/+$/, '');
+  const logo = `${origin}/apple-touch-icon.png`;
+
   return `<!doctype html>
-<html>
-  <body style="margin:0;background:#FAFAF8;font-family:Georgia,serif;color:#111;">
-    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background:#FAFAF8;padding:32px 16px;">
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="light" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600&display=swap" rel="stylesheet" />
+  </head>
+  <body style="margin:0;padding:0;background:${canvas};">
+    <span style="display:none !important;visibility:hidden;opacity:0;height:0;width:0;overflow:hidden;mso-hide:all;">
+      ${site.name} · ${site.tagline}
+    </span>
+    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background:${canvas};">
       <tr>
-        <td align="center">
-          <table role="presentation" width="560" cellspacing="0" cellpadding="0" style="max-width:560px;background:#fff;border:1px solid #E6E2D8;padding:32px;">
+        <td align="center" style="padding:40px 20px;">
+          <table role="presentation" width="560" cellspacing="0" cellpadding="0" style="width:100%;max-width:560px;font-family:${font};color:${ink};">
             <tr>
-              <td>
-                <p style="margin:0 0 8px;font-size:12px;letter-spacing:0.12em;text-transform:uppercase;color:#C4A35A;">${site.name}</p>
-                ${body}
+              <td style="padding:0 4px 20px;">
+                <table role="presentation" cellspacing="0" cellpadding="0">
+                  <tr>
+                    <td style="vertical-align:middle;padding-right:12px;">
+                      <img src="${logo}" width="36" height="36" alt="" style="display:block;border:0;border-radius:8px;" />
+                    </td>
+                    <td style="vertical-align:middle;">
+                      <p style="margin:0;font-size:15px;font-weight:600;letter-spacing:0.01em;line-height:1.15;color:${ink};">${site.name}</p>
+                      <p style="margin:3px 0 0;font-size:11px;letter-spacing:0.04em;text-transform:uppercase;color:${muted};">${site.tagline}</p>
+                    </td>
+                  </tr>
+                </table>
+              </td>
+            </tr>
+            <tr>
+              <td style="height:3px;line-height:3px;font-size:0;background:${gold};">&nbsp;</td>
+            </tr>
+            <tr>
+              <td style="background:${surface};border:1px solid ${line};border-top:0;padding:36px 32px 32px;">
+                ${inner}
+              </td>
+            </tr>
+            <tr>
+              <td style="padding:22px 4px 0;color:${muted};font-size:12px;line-height:1.55;">
+                <p style="margin:0 0 6px;">${site.name} · Studio</p>
+                <p style="margin:0;">
+                  <a href="${origin}" style="color:${muted};text-decoration:none;border-bottom:1px solid ${gold};">${origin.replace(/^https:\/\//, '')}</a>
+                  · ${site.email}
+                </p>
               </td>
             </tr>
           </table>
@@ -29,6 +85,29 @@ function wrapHtml(body: string) {
     </table>
   </body>
 </html>`;
+}
+
+function letter(opts: {
+  kicker: string;
+  heading: string;
+  body: string;
+  cta: string;
+  href: string;
+  note: string;
+}) {
+  return `
+    <p style="margin:0 0 14px;font-size:11px;font-weight:500;letter-spacing:0.14em;text-transform:uppercase;color:${gold};">${opts.kicker}</p>
+    <h1 style="margin:0 0 16px;font-size:28px;font-weight:600;letter-spacing:-0.03em;line-height:1.15;color:${ink};">${opts.heading}</h1>
+    <p style="margin:0 0 28px;font-size:16px;line-height:1.6;color:${ink};">${opts.body}</p>
+    <table role="presentation" cellspacing="0" cellpadding="0" style="margin:0 0 28px;">
+      <tr>
+        <td style="background:${gold};border:1px solid ${gold};">
+          <a href="${opts.href}" style="display:inline-block;padding:13px 22px;font-size:15px;font-weight:600;letter-spacing:0.01em;color:${ink};text-decoration:none;">${opts.cta}</a>
+        </td>
+      </tr>
+    </table>
+    <p style="margin:0;padding-top:20px;border-top:1px solid ${line};font-size:13px;line-height:1.55;color:${muted};">${opts.note}</p>
+  `;
 }
 
 export async function sendMail(opts: { to: string; subject: string; text: string; html: string }) {
@@ -66,12 +145,14 @@ export function teamLoginUrl(request: Request) {
 export function teamInvite(loginUrl: string) {
   const subject = `You're invited to the ${site.name} team app`;
   const text = `You've been added to the ${site.name} studio team.\n\nSign in with Google or GitHub using this same email:\n${loginUrl}\n\nIf you were not expecting this, ignore the message.`;
-  const html = `
-    <h1 style="margin:0 0 12px;font-size:28px;font-weight:600;">You're on the team</h1>
-    <p style="margin:0 0 16px;line-height:1.5;">You've been added to the ${site.name} studio app. Sign in with Google or GitHub using this email address.</p>
-    <p style="margin:0 0 24px;"><a href="${loginUrl}" style="display:inline-block;background:#ffb800;color:#111;text-decoration:none;font-weight:600;padding:12px 18px;">Sign in</a></p>
-    <p style="margin:0;color:#666;font-size:14px;line-height:1.5;">If the button does not work, open ${loginUrl}</p>
-  `;
+  const html = letter({
+    kicker: 'Studio',
+    heading: "You're on the team",
+    body: `You've been added to the ${site.name} studio app. Sign in with Google or GitHub using this email address.`,
+    cta: 'Sign in',
+    href: loginUrl,
+    note: `If the button does not work, open ${loginUrl}. If you were not expecting this, you can ignore it.`,
+  });
   return { subject, text, html };
 }
 
@@ -79,12 +160,14 @@ export function projectInvite(projectName: string, roles: string[], loginUrl: st
   const roleList = roles.join(', ');
   const subject = `You've been added to ${projectName}`;
   const text = `You've been added to ${projectName} on the ${site.name} team app as: ${roleList}.\n\nSign in:\n${loginUrl}`;
-  const html = `
-    <h1 style="margin:0 0 12px;font-size:28px;font-weight:600;">${projectName}</h1>
-    <p style="margin:0 0 16px;line-height:1.5;">You've been added to this job as <strong>${roleList}</strong>.</p>
-    <p style="margin:0 0 24px;"><a href="${loginUrl}" style="display:inline-block;background:#ffb800;color:#111;text-decoration:none;font-weight:600;padding:12px 18px;">Open the team app</a></p>
-    <p style="margin:0;color:#666;font-size:14px;line-height:1.5;">Sign in with Google or GitHub using this email. ${loginUrl}</p>
-  `;
+  const html = letter({
+    kicker: 'Project',
+    heading: escapeHtml(projectName),
+    body: `You've been added to this job as <strong>${escapeHtml(roleList)}</strong>. Sign in with Google or GitHub using this email.`,
+    cta: 'Open the team app',
+    href: loginUrl,
+    note: `If the button does not work, open ${loginUrl}.`,
+  });
   return { subject, text, html };
 }
 
@@ -101,12 +184,14 @@ export async function sendProjectInvite(to: string, projectName: string, roles: 
 export function vaultInvite(title: string, loginUrl: string) {
   const subject = `You've been given access to ${title}`;
   const text = `You've been given access to studio credentials “${title}” on the ${site.name} team app.\n\nSign in:\n${loginUrl}`;
-  const html = `
-    <h1 style="margin:0 0 12px;font-size:28px;font-weight:600;">Shared credentials</h1>
-    <p style="margin:0 0 16px;line-height:1.5;">You've been given access to <strong>${title}</strong>.</p>
-    <p style="margin:0 0 24px;"><a href="${loginUrl}" style="display:inline-block;background:#ffb800;color:#111;text-decoration:none;font-weight:600;padding:12px 18px;">Open credentials</a></p>
-    <p style="margin:0;color:#666;font-size:14px;line-height:1.5;">Sign in with Google or GitHub using this email. ${loginUrl}</p>
-  `;
+  const html = letter({
+    kicker: 'Credentials',
+    heading: 'Shared access',
+    body: `You've been given access to <strong>${escapeHtml(title)}</strong> in the studio vault.`,
+    cta: 'Open credentials',
+    href: loginUrl,
+    note: `Sign in with Google or GitHub using this email. If the button does not work, open ${loginUrl}.`,
+  });
   return { subject, text, html };
 }
 

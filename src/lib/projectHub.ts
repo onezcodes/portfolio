@@ -6,6 +6,7 @@ import { isHttpUrl, storedImageFromForm, voucherHrefs } from './vouchers';
 export type ExtraLink = { label: string; url: string };
 
 export const PROJECT_URL_FIELDS = [
+  { key: 'meeting_url', label: 'Meeting', placeholder: 'https://meet.google.com/…' },
   { key: 'website_url', label: 'Production', placeholder: 'https://' },
   { key: 'staging_url', label: 'Staging', placeholder: 'https://staging.' },
   { key: 'admin_url', label: 'Admin / CMS', placeholder: 'https://admin.' },
@@ -62,6 +63,7 @@ export function extraLinksFromForm(form: FormData): ExtraLink[] | null {
 
 export function hubFromForm(form: FormData) {
   const urls: Record<ProjectUrlKey, string> = {
+    meeting_url: '',
     website_url: '',
     staging_url: '',
     admin_url: '',

@@ -21,6 +21,7 @@ export type Project = {
   admin_url: string;
   repo_url: string;
   slack_url: string;
+  meeting_url: string;
   login_url: string;
   login_username: string;
   login_email: string;
