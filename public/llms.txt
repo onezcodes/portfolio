@@ -23,6 +23,7 @@
 - SayDiagram (live): https://saydiagram.com — Mermaid diagram platform
 - Lumiere (coming soon) — tarot marketplace, iOS and web
 - Stride (coming soon) — AI fitness coach, React Native and Laravel
+- OnezVPN (coming soon) — iOS VPN, SwiftUI and Network Extension
 
 ## Stack
 

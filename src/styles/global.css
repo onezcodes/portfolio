@@ -1037,6 +1037,10 @@ html.js-reveal .is-home .work-list .work-card:nth-child(4).is-in {
   animation-delay: 0.3s;
 }
 
+html.js-reveal .is-home .work-list .work-card:nth-child(5).is-in {
+  animation-delay: 0.4s;
+}
+
 html.js-reveal .is-home .section-head:not(.is-in) .kicker::before {
   transform: scaleX(0);
   transform-origin: left;

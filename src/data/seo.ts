@@ -11,7 +11,7 @@ export const pages = {
   work: {
     title: 'Work',
     description:
-      'Selected software from Onez Codes: Final Third Zone and SayDiagram are live; Lumiere and Stride are coming soon. Web, iOS, and Android products.',
+      'Selected software from Onez Codes: Final Third Zone and SayDiagram are live; Lumiere, Stride, and OnezVPN are coming soon. Web, iOS, and Android products.',
   },
   services: {
     title: 'Services',

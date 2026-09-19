@@ -1,6 +1,7 @@
 import type { ImageMetadata } from 'astro';
 import ftzLogo from '../assets/ftz-logo.webp';
 import lumiereLogo from '../assets/lumiere-logo.webp';
+import onezvpnLogo from '../assets/onezvpn-logo.webp';
 import saydiagramLogo from '../assets/saydiagram-logo.webp';
 import strideLogo from '../assets/stride-logo.webp';
 
@@ -139,6 +140,16 @@ export const projects: Project[] = [
     featured: true,
     comingSoon: true,
     logo: strideLogo,
+  },
+  {
+    title: 'OnezVPN',
+    sector: 'Privacy',
+    outcome:
+      'An iOS VPN for private, censorship-resistant tunnels — VLESS + Reality, Trojan, and Hysteria2, with Asia-first servers.',
+    stack: ['SwiftUI', 'Network Extension', 'Hysteria2'],
+    featured: true,
+    comingSoon: true,
+    logo: onezvpnLogo,
   },
 ];
 
