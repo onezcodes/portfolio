@@ -1,10 +1,5 @@
 ---
 import Base from '../../layouts/Base.astro';
-import { isTeamMember } from '../../lib/supabase';
-
-if (Astro.locals.user && Astro.locals.supabase && (await isTeamMember(Astro.locals.supabase, Astro.locals.user))) {
-  return Astro.redirect('/team');
-}
 
 const errors: Record<string, string> = {
   'not-on-team':

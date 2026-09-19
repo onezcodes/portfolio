@@ -8,8 +8,8 @@ const path = Astro.url.pathname;
 
 <header class="site-header">
   <div class="wrap header-inner">
-    <a class="brand" href="/">
-      <Image src={logo} alt="" width={80} height={80} densities={[1, 2]} />
+    <a class="brand" href="/" data-astro-prefetch="hover">
+      <Image src={logo} alt="" width={40} height={40} densities={[1]} />
       <span class="brand-name">
         <strong>{site.name}</strong>
         <span>{site.tagline}</span>
@@ -31,7 +31,7 @@ const path = Astro.url.pathname;
           {
             nav.map((item) => (
               <li>
-                <a href={item.href} aria-current={path === item.href ? 'page' : undefined}>
+                <a href={item.href} data-astro-prefetch="hover" aria-current={path === item.href ? 'page' : undefined}>
                   {item.label}
                 </a>
               </li>
@@ -59,9 +59,11 @@ const path = Astro.url.pathname;
 </style>
 
 <script is:inline>
-  const toggle = document.getElementById('menu-toggle');
-  const panel = document.getElementById('nav-panel');
-  if (toggle && panel) {
+  function bindTeamMenu() {
+    const toggle = document.getElementById('menu-toggle');
+    const panel = document.getElementById('nav-panel');
+    if (!toggle || !panel || toggle.dataset.bound === '1') return;
+    toggle.dataset.bound = '1';
     toggle.addEventListener('click', () => {
       const open = toggle.getAttribute('aria-expanded') === 'true';
       toggle.setAttribute('aria-expanded', String(!open));
@@ -74,4 +76,6 @@ const path = Astro.url.pathname;
       });
     });
   }
+  bindTeamMenu();
+  document.addEventListener('astro:page-load', bindTeamMenu);
 </script>

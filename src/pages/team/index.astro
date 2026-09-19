@@ -13,25 +13,29 @@ import ProjectMark from '../../components/ProjectMark.astro';
 
 const supabase = Astro.locals.supabase;
 const studio = Astro.locals.studio;
+const ledgerSelect = 'kind, amount, currency, project_id, occurred_on, category';
 
 const [{ data: projects }, { data: entries }, { data: contribs }, { data: milestoneRows }, { data: eventRows }, creds] =
   await Promise.all([
-    supabase.from('projects').select('*').order('updated_at', { ascending: false }),
-    supabase.from('ledger_entries').select('*').order('occurred_on', { ascending: false }).limit(12),
-    supabase.from('project_contributions').select('project_id, amount, currency'),
+    supabase.from('projects').select('id, name, client, status, logo_url').order('updated_at', { ascending: false }),
+    studio?.canLedger
+      ? supabase.from('ledger_entries').select(ledgerSelect).order('occurred_on', { ascending: false })
+      : Promise.resolve({ data: [] }),
+    studio?.canLedger
+      ? supabase.from('project_contributions').select('project_id, amount, currency')
+      : Promise.resolve({ data: [] }),
     supabase.from('project_milestones').select('project_id, title, status, estimated_on, sort_order'),
-    supabase.from('studio_events').select('*').order('created_at', { ascending: false }).limit(8),
+    supabase.from('studio_events').select('id, action, entity_type, entity_id, project_id, actor_email, detail, created_at').order('created_at', { ascending: false }).limit(8),
     studio?.canVault
       ? supabase.from('studio_credentials').select('id, title, updated_at')
       : Promise.resolve({ data: [] }),
   ]);
 
 const projectRows = (projects ?? []) as Project[];
-const recent = (entries ?? []) as LedgerEntry[];
-
-const { data: allEntries } = await supabase.from('ledger_entries').select('kind, amount, currency, project_id, occurred_on');
-const totals = totalsByCurrency((allEntries ?? []) as LedgerEntry[]);
-const expenseRows = (allEntries ?? []) as LedgerEntry[];
+const allEntries = (entries ?? []) as LedgerEntry[];
+const recent = allEntries.slice(0, 12);
+const totals = totalsByCurrency(allEntries);
+const expenseRows = allEntries;
 const contribRows = contribs ?? [];
 const stages = stagesByProject((milestoneRows ?? []) as Milestone[]);
 
@@ -157,7 +161,7 @@ const marks = await logoHrefs(supabase, projectRows);
               )
             }
           </section>
-          <IncomeExpenseChart entries={(allEntries ?? []) as LedgerEntry[]} />
+          <IncomeExpenseChart entries={allEntries} />
         </>
       )
     }

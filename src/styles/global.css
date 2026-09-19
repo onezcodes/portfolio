@@ -28,6 +28,42 @@ html {
   scroll-padding-top: calc(var(--header) + 0.75rem);
 }
 
+.nav-progress,
+html.is-navigating .nav-progress {
+  display: block;
+}
+
+.nav-progress {
+  position: fixed;
+  top: 0;
+  left: 0;
+  z-index: 100;
+  width: 0;
+  height: 2px;
+  pointer-events: none;
+  background: var(--gold);
+  opacity: 0;
+}
+
+html.is-navigating .nav-progress {
+  opacity: 1;
+  animation: nav-progress 0.7s ease-out forwards;
+}
+
+@keyframes nav-progress {
+  0% {
+    width: 0;
+    opacity: 1;
+  }
+  80% {
+    width: 78%;
+  }
+  100% {
+    width: 92%;
+    opacity: 1;
+  }
+}
+
 html,
 body {
   margin: 0;

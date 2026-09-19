@@ -5,6 +5,7 @@ import { Image } from 'astro:assets';
 import logo from '../assets/logo.webp';
 import { site } from '../data/site';
 import { emailOf, isSuperAdmin } from '../lib/supabase';
+import NavChrome from '../components/NavChrome.astro';
 
 interface Props {
   title: string;
@@ -46,13 +47,14 @@ function current(href: string) {
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <meta name="theme-color" content="#FAFAF8" />
     <meta name="color-scheme" content="light" />
+    <NavChrome />
   </head>
   <body class="team-body">
     <a class="skip-link" href="#main">Skip to content</a>
     <header class="site-header">
       <div class="wrap header-inner team-header">
-        <a class="brand" href="/team">
-          <Image src={logo} alt="" width={80} height={80} densities={[1, 2]} />
+        <a class="brand" href="/team" data-astro-prefetch="hover">
+          <Image src={logo} alt="" width={40} height={40} densities={[1]} />
           <span class="brand-name">
             <strong>Team</strong>
             <span>{site.name}</span>
@@ -63,7 +65,7 @@ function current(href: string) {
             {
               links.map((item) => (
                 <li>
-                  <a href={item.href} aria-current={current(item.href) ? 'page' : undefined}>
+                  <a href={item.href} data-astro-prefetch="hover" aria-current={current(item.href) ? 'page' : undefined}>
                     {item.label}
                   </a>
                 </li>
@@ -74,7 +76,7 @@ function current(href: string) {
         <div class="team-user">
           {
             email && (
-              <a class="team-profile" href="/team/profile" aria-current={path === '/team/profile' ? 'page' : undefined}>
+              <a class="team-profile" href="/team/profile" data-astro-prefetch="hover" aria-current={path === '/team/profile' ? 'page' : undefined}>
                 {studio?.avatarUrl ? (
                   <img class="team-avatar" src={studio.avatarUrl} alt="" width="32" height="32" />
                 ) : (

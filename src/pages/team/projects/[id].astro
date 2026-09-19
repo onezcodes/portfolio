@@ -276,20 +276,40 @@ if (Astro.request.method === 'POST') {
   }
 }
 
-const { data: project, error } = await supabase.from('projects').select('*').eq('id', id).maybeSingle();
+const tab = pickTab(Astro.url.searchParams.get('tab'), caps);
+const action = Astro.url.searchParams.get('action') ?? '';
+const calCursor = parseMonth(Astro.url.searchParams.get('month'), new Date());
+const needMoney = tab === 'funding' || tab === 'ledger' || (tab === 'schedule' && caps.canFinance);
+const needMembers = tab === 'people' || tab === 'funding';
+const needCrew = tab === 'people';
+const none = { data: [] as never[] };
+
+const [
+  { data: project, error },
+  { data: milestoneRows },
+  { data: entryRows },
+  { data: contribRows },
+  { data: memberRows },
+  { data: crewRows },
+] = await Promise.all([
+  supabase.from('projects').select('*').eq('id', id).maybeSingle(),
+  supabase.from('project_milestones').select('*').eq('project_id', id).order('sort_order'),
+  needMoney
+    ? supabase.from('ledger_entries').select('*').eq('project_id', id).order('occurred_on', { ascending: false })
+    : Promise.resolve(none),
+  needMoney
+    ? supabase.from('project_contributions').select('*').eq('project_id', id).order('occurred_on', { ascending: false })
+    : Promise.resolve(none),
+  needMembers ? supabase.from('team_members').select('*').order('email') : Promise.resolve(none),
+  needCrew
+    ? supabase.from('project_members').select('email, roles').eq('project_id', id).order('email')
+    : Promise.resolve(none),
+]);
 if (error || !project) {
   return Astro.redirect('/team/projects?error=not-found');
 }
 
 const row = project as Project;
-const [{ data: entryRows }, { data: contribRows }, { data: memberRows }, { data: milestoneRows }, { data: crewRows }] =
-  await Promise.all([
-    supabase.from('ledger_entries').select('*').eq('project_id', id).order('occurred_on', { ascending: false }),
-    supabase.from('project_contributions').select('*').eq('project_id', id).order('occurred_on', { ascending: false }),
-    supabase.from('team_members').select('*').order('email'),
-    supabase.from('project_milestones').select('*').eq('project_id', id).order('sort_order'),
-    supabase.from('project_members').select('email, roles').eq('project_id', id).order('email'),
-  ]);
 const entries = (entryRows ?? []) as LedgerEntry[];
 const contributions = (contribRows ?? []) as Contribution[];
 const members = (memberRows ?? []) as TeamMember[];
@@ -307,12 +327,14 @@ const fundRemaining = funding.map((item) => money(item.remaining, item.currency)
 const fundIn = funding.map((item) => money(item.funded, item.currency)).join(' · ');
 const fundOut = funding.map((item) => money(item.spent, item.currency)).join(' · ');
 const slips = await voucherHrefs(supabase, [
-  ...entries,
-  ...contributions.map((row) => ({ voucher_url: row.voucher_url })),
+  ...(tab === 'funding' || tab === 'ledger'
+    ? [...entries, ...contributions.map((item) => ({ voucher_url: item.voucher_url }))]
+    : []),
+  { voucher_url: row.qr_url },
+  { voucher_url: row.logo_url },
 ]);
-const qrHrefs = await voucherHrefs(supabase, [{ voucher_url: row.qr_url }, { voucher_url: row.logo_url }]);
-const qrHref = qrHrefs.get(row.qr_url);
-const logoHref = qrHrefs.get(row.logo_url) ?? '';
+const qrHref = slips.get(row.qr_url);
+const logoHref = slips.get(row.logo_url) ?? '';
 const links = projectLinks(row);
 const extraLinks = extraLinksOf(row.extra_links);
 const extraRows =
@@ -327,11 +349,8 @@ const extraRows =
       : [...extraLinks, { label: '', url: '' }];
 const loginPassword = revealedLogin ? decryptSecret(row.login_password_enc) : '';
 const today = todayIso();
-const calCursor = parseMonth(Astro.url.searchParams.get('month'), new Date());
-const tab = pickTab(Astro.url.searchParams.get('tab'), caps);
-const action = Astro.url.searchParams.get('action') ?? '';
 const stage = currentStage(milestones);
-const stageOpen = Boolean(stage && stage.status !== 'done' && !milestones.every((row) => row.status === 'done'));
+const stageOpen = Boolean(stage && stage.status !== 'done' && !milestones.every((item) => item.status === 'done'));
 ---
 
 <Team title={row.name}>
@@ -403,7 +422,7 @@ const stageOpen = Boolean(stage && stage.status !== 'done' && !milestones.every(
     <nav class="project-tabs" aria-label="Project sections">
       {
         caps.tabs.map((item) => (
-          <a href={projectHref(row.id, { tab: item.id })} aria-current={tab === item.id ? 'page' : undefined}>
+          <a href={projectHref(row.id, { tab: item.id })} data-astro-prefetch="hover" aria-current={tab === item.id ? 'page' : undefined}>
             {item.label}
           </a>
         ))

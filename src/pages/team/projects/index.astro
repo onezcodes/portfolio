@@ -42,13 +42,17 @@ if (Astro.request.method === 'POST') {
   return Astro.redirect(`/team/projects/${data.id}?notice=created`);
 }
 
-const { data } = await supabase.from('projects').select('*').order('updated_at', { ascending: false });
-const projects = (data ?? []) as Project[];
-const [{ data: contribs }, { data: expenses }, { data: milestoneRows }] = await Promise.all([
-  supabase.from('project_contributions').select('project_id, amount, currency'),
-  supabase.from('ledger_entries').select('project_id, amount, currency, kind'),
+const [{ data }, { data: contribs }, { data: expenses }, { data: milestoneRows }] = await Promise.all([
+  supabase.from('projects').select('id, name, client, status, logo_url, updated_at').order('updated_at', { ascending: false }),
+  studio?.canLedger
+    ? supabase.from('project_contributions').select('project_id, amount, currency')
+    : Promise.resolve({ data: [] }),
+  studio?.canLedger
+    ? supabase.from('ledger_entries').select('project_id, amount, currency, kind')
+    : Promise.resolve({ data: [] }),
   supabase.from('project_milestones').select('project_id, title, status, estimated_on, sort_order'),
 ]);
+const projects = (data ?? []) as Project[];
 const contribRows = contribs ?? [];
 const expenseRows = (expenses ?? []) as Pick<LedgerEntry, 'project_id' | 'amount' | 'currency' | 'kind'>[];
 const stages = stagesByProject((milestoneRows ?? []) as Milestone[]);

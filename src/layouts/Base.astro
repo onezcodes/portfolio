@@ -5,6 +5,7 @@ import { site } from '../data/site';
 import { pages, canonicalUrl, jsonLdGraph, origin } from '../data/seo';
 import Nav from '../components/Nav.astro';
 import Footer from '../components/Footer.astro';
+import NavChrome from '../components/NavChrome.astro';
 import logo from '../assets/logo.webp';
 
 interface Props {
@@ -92,6 +93,7 @@ const jsonLd = jsonLdGraph({ path, title: pageTitle, description });
     <meta name="color-scheme" content="light" />
     <meta name="referrer" content="origin-when-cross-origin" />
     <meta name="generator" content={Astro.generator} />
+    <NavChrome />
     <script type="application/ld+json" set:html={JSON.stringify(jsonLd)} />
     {home && (
       <script is:inline>

@@ -33,6 +33,7 @@ export type ProjectCaps = {
 };
 
 export type StudioAccess = {
+  ok: boolean;
   email: string;
   superAdmin: boolean;
   canLedger: boolean;
@@ -133,47 +134,50 @@ export async function loadStudioAccess(supabase: TeamSupabase, user: User | null
   const email = emailOf(user);
   const superAdmin = isSuperAdmin(user);
   const byProject = new Map<string, ProjectRole[]>();
-
-  if (email) {
-    const { data, error } = await supabase.from('project_members').select('project_id, roles').eq('email', email);
-    if (error) console.error('project_members lookup failed', error.message);
-    for (const row of data ?? []) {
-      byProject.set(row.project_id as string, parseRoles(row.roles));
-    }
-  }
-
-  const canLedger =
-    superAdmin || [...byProject.values()].some((roles) => roles.includes('lead') || roles.includes('collaborator'));
-
-  let canVault = superAdmin;
-  if (email && !superAdmin) {
-    const { count, error: grantError } = await supabase
-      .from('studio_credential_access')
-      .select('credential_id', { count: 'exact', head: true })
-      .eq('email', email);
-    if (grantError) console.error('credential access lookup failed', grantError.message);
-    canVault = (count ?? 0) > 0;
-  }
-
-  let displayName = oauthName(user);
-  let jobTitle = '';
-  if (email) {
-    const { data: profile } = await supabase
-      .from('team_members')
-      .select('display_name, job_title')
-      .eq('email', email)
-      .maybeSingle();
-    if (profile?.display_name?.trim()) displayName = profile.display_name.trim();
-    jobTitle = String(profile?.job_title ?? '').trim();
-  }
-
-  return {
+  const empty = {
+    ok: false,
     email,
     superAdmin,
-    canLedger,
-    canVault,
+    canLedger: false,
+    canVault: false,
+    displayName: oauthName(user) || email,
+    jobTitle: '',
+    avatarUrl: oauthAvatar(user),
+    byProject,
+  };
+  if (!email) return empty;
+
+  const [memberRows, profile, grants] = await Promise.all([
+    superAdmin
+      ? Promise.resolve({ data: [] as { project_id: string; roles: unknown }[], error: null })
+      : supabase.from('project_members').select('project_id, roles').eq('email', email),
+    supabase.from('team_members').select('display_name, job_title').eq('email', email).maybeSingle(),
+    superAdmin
+      ? Promise.resolve({ count: 1, error: null })
+      : supabase.from('studio_credential_access').select('credential_id', { count: 'exact', head: true }).eq('email', email),
+  ]);
+
+  if (memberRows.error) console.error('project_members lookup failed', memberRows.error.message);
+  if (grants.error) console.error('credential access lookup failed', grants.error.message);
+
+  for (const row of memberRows.data ?? []) {
+    byProject.set(row.project_id as string, parseRoles(row.roles));
+  }
+
+  const ok = superAdmin || Boolean(profile.data);
+  if (!ok) return empty;
+
+  let displayName = oauthName(user);
+  if (profile.data?.display_name?.trim()) displayName = profile.data.display_name.trim();
+
+  return {
+    ok,
+    email,
+    superAdmin,
+    canLedger: superAdmin || [...byProject.values()].some((roles) => roles.includes('lead') || roles.includes('collaborator')),
+    canVault: superAdmin || (grants.count ?? 0) > 0,
     displayName: displayName || email,
-    jobTitle,
+    jobTitle: String(profile.data?.job_title ?? '').trim(),
     avatarUrl: oauthAvatar(user),
     byProject,
   };

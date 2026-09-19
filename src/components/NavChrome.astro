@@ -1,0 +1,17 @@
+---
+import { ClientRouter } from 'astro:transitions';
+---
+
+<ClientRouter />
+<div class="nav-progress" aria-hidden="true"></div>
+<script is:inline>
+  if (!window.__ocNav) {
+    window.__ocNav = true;
+    document.addEventListener('astro:before-preparation', () => {
+      document.documentElement.classList.add('is-navigating');
+    });
+    document.addEventListener('astro:page-load', () => {
+      document.documentElement.classList.remove('is-navigating');
+    });
+  }
+</script>

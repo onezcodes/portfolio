@@ -40,6 +40,20 @@ export function isSuperAdmin(user: User | null) {
   return emailOf(user) === SUPER_ADMIN_EMAIL;
 }
 
+export async function sessionUser(supabase: TeamSupabase) {
+  const {
+    data: { session },
+  } = await supabase.auth.getSession();
+  const current = session?.user ?? null;
+  if (!current) return null;
+  const expiresAt = (session?.expires_at ?? 0) * 1000;
+  if (expiresAt && expiresAt < Date.now() + 15_000) {
+    const { data } = await supabase.auth.getUser();
+    return data.user ?? current;
+  }
+  return current;
+}
+
 export async function isTeamMember(supabase: TeamSupabase, user: User | null) {
   const email = emailOf(user);
   if (!email) return false;
