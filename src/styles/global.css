@@ -462,6 +462,49 @@ a.work-card:hover {
   transition: border-color 0.2s ease, transform 0.2s ease, box-shadow 0.2s ease;
 }
 
+.work-card.has-shot {
+  grid-template-columns: auto minmax(0, 1fr) minmax(14rem, 22rem);
+  grid-template-areas:
+    'logo meta preview'
+    '. chips preview';
+}
+
+.work-card.has-shot .work-logo,
+.work-card.has-shot .work-index {
+  grid-area: logo;
+}
+
+.work-card.has-shot .work-meta {
+  grid-area: meta;
+  min-width: 0;
+}
+
+.work-card.has-shot .chips {
+  grid-area: chips;
+  justify-self: start;
+  align-self: start;
+}
+
+.work-preview {
+  grid-area: preview;
+  margin: 0;
+  justify-self: stretch;
+  align-self: start;
+  width: 100%;
+  min-width: 0;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  background: color-mix(in srgb, var(--ink) 4%, var(--surface));
+}
+
+.work-preview img {
+  display: block;
+  width: 100%;
+  height: auto;
+  object-fit: contain;
+  object-position: center;
+}
+
 .work-index {
   font-variant-numeric: tabular-nums;
   font-weight: 600;
@@ -486,6 +529,14 @@ a.work-card:hover {
   border-radius: 0.7rem;
   transform: scale(1.28);
   transform-origin: center;
+}
+
+.work-logo.square.compact {
+  transform: scale(1.08);
+}
+
+.work-logo.square.large {
+  transform: scale(1.45);
 }
 
 .work-meta {
@@ -667,6 +718,35 @@ a.work-card:hover {
   gap: 1rem;
 }
 
+.hp {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+}
+
+.form-status {
+  margin: 0;
+  padding: 0.7rem 0.85rem;
+  font-size: 0.92rem;
+  line-height: 1.45;
+  border: 1px solid var(--line);
+}
+
+.form-status.ok {
+  border-color: color-mix(in srgb, var(--gold) 55%, var(--line));
+  background: color-mix(in srgb, var(--gold) 12%, var(--surface));
+}
+
+.form-status.err {
+  border-color: color-mix(in srgb, #b42318 35%, var(--line));
+}
+
+.form-status a {
+  font-weight: 600;
+}
+
 .field {
   display: grid;
   gap: 0.4rem;
@@ -694,6 +774,12 @@ a.work-card:hover {
 .field textarea {
   min-height: 9rem;
   resize: vertical;
+}
+
+.field-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1rem;
 }
 
 .image-pick-frame {
@@ -919,12 +1005,46 @@ a.work-card:hover {
 
 @media (max-width: 64rem) {
   .work-card {
-    grid-template-columns: auto 1fr;
+    grid-template-columns: 3.25rem minmax(0, 1fr);
+    gap: 0.9rem 1rem;
+    padding: 1.15rem 1.15rem;
   }
 
   .chips {
     grid-column: 2;
     justify-self: start;
+  }
+
+  .work-card.has-shot {
+    grid-template-columns: 3.25rem minmax(0, 1fr);
+    grid-template-areas:
+      'logo meta'
+      'preview preview'
+      'chips chips';
+  }
+
+  .work-card.has-shot .chips {
+    grid-column: 1 / -1;
+  }
+
+  .work-preview {
+    margin-top: 0.15rem;
+  }
+
+  .work-logo {
+    width: 3.25rem;
+    height: 3.25rem;
+  }
+
+  .work-logo.wide {
+    width: 4.5rem;
+    height: 2.25rem;
+  }
+
+  .work-logo.square,
+  .work-logo.square.compact,
+  .work-logo.square.large {
+    transform: none;
   }
 
   .steps {
@@ -939,6 +1059,18 @@ a.work-card:hover {
 @media (max-width: 52rem) {
   .menu-toggle {
     display: grid;
+  }
+
+  .work-card.has-shot {
+    grid-template-columns: 3.25rem minmax(0, 1fr);
+    grid-template-areas:
+      'logo meta'
+      'preview preview'
+      'chips chips';
+  }
+
+  .work-card.has-shot .chips {
+    grid-column: 1 / -1;
   }
 
   .nav-panel {
@@ -982,7 +1114,8 @@ a.work-card:hover {
   .contact-split,
   .grid-2,
   .steps,
-  .audience {
+  .audience,
+  .field-row {
     grid-template-columns: 1fr;
   }
 
@@ -1122,6 +1255,10 @@ html.js-reveal .is-home .grid-2 .card:nth-child(4).is-in,
 html.js-reveal .is-home .steps .step:nth-child(4).is-in,
 html.js-reveal .is-home .work-list .work-card:nth-child(4).is-in {
   animation-delay: 0.3s;
+}
+
+html.js-reveal .is-home .grid-2 .card:nth-child(5).is-in {
+  animation-delay: 0.4s;
 }
 
 html.js-reveal .is-home .work-list .work-card:nth-child(5).is-in {

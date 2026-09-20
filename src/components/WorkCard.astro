@@ -13,7 +13,7 @@ const Tag = project.href ? 'a' : 'article';
 ---
 
 <Tag
-  class="work-card"
+  class:list={['work-card', project.shot && 'has-shot']}
   href={project.href}
   target={project.href ? '_blank' : undefined}
   rel={project.href ? 'noopener noreferrer' : undefined}
@@ -21,7 +21,13 @@ const Tag = project.href ? 'a' : 'article';
   {
     project.logo ? (
       <Image
-        class:list={['work-logo', project.logoWide && 'wide', project.logoSquare && 'square']}
+        class:list={[
+          'work-logo',
+          project.logoWide && 'wide',
+          project.logoSquare && 'square',
+          project.logoCompact && 'compact',
+          project.logoLarge && 'large',
+        ]}
         src={project.logo}
         alt={`${project.title} logo`}
         width={project.logoWide ? 176 : 112}
@@ -47,4 +53,17 @@ const Tag = project.href ? 'a' : 'article';
       <li class="chip">{item}</li>
     ))}
   </ul>
+  {
+    project.shot && (
+      <figure class="work-preview">
+        <Image
+          src={project.shot}
+          alt={`${project.title} on the web`}
+          width={project.shot.width}
+          quality={90}
+          sizes="(max-width: 64rem) calc(100vw - 3rem), 22rem"
+        />
+      </figure>
+    )
+  }
 </Tag>

@@ -1,8 +1,11 @@
 import type { ImageMetadata } from 'astro';
 import ftzLogo from '../assets/ftz-logo.webp';
+import ftzShot from '../assets/ftz-shot.webp';
 import lumiereLogo from '../assets/lumiere-logo.webp';
+import inoutLogo from '../assets/inout-logo.webp';
 import onezvpnLogo from '../assets/onezvpn-logo.webp';
 import saydiagramLogo from '../assets/saydiagram-logo.webp';
+import saydiagramShot from '../assets/saydiagram-shot.webp';
 import strideLogo from '../assets/stride-logo.webp';
 
 export const site = {
@@ -10,11 +13,9 @@ export const site = {
   shortName: 'OC',
   tagline: 'Tech Solutions · Software House',
   description:
-    'Onez Codes is a software house for teams who want sharp products without the noise. Web apps, custom software, and product design — built clean.',
+    'Onez Codes is a software house for teams who want sharp products without the noise. Web, iOS, Android, and custom software — built clean.',
   url: 'https://www.onezcodes.com',
   email: 'onezcodes@gmail.com',
-  /** Set to a Formspree (or similar) endpoint to enable form posts. Empty uses mailto. */
-  formAction: '',
   location: 'Available worldwide',
   /** Paste the Google Search Console content token when you have it. */
   googleSiteVerification: '',
@@ -44,6 +45,19 @@ export const services: Service[] = [
       'Customer and admin dashboards',
       'Authentication and role-based access',
       'Performance and accessibility pass',
+    ],
+  },
+  {
+    slug: 'mobile-apps',
+    title: 'iOS & Android',
+    summary: 'Native and cross-platform apps that feel like one product, not two afterthoughts.',
+    description:
+      'We ship iOS and Android from the same house as the web. One product, two stores, a shared backend — not a separate vendor for each platform.',
+    deliverables: [
+      'iOS and Android apps',
+      'Shared APIs and accounts',
+      'Store submission and updates',
+      'Care after launch',
     ],
   },
   {
@@ -95,9 +109,12 @@ export type Project = {
   featured: boolean;
   href?: string;
   logo?: ImageMetadata;
+  shot?: ImageMetadata;
   comingSoon?: boolean;
   logoWide?: boolean;
   logoSquare?: boolean;
+  logoCompact?: boolean;
+  logoLarge?: boolean;
 };
 
 export const projects: Project[] = [
@@ -105,30 +122,33 @@ export const projects: Project[] = [
     title: 'Final Third Zone',
     sector: 'Media',
     outcome:
-      'A bilingual football newsroom for Myanmar readers — Premier League coverage, match centres, shorts, and live streaming.',
-    stack: ['News platform', 'Myanmar / English', 'Live fixtures'],
+      'A bilingual football newsroom — Premier League coverage, match centres, shorts, and live streaming. iOS and Android apps are on the way.',
+    stack: ['News platform', 'Live fixtures', 'iOS / Android'],
     featured: true,
     href: 'https://www.finalthirdzone.com/',
     logo: ftzLogo,
+    shot: ftzShot,
   },
   {
     title: 'SayDiagram',
     sector: 'Developer tools',
     outcome:
-      'A Mermaid diagram platform — import, edit with live preview, share links, and export SVG, PNG, or PDF, plus a VS Code extension.',
-    stack: ['Next.js', 'Mermaid', 'VS Code'],
+      'A diagram workspace with live preview — import, edit, share a link, and export for the page or the slide, plus an editor in VS Code.',
+    stack: ['Live preview', 'Share & export', 'VS Code'],
     featured: true,
     href: 'https://saydiagram.com',
     logo: saydiagramLogo,
+    shot: saydiagramShot,
     logoSquare: true,
+    logoCompact: true,
   },
   {
     title: 'Lumiere',
     sector: 'Lifestyle',
     outcome:
-      'A marketplace to read your sign each month, follow trusted readers, and ask a question of your own — iOS and web.',
-    stack: ['SwiftUI', 'Laravel', 'Tarot'],
-    featured: true,
+      'A marketplace for monthly readings — follow trusted readers, or ask a question of your own, on iOS and the web.',
+    stack: ['Readings', 'Marketplace', 'iOS / web'],
+    featured: false,
     comingSoon: true,
     logo: lumiereLogo,
   },
@@ -136,9 +156,9 @@ export const projects: Project[] = [
     title: 'Stride',
     sector: 'Health',
     outcome:
-      'An AI fitness coach for running plans, GPS-tracked sessions, recovery, and nutrition — React Native and Laravel.',
-    stack: ['React Native', 'Laravel', 'AI coach'],
-    featured: true,
+      'A personal running coach that plans the week, tracks GPS sessions, and keeps recovery and nutrition in the same programme.',
+    stack: ['Running plans', 'GPS sessions', 'Recovery'],
+    featured: false,
     comingSoon: true,
     logo: strideLogo,
   },
@@ -146,11 +166,23 @@ export const projects: Project[] = [
     title: 'OnezVPN',
     sector: 'Privacy',
     outcome:
-      'An iOS VPN for private, censorship-resistant tunnels — VLESS + Reality, Trojan, and Hysteria2, with Asia-first servers.',
-    stack: ['SwiftUI', 'Network Extension', 'Hysteria2'],
-    featured: true,
+      'A private VPN for iOS and Android — stay reachable on restricted networks, with Asia-first servers you can actually use.',
+    stack: ['iOS', 'Android', 'Privacy'],
+    featured: false,
     comingSoon: true,
     logo: onezvpnLogo,
+  },
+  {
+    title: 'InOut',
+    sector: 'Finance',
+    outcome:
+      'A money app for people who live across currencies — what you spend, what is due, and what you can save, on iOS and Android.',
+    stack: ['Multi-currency', 'Budget', 'iOS / Android'],
+    featured: false,
+    comingSoon: true,
+    logo: inoutLogo,
+    logoSquare: true,
+    logoLarge: true,
   },
 ];
 
@@ -196,8 +228,18 @@ export const audience = [
   },
 ] as const;
 
+export const studio = {
+  title: 'A small house for serious software',
+  body: 'A handful of people, one point of contact. We ship web, iOS, and Android from the same house — then we stay on after launch. Clear scope, no theatre.',
+} as const;
+
+export const surfaces = ['Web', 'iOS', 'Android', 'A mix', 'Not sure yet'] as const;
+
+export const timelines = ['ASAP', 'This month', 'This quarter', 'Flexible'] as const;
+
 export const brief = [
   'What you are building',
-  'The constraint — time, stack, or budget',
+  'Web, iOS, Android — or a mix',
+  'The constraint — time or budget',
   'The date that matters',
 ] as const;

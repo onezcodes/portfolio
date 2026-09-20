@@ -110,7 +110,13 @@ function letter(opts: {
   `;
 }
 
-export async function sendMail(opts: { to: string; subject: string; text: string; html: string }) {
+export async function sendMail(opts: {
+  to: string;
+  subject: string;
+  text: string;
+  html: string;
+  replyTo?: string;
+}) {
   const key = import.meta.env.RESEND_API_KEY;
   if (!key) return { error: 'setup' as const };
 
@@ -123,6 +129,7 @@ export async function sendMail(opts: { to: string; subject: string; text: string
     body: JSON.stringify({
       from: fromAddress(),
       to: [opts.to],
+      reply_to: opts.replyTo,
       subject: opts.subject,
       text: opts.text,
       html: wrapHtml(opts.html),
@@ -291,4 +298,34 @@ export async function sendTaskDue(
   if (!to.trim()) return { error: 'invalid' as const };
   const copy = taskDueMail(projectName, title, dueOn, late, href);
   return sendMail({ to: to.trim().toLowerCase(), ...copy });
+}
+
+export async function sendContactEnquiry(input: {
+  name: string;
+  email: string;
+  platform: string;
+  timeline: string;
+  message: string;
+}) {
+  const name = input.name.trim();
+  const email = input.email.trim().toLowerCase();
+  const platform = input.platform.trim();
+  const timeline = input.timeline.trim();
+  const message = input.message.trim();
+  const subject = `Brief from ${name}`;
+  const text = `Name: ${name}\nEmail: ${email}\nPlatform: ${platform}\nWhen: ${timeline}\n\n${message}`;
+  const html = `
+    <p style="margin:0 0 14px;font-size:11px;font-weight:500;letter-spacing:0.14em;text-transform:uppercase;color:${gold};">Contact</p>
+    <h1 style="margin:0 0 16px;font-size:28px;font-weight:600;letter-spacing:-0.03em;line-height:1.15;color:${ink};">New brief</h1>
+    <p style="margin:0 0 20px;font-size:16px;line-height:1.6;color:${ink};">
+      <strong>${escapeHtml(name)}</strong> ·
+      <a href="mailto:${escapeHtml(email)}" style="color:${ink};">${escapeHtml(email)}</a>
+    </p>
+    <p style="margin:0 0 20px;font-size:15px;line-height:1.55;color:${muted};">
+      Platform: ${escapeHtml(platform)}<br />
+      When: ${escapeHtml(timeline)}
+    </p>
+    <p style="margin:0;padding-top:20px;border-top:1px solid ${line};font-size:16px;line-height:1.6;white-space:pre-wrap;color:${ink};">${escapeHtml(message)}</p>
+  `;
+  return sendMail({ to: site.email, replyTo: email, subject, text, html });
 }

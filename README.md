@@ -11,4 +11,4 @@ npm run build
 npm run preview
 ```
 
-Copy lives in `src/data/site.ts` (name, email, services, projects). Set `formAction` there to a Formspree URL when you want the contact form to post somewhere other than mailto.
+Copy lives in `src/data/site.ts` (name, email, services, projects). The contact form posts to `/api/contact` and emails the studio via Resend (`RESEND_API_KEY` in `.env`).

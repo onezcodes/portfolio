@@ -8,7 +8,7 @@ import WorkCard from '../components/WorkCard.astro';
 import ContactForm from '../components/ContactForm.astro';
 import { Image } from 'astro:assets';
 import lockup from '../assets/lockup.webp';
-import { site, services, projects, process, stack, audience, brief } from '../data/site';
+import { site, services, projects, process, stack, audience, brief, studio } from '../data/site';
 import { pages } from '../data/seo';
 
 const featured = projects.filter((project) => project.featured);
@@ -21,8 +21,8 @@ const featured = projects.filter((project) => project.featured);
     <div class="wrap">
       <div class="section-head">
         <p class="kicker">What we do</p>
-        <h2 id="services-title">Four ways we help</h2>
-        <p class="lede">From the first interface to the system behind it — then we stay on after launch.</p>
+        <h2 id="services-title">Five ways we help</h2>
+        <p class="lede">Web, mobile, custom systems, and the care after launch — we pick the offer that matches the problem.</p>
       </div>
       <div class="grid-2">
         {services.map((service) => <ServiceCard service={service} />)}
@@ -56,7 +56,7 @@ const featured = projects.filter((project) => project.featured);
       <div class="section-head">
         <p class="kicker">Selected work</p>
         <h2 id="work-title">Outcomes over ornament</h2>
-        <p class="lede">Live and in progress — Final Third Zone and SayDiagram are out; Lumiere, Stride, and OnezVPN are coming soon.</p>
+        <p class="lede">Final Third Zone and SayDiagram are live. More — including iOS and Android — is on the work page.</p>
       </div>
       <div class="work-list">
         {featured.map((project, index) => <WorkCard project={project} index={index} />)}
@@ -89,9 +89,9 @@ const featured = projects.filter((project) => project.featured);
       </div>
       <div class="about-copy">
         <p class="kicker">Studio</p>
-        <h2 id="about-title">A small house for serious software</h2>
+        <h2 id="about-title">{studio.title}</h2>
         <p class="lede">
-          We keep the surface area small: clear scope, careful engineering, and interfaces that do not get in the way. Senior work, direct communication, no theatre.
+          {studio.body}
         </p>
       </div>
     </div>

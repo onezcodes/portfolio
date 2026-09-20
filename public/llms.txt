@@ -13,17 +13,19 @@
 ## Services
 
 - Web applications: product sites, dashboards, and customer portals
+- iOS & Android: native and cross-platform apps from the same house
 - Custom software: internal tools and platforms shaped around how a team works
 - Product & UX: structure, interface, and copy with engineering
 - Ongoing support: care, iteration, and delivery after launch
 
 ## Work
 
-- Final Third Zone (live): https://www.finalthirdzone.com/ — bilingual football newsroom
+- Final Third Zone (live): https://www.finalthirdzone.com/ — bilingual football newsroom; iOS and Android apps coming
 - SayDiagram (live): https://saydiagram.com — Mermaid diagram platform
-- Lumiere (coming soon) — tarot marketplace, iOS and web
-- Stride (coming soon) — AI fitness coach, React Native and Laravel
-- OnezVPN (coming soon) — iOS VPN, SwiftUI and Network Extension
+- Lumiere (coming soon) — marketplace for monthly readings, iOS and web
+- Stride (coming soon) — personal running coach with recovery and nutrition
+- OnezVPN (coming soon) — private VPN for iOS and Android
+- InOut (coming soon) — money app for multi-currency spending and savings, iOS and Android
 
 ## Stack
 

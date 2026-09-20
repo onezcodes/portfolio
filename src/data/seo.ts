@@ -11,17 +11,17 @@ export const pages = {
   work: {
     title: 'Work',
     description:
-      'Selected software from Onez Codes: Final Third Zone and SayDiagram are live; Lumiere, Stride, and OnezVPN are coming soon. Web, iOS, and Android products.',
+      'Selected software from Onez Codes: Final Third Zone and SayDiagram are live; Lumiere, Stride, OnezVPN, and InOut are coming soon. Web, iOS, and Android products.',
   },
   services: {
     title: 'Services',
     description:
-      'Web applications, custom software, product & UX, and ongoing support from Onez Codes. Senior engineering, small surface area, available worldwide.',
+      'Web applications, iOS and Android apps, custom software, product & UX, and ongoing support from Onez Codes. Senior engineering, small surface area, available worldwide.',
   },
   contact: {
     title: 'Contact',
     description:
-      'Start a software project with Onez Codes. Email onezcodes@gmail.com with the product, the constraint, and the date that matters.',
+      'Start a software project with Onez Codes. Email onezcodes@gmail.com with the product, the platform, the constraint, and the date that matters.',
   },
   notFound: {
     title: 'Page not found',

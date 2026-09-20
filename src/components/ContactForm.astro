@@ -1,23 +1,101 @@
 ---
-import { site } from '../data/site';
+import { site, surfaces, timelines } from '../data/site';
 
-const action = site.formAction || `mailto:${site.email}`;
-const method = site.formAction ? 'POST' : 'post';
-const encType = site.formAction ? undefined : 'text/plain';
+const sent = Astro.url.searchParams.get('sent') === '1';
+const failed = Astro.url.searchParams.get('error') === '1';
 ---
 
-<form class="form" action={action} method={method} enctype={encType}>
+<form class="form js-contact" action="/api/contact" method="post" data-email={site.email}>
+  <div class="hp" aria-hidden="true">
+    <label for="company">Company</label>
+    <input id="company" name="company" type="text" tabindex="-1" autocomplete="off" />
+  </div>
+  {
+    sent && (
+      <p class="form-status ok" role="status">
+        Received — we usually reply within two working days.
+      </p>
+    )
+  }
+  {
+    failed && (
+      <p class="form-status err" role="alert">
+        Could not send. Email us at <a href={`mailto:${site.email}`}>{site.email}</a>.
+      </p>
+    )
+  }
+  <p class="form-status js-status" hidden role="status"></p>
   <div class="field">
     <label for="name">Name</label>
-    <input id="name" name="name" type="text" autocomplete="name" required />
+    <input id="name" name="name" type="text" autocomplete="name" required maxlength="80" />
   </div>
   <div class="field">
     <label for="email">Email</label>
-    <input id="email" name="email" type="email" autocomplete="email" required />
+    <input id="email" name="email" type="email" autocomplete="email" required maxlength="120" />
+  </div>
+  <div class="field-row">
+    <div class="field">
+      <label for="surface">Platform</label>
+      <select id="surface" name="platform" required>
+        <option value="" disabled selected>Choose one</option>
+        {surfaces.map((item) => (
+          <option value={item}>{item}</option>
+        ))}
+      </select>
+    </div>
+    <div class="field">
+      <label for="timeline">When</label>
+      <select id="timeline" name="timeline" required>
+        <option value="" disabled selected>Choose one</option>
+        {timelines.map((item) => (
+          <option value={item}>{item}</option>
+        ))}
+      </select>
+    </div>
   </div>
   <div class="field">
     <label for="message">Project</label>
-    <textarea id="message" name="message" required placeholder="What are you building, and when do you need it?"></textarea>
+    <textarea id="message" name="message" required minlength="8" maxlength="8000" placeholder="What are you building, and what is the constraint?"></textarea>
   </div>
   <button class="btn" type="submit">Send message</button>
 </form>
+
+<script>
+  for (const form of document.querySelectorAll<HTMLFormElement>('form.js-contact')) {
+    const status = form.querySelector('.js-status');
+    const button = form.querySelector('button[type="submit"]');
+    const email = form.dataset.email ?? '';
+
+    form.addEventListener('submit', async (event) => {
+      event.preventDefault();
+      if (!(status instanceof HTMLElement) || !(button instanceof HTMLButtonElement)) return;
+
+      status.hidden = false;
+      status.classList.remove('ok', 'err');
+      status.replaceChildren(document.createTextNode('Sending…'));
+      button.disabled = true;
+
+      try {
+        const response = await fetch('/api/contact', {
+          method: 'POST',
+          headers: { Accept: 'application/json' },
+          body: new FormData(form),
+        });
+        const payload = (await response.json().catch(() => ({ ok: false }))) as { ok?: boolean };
+        if (!response.ok || !payload.ok) throw new Error('send');
+        form.reset();
+        status.classList.add('ok');
+        status.replaceChildren(document.createTextNode('Received — we usually reply within two working days.'));
+      } catch {
+        status.classList.add('err');
+        status.replaceChildren(document.createTextNode('Could not send. Email us at '));
+        const link = document.createElement('a');
+        link.href = `mailto:${email}`;
+        link.textContent = email;
+        status.append(link, document.createTextNode('.'));
+      } finally {
+        button.disabled = false;
+      }
+    });
+  }
+</script>
