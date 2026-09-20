@@ -483,7 +483,9 @@ a.work-card:hover {
 }
 
 .work-logo.square {
-  border-radius: 0.9rem;
+  border-radius: 0.7rem;
+  transform: scale(1.28);
+  transform-origin: center;
 }
 
 .work-meta {
