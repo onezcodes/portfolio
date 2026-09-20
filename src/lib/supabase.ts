@@ -1,4 +1,5 @@
 import { createServerClient, parseCookieHeader, type CookieOptions } from '@supabase/ssr';
+import { createClient } from '@supabase/supabase-js';
 import type { AstroCookies } from 'astro';
 import type { User } from '@supabase/supabase-js';
 
@@ -6,6 +7,15 @@ export const SUPER_ADMIN_EMAIL = 'onezcodes@gmail.com';
 
 export function supabaseConfigured() {
   return Boolean(import.meta.env.PUBLIC_SUPABASE_URL && import.meta.env.PUBLIC_SUPABASE_ANON_KEY);
+}
+
+export function createServiceSupabase() {
+  const url = import.meta.env.PUBLIC_SUPABASE_URL;
+  const key = import.meta.env.SUPABASE_SERVICE_ROLE_KEY;
+  if (!url || !key) return null;
+  return createClient(url, key, {
+    auth: { persistSession: false, autoRefreshToken: false },
+  });
 }
 
 export type TeamSupabase = ReturnType<typeof createTeamSupabase>;

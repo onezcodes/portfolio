@@ -7,6 +7,8 @@ interface ImportMetaEnv {
   readonly RESEND_API_KEY?: string;
   readonly MAIL_FROM?: string;
   readonly CREDENTIALS_SECRET?: string;
+  readonly CRON_SECRET?: string;
+  readonly SUPABASE_SERVICE_ROLE_KEY?: string;
 }
 
 interface ImportMeta {

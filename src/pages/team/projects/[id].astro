@@ -36,13 +36,15 @@ import {
 import {
   addTask,
   isTaskStatus,
+  markTaskMail,
   removeTask,
   setTaskStatus,
+  shouldNotifyAssignee,
   updateTask,
   type ProjectTask,
 } from '../../../lib/tasks';
 import { addCheckin, removeCheckin, type ProjectCheckin } from '../../../lib/checkins';
-import { sendProjectInvite } from '../../../lib/mail';
+import { sendProjectInvite, sendTaskAssigned, taskWorkUrl } from '../../../lib/mail';
 import { logEvent } from '../../../lib/events';
 import { personFace, personInitial, personLabel } from '../../../lib/profile';
 import SecretField from '../../../components/SecretField.astro';
@@ -224,14 +226,36 @@ if (Astro.request.method === 'POST') {
   if (intent === 'add-task') {
     const result = await addTask(supabase, form, id, user?.id ?? null);
     if (result.error) return bounce({ error: result.error });
-    await track('create', String(form.get('title') ?? '').trim(), 'task');
+    await track('create', result.title, 'task');
+    if (shouldNotifyAssignee(result.assignee_email, actor)) {
+      const { data: named } = await supabase.from('projects').select('name').eq('id', id).maybeSingle();
+      const mail = await sendTaskAssigned(
+        result.assignee_email,
+        named?.name ?? 'a project',
+        result.title,
+        result.due_on,
+        taskWorkUrl(Astro.request, id),
+      );
+      if (!mail.error) await markTaskMail(supabase, result.id);
+    }
     return bounce({ notice: 'created' });
   }
 
   if (intent === 'update-task') {
     const result = await updateTask(supabase, form, id, user?.id ?? null);
     if (result.error) return bounce({ error: result.error });
-    await track('update', String(form.get('title') ?? '').trim(), 'task');
+    await track('update', result.title, 'task');
+    if (shouldNotifyAssignee(result.assignee_email, actor, result.previous_assignee)) {
+      const { data: named } = await supabase.from('projects').select('name').eq('id', id).maybeSingle();
+      const mail = await sendTaskAssigned(
+        result.assignee_email,
+        named?.name ?? 'a project',
+        result.title,
+        result.due_on,
+        taskWorkUrl(Astro.request, id),
+      );
+      if (!mail.error) await markTaskMail(supabase, result.id);
+    }
     return bounce({ notice: 'saved' });
   }
 
@@ -500,7 +524,9 @@ const today = todayIso();
       }
       {
         caps.canProgress && (
-          <a class="btn btn-ghost" href={`${projectHref(row.id, { tab: 'schedule' })}#checkin`}>Check-in</a>
+          <a class="btn btn-ghost" href={`${projectHref(row.id, { tab: 'schedule', action: 'checkin' })}#post-checkin`}>
+            Check-in
+          </a>
         )
       }
       {
@@ -559,6 +585,7 @@ const today = todayIso();
               canPost={caps.canProgress}
               canRemove={caps.canPlan}
               actorEmail={studio.email}
+              openPost={action === 'checkin'}
             />
             <ProjectCalendar
               cursor={calCursor}

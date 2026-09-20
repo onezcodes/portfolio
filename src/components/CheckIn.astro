@@ -11,9 +11,18 @@ interface Props {
   canPost?: boolean;
   canRemove?: boolean;
   actorEmail?: string;
+  openPost?: boolean;
 }
 
-const { latest, recent = [], people = [], canPost = false, canRemove = false, actorEmail = '' } = Astro.props;
+const {
+  latest,
+  recent = [],
+  people = [],
+  canPost = false,
+  canRemove = false,
+  actorEmail = '',
+  openPost = false,
+} = Astro.props;
 const history = recent.filter((row) => row.id !== latest?.id);
 ---
 
@@ -46,15 +55,18 @@ const history = recent.filter((row) => row.id !== latest?.id);
 
   {
     canPost && (
-      <form class="form team-form" method="post">
-        <input type="hidden" name="intent" value="add-checkin" />
-        <input type="hidden" name="tab" value="schedule" />
-        <p class="field">
-          <label for="checkin_body">Now</label>
-          <textarea id="checkin_body" name="body" rows="3" required maxlength="400" placeholder="Blocked on copy. QA on staging."></textarea>
-        </p>
-        <button class="btn" type="submit">Post check-in</button>
-      </form>
+      <details class="pay-edit" id="post-checkin" open={openPost}>
+        <summary>Post a check-in</summary>
+        <form class="form team-form" method="post">
+          <input type="hidden" name="intent" value="add-checkin" />
+          <input type="hidden" name="tab" value="schedule" />
+          <p class="field">
+            <label for="checkin_body">Now</label>
+            <textarea id="checkin_body" name="body" rows="3" required maxlength="400" placeholder="Blocked on copy. QA on staging."></textarea>
+          </p>
+          <button class="btn" type="submit">Post check-in</button>
+        </form>
+      </details>
     )
   }
 

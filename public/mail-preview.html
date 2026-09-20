@@ -1,0 +1,178 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Mail preview · Onez Codes</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600&display=swap" rel="stylesheet" />
+    <style>
+      body {
+        margin: 0;
+        background: #eceae4;
+        font-family: Outfit, sans-serif;
+        color: #171614;
+      }
+      .deck {
+        max-width: 640px;
+        margin: 0 auto;
+        padding: 28px 16px 72px;
+      }
+      .label {
+        margin: 0 4px 10px;
+        font-size: 11px;
+        font-weight: 500;
+        letter-spacing: 0.14em;
+        text-transform: uppercase;
+        color: #6b6660;
+      }
+      .label + .mail { margin-bottom: 36px; }
+      .mail iframe {
+        display: block;
+        width: 100%;
+        height: 620px;
+        border: 0;
+        background: #fafaf8;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="deck" id="deck"></div>
+    <script>
+      const gold = '#FFB800';
+      const ink = '#171614';
+      const canvas = '#FAFAF8';
+      const surface = '#FFFFFF';
+      const muted = '#6B6660';
+      const line = '#E8E4DC';
+      const font = `'Outfit', 'Segoe UI', 'Helvetica Neue', Arial, sans-serif`;
+      const origin = 'https://www.onezcodes.com';
+      const logo = origin + '/apple-touch-icon.png';
+      const login = origin + '/team/login';
+      const vault = origin + '/team/credentials';
+
+      function letter(opts) {
+        return `
+          <p style="margin:0 0 14px;font-size:11px;font-weight:500;letter-spacing:0.14em;text-transform:uppercase;color:${gold};">${opts.kicker}</p>
+          <h1 style="margin:0 0 16px;font-size:28px;font-weight:600;letter-spacing:-0.03em;line-height:1.15;color:${ink};">${opts.heading}</h1>
+          <p style="margin:0 0 28px;font-size:16px;line-height:1.6;color:${ink};">${opts.body}</p>
+          <table role="presentation" cellspacing="0" cellpadding="0" style="margin:0 0 28px;">
+            <tr>
+              <td style="background:${gold};border:1px solid ${gold};">
+                <a href="${opts.href}" style="display:inline-block;padding:13px 22px;font-size:15px;font-weight:600;letter-spacing:0.01em;color:${ink};text-decoration:none;">${opts.cta}</a>
+              </td>
+            </tr>
+          </table>
+          <p style="margin:0;padding-top:20px;border-top:1px solid ${line};font-size:13px;line-height:1.55;color:${muted};">${opts.note}</p>
+        `;
+      }
+
+      function wrapHtml(inner) {
+        return `<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600&display=swap" rel="stylesheet" />
+  </head>
+  <body style="margin:0;padding:0;background:${canvas};">
+    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background:${canvas};">
+      <tr>
+        <td align="center" style="padding:40px 20px;">
+          <table role="presentation" width="560" cellspacing="0" cellpadding="0" style="width:100%;max-width:560px;font-family:${font};color:${ink};">
+            <tr>
+              <td style="padding:0 4px 20px;">
+                <table role="presentation" cellspacing="0" cellpadding="0">
+                  <tr>
+                    <td style="vertical-align:middle;padding-right:12px;">
+                      <img src="${logo}" width="36" height="36" alt="" style="display:block;border:0;border-radius:8px;" />
+                    </td>
+                    <td style="vertical-align:middle;">
+                      <p style="margin:0;font-size:15px;font-weight:600;letter-spacing:0.01em;line-height:1.15;color:${ink};">Onez Codes</p>
+                      <p style="margin:3px 0 0;font-size:11px;letter-spacing:0.04em;text-transform:uppercase;color:${muted};">Tech Solutions · Software House</p>
+                    </td>
+                  </tr>
+                </table>
+              </td>
+            </tr>
+            <tr>
+              <td style="height:3px;line-height:3px;font-size:0;background:${gold};">&nbsp;</td>
+            </tr>
+            <tr>
+              <td style="background:${surface};border:1px solid ${line};border-top:0;padding:36px 32px 32px;">
+                ${inner}
+              </td>
+            </tr>
+            <tr>
+              <td style="padding:22px 4px 0;color:${muted};font-size:12px;line-height:1.55;">
+                <p style="margin:0 0 6px;">Onez Codes · Studio</p>
+                <p style="margin:0;">
+                  <a href="${origin}" style="color:${muted};text-decoration:none;border-bottom:1px solid ${gold};">www.onezcodes.com</a>
+                  · onezcodes@gmail.com
+                </p>
+              </td>
+            </tr>
+          </table>
+        </td>
+      </tr>
+    </table>
+  </body>
+</html>`;
+      }
+
+      const templates = [
+        {
+          label: 'Team invite',
+          html: wrapHtml(letter({
+            kicker: 'Studio',
+            heading: "You're on the team",
+            body: "You've been added to the Onez Codes studio app. Sign in with Google or GitHub using this email address.",
+            cta: 'Sign in',
+            href: login,
+            note: `If the button does not work, open ${login}. If you were not expecting this, you can ignore it.`,
+          })),
+        },
+        {
+          label: 'Project invite',
+          html: wrapHtml(letter({
+            kicker: 'Project',
+            heading: 'Lumiere',
+            body: "You've been added to this job as <strong>Developer, QA</strong>. Sign in with Google or GitHub using this email.",
+            cta: 'Open the team app',
+            href: login,
+            note: `If the button does not work, open ${login}.`,
+          })),
+        },
+        {
+          label: 'Vault access',
+          html: wrapHtml(letter({
+            kicker: 'Credentials',
+            heading: 'Shared access',
+            body: "You've been given access to <strong>Lumiere OPENAI</strong> in the studio vault.",
+            cta: 'Open credentials',
+            href: vault,
+            note: `Sign in with Google or GitHub using this email. If the button does not work, open ${vault}.`,
+          })),
+        },
+      ];
+
+      const deck = document.getElementById('deck');
+      templates.forEach((item) => {
+        const label = document.createElement('p');
+        label.className = 'label';
+        label.textContent = item.label;
+        const wrap = document.createElement('div');
+        wrap.className = 'mail';
+        const frame = document.createElement('iframe');
+        frame.title = item.label;
+        frame.srcdoc = item.html;
+        wrap.appendChild(frame);
+        deck.appendChild(label);
+        deck.appendChild(wrap);
+      });
+    </script>
+  </body>
+</html>

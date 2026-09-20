@@ -228,7 +228,7 @@ function linkLabel(url: string) {
 
   {
     canPlan && (
-      <details class="pay-edit" id="add-task" open={openAdd || tasks.length === 0}>
+      <details class="pay-edit" id="add-task" open={openAdd}>
         <summary>Add a task</summary>
         <form class="form team-form" method="post" enctype="multipart/form-data">
           <input type="hidden" name="intent" value="add-task" />

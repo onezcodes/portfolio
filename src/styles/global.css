@@ -482,6 +482,10 @@ a.work-card:hover {
   border-radius: 0;
 }
 
+.work-logo.square {
+  border-radius: 0.9rem;
+}
+
 .work-meta {
   display: grid;
   gap: 0.45rem;
@@ -2623,6 +2627,7 @@ i.cal-event {
   align-items: baseline;
   gap: 0.4rem 0.65rem;
   min-width: 0;
+  flex: 1 1 12rem;
 }
 
 .ms-copy strong {
@@ -2733,7 +2738,7 @@ i.cal-event {
   display: grid;
   gap: 0.25rem;
   min-width: 0;
-  flex: 1;
+  flex: 1 1 12rem;
 }
 
 .task-row .team-voucher-link {
@@ -2840,6 +2845,68 @@ i.cal-event {
 
   .ie-col {
     width: 0.5rem;
+  }
+
+  /* Even quick-action rows instead of 2–3–2 squeeze */
+  .quick-actions {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0.5rem;
+  }
+
+  .quick-actions .btn {
+    flex: none;
+    width: 100%;
+    min-width: 0;
+  }
+
+  /* Task / milestone actions below copy so titles keep full width */
+  .task-row {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .task-row .task-copy {
+    flex: 1 1 auto;
+    width: 100%;
+  }
+
+  .task-row .ms-tools,
+  .ms-body {
+    width: 100%;
+  }
+
+  .ms-body {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .ms-tools {
+    justify-content: flex-start;
+  }
+
+  .team-form-row {
+    grid-template-columns: 1fr;
+  }
+
+  .search-form {
+    flex-direction: column;
+    align-items: stretch;
+    max-width: none;
+  }
+
+  .search-form input,
+  .search-form .btn {
+    width: 100%;
+    flex: none;
+  }
+
+  .team-card {
+    padding: 1.15rem;
+  }
+
+  .project-links {
+    gap: 0.4rem;
   }
 }
 

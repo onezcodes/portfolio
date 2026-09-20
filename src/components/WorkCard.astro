@@ -21,7 +21,7 @@ const Tag = project.href ? 'a' : 'article';
   {
     project.logo ? (
       <Image
-        class:list={['work-logo', project.logoWide && 'wide']}
+        class:list={['work-logo', project.logoWide && 'wide', project.logoSquare && 'square']}
         src={project.logo}
         alt={`${project.title} logo`}
         width={project.logoWide ? 176 : 112}

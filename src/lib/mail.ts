@@ -200,6 +200,61 @@ export async function sendVaultInvite(to: string, title: string, request: Reques
   return sendMail({ to, ...copy });
 }
 
+function duePhrase(dueOn: string | null) {
+  if (!dueOn) return '';
+  const date = new Date(`${dueOn}T12:00:00`);
+  return date.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
+}
+
+export function taskAssignedMail(
+  projectName: string,
+  title: string,
+  dueOn: string | null,
+  href: string,
+) {
+  const due = duePhrase(dueOn);
+  const subject = `Yours on ${projectName}: ${title}`;
+  const text = due
+    ? `This is yours on ${projectName}. ${title}. Due ${due}.\n\n${href}`
+    : `This is yours on ${projectName}. ${title}.\n\n${href}`;
+  const html = letter({
+    kicker: 'Work',
+    heading: escapeHtml(title),
+    body: due
+      ? `This is yours on <strong>${escapeHtml(projectName)}</strong>. Due ${escapeHtml(due)}.`
+      : `This is yours on <strong>${escapeHtml(projectName)}</strong>.`,
+    cta: 'Open work',
+    href,
+    note: `If the button does not work, open ${href}.`,
+  });
+  return { subject, text, html };
+}
+
+export function taskDueMail(
+  projectName: string,
+  title: string,
+  dueOn: string,
+  late: boolean,
+  href: string,
+) {
+  const due = duePhrase(dueOn);
+  const subject = late ? `Late: ${title}` : `Due today: ${title}`;
+  const text = late
+    ? `${title} was due ${due} on ${projectName}.\n\n${href}`
+    : `${title} is due today on ${projectName}.\n\n${href}`;
+  const html = letter({
+    kicker: 'Work',
+    heading: late ? 'Late' : 'Due today',
+    body: late
+      ? `<strong>${escapeHtml(title)}</strong> was due ${escapeHtml(due)} on <strong>${escapeHtml(projectName)}</strong>.`
+      : `<strong>${escapeHtml(title)}</strong> is due today on <strong>${escapeHtml(projectName)}</strong>.`,
+    cta: 'Open work',
+    href,
+    note: `If the button does not work, open ${href}.`,
+  });
+  return { subject, text, html };
+}
+
 export async function notifyVaultGrants(emails: string[], title: string, request: Request) {
   let sent = 0;
   for (const to of emails) {
@@ -207,4 +262,33 @@ export async function notifyVaultGrants(emails: string[], title: string, request
     if (!mail.error) sent += 1;
   }
   return sent;
+}
+
+export function taskWorkUrl(request: Request, projectId: string) {
+  return `${siteUrl(request)}/team/projects/${projectId}?tab=schedule`;
+}
+
+export async function sendTaskAssigned(
+  to: string,
+  projectName: string,
+  title: string,
+  dueOn: string | null,
+  href: string,
+) {
+  if (!to.trim()) return { error: 'invalid' as const };
+  const copy = taskAssignedMail(projectName, title, dueOn, href);
+  return sendMail({ to: to.trim().toLowerCase(), ...copy });
+}
+
+export async function sendTaskDue(
+  to: string,
+  projectName: string,
+  title: string,
+  dueOn: string,
+  late: boolean,
+  href: string,
+) {
+  if (!to.trim()) return { error: 'invalid' as const };
+  const copy = taskDueMail(projectName, title, dueOn, late, href);
+  return sendMail({ to: to.trim().toLowerCase(), ...copy });
 }

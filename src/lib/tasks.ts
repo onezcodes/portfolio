@@ -16,10 +16,22 @@ export type ProjectTask = {
   due_on: string | null;
   image_url: string;
   link_url: string;
+  due_notice_on: string | null;
   sort_order: number;
   created_at: string;
   updated_at: string;
 };
+
+export type TaskWriteResult =
+  | { error: 'invalid' | 'too-large' }
+  | {
+      error: null;
+      id: string;
+      title: string;
+      assignee_email: string;
+      due_on: string | null;
+      previous_assignee?: string;
+    };
 
 const statuses = new Set<string>(TASK_STATUSES);
 
@@ -135,24 +147,34 @@ export async function addTask(
   form: FormData,
   projectId: string,
   userId: string | null,
-) {
+): Promise<TaskWriteResult> {
   const payload = payloadFromForm(form);
-  if (!payload || 'error' in payload) return { error: 'invalid' as const };
+  if (!payload || 'error' in payload) return { error: 'invalid' };
   const image = await imageFromForm(form, supabase, userId);
   if ('error' in image) return image;
   const sort_order = await nextSort(supabase, projectId);
-  const { error } = await supabase.from('project_tasks').insert({
-    project_id: projectId,
-    ...payload,
-    ...image,
-    sort_order,
-    status: 'todo',
-  });
-  if (error) {
-    console.error(error.message);
-    return { error: 'invalid' as const };
+  const { data, error } = await supabase
+    .from('project_tasks')
+    .insert({
+      project_id: projectId,
+      ...payload,
+      ...image,
+      sort_order,
+      status: 'todo',
+    })
+    .select('id')
+    .single();
+  if (error || !data) {
+    console.error(error?.message);
+    return { error: 'invalid' };
   }
-  return { error: null };
+  return {
+    error: null,
+    id: data.id as string,
+    title: payload.title,
+    assignee_email: payload.assignee_email,
+    due_on: payload.due_on,
+  };
 }
 
 export async function updateTask(
@@ -160,13 +182,13 @@ export async function updateTask(
   form: FormData,
   projectId: string,
   userId: string | null,
-) {
+): Promise<TaskWriteResult> {
   const taskId = String(form.get('task_id') ?? '');
   const payload = payloadFromForm(form);
-  if (!taskId || !payload || 'error' in payload) return { error: 'invalid' as const };
+  if (!taskId || !payload || 'error' in payload) return { error: 'invalid' };
   const { data: current } = await supabase
     .from('project_tasks')
-    .select('image_url')
+    .select('image_url, assignee_email')
     .eq('id', taskId)
     .eq('project_id', projectId)
     .maybeSingle();
@@ -179,9 +201,51 @@ export async function updateTask(
     .eq('project_id', projectId);
   if (error) {
     console.error(error.message);
-    return { error: 'invalid' as const };
+    return { error: 'invalid' };
   }
-  return { error: null };
+  return {
+    error: null,
+    id: taskId,
+    title: payload.title,
+    assignee_email: payload.assignee_email,
+    due_on: payload.due_on,
+    previous_assignee: String(current?.assignee_email ?? '').trim().toLowerCase(),
+  };
+}
+
+export function shouldNotifyAssignee(
+  assignee: string,
+  actorEmail: string,
+  previousAssignee = '',
+) {
+  const next = assignee.trim().toLowerCase();
+  if (!next || next === actorEmail.trim().toLowerCase()) return false;
+  return next !== previousAssignee.trim().toLowerCase();
+}
+
+export async function dueNoticeTasks(supabase: SupabaseClient, today = todayIso()) {
+  const { data, error } = await supabase
+    .from('project_tasks')
+    .select('id, project_id, title, assignee_email, due_on, status, due_notice_on')
+    .neq('status', 'done')
+    .neq('assignee_email', '')
+    .lte('due_on', today)
+    .or(`due_notice_on.is.null,due_notice_on.lt.${today}`);
+  if (error) {
+    console.error(error.message);
+    return [] as Pick<
+      ProjectTask,
+      'id' | 'project_id' | 'title' | 'assignee_email' | 'due_on' | 'status' | 'due_notice_on'
+    >[];
+  }
+  return (data ?? []) as Pick<
+    ProjectTask,
+    'id' | 'project_id' | 'title' | 'assignee_email' | 'due_on' | 'status' | 'due_notice_on'
+  >[];
+}
+
+export async function markTaskMail(supabase: SupabaseClient, taskId: string, today = todayIso()) {
+  await supabase.from('project_tasks').update({ due_notice_on: today }).eq('id', taskId);
 }
 
 export async function setTaskStatus(supabase: SupabaseClient, projectId: string, taskId: string, status: TaskStatus) {

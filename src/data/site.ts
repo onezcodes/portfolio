@@ -97,6 +97,7 @@ export type Project = {
   logo?: ImageMetadata;
   comingSoon?: boolean;
   logoWide?: boolean;
+  logoSquare?: boolean;
 };
 
 export const projects: Project[] = [
@@ -119,7 +120,7 @@ export const projects: Project[] = [
     featured: true,
     href: 'https://saydiagram.com',
     logo: saydiagramLogo,
-    logoWide: true,
+    logoSquare: true,
   },
   {
     title: 'Lumiere',
