@@ -146,7 +146,7 @@ function hasJoined(member: TeamMember) {
                     </form>
                   )}
                   {!admin && (
-                    <form method="post" onsubmit="return confirm('Remove this person from the team?')">
+                    <form method="post" data-confirm="Remove this person from the team?">
                       <input type="hidden" name="intent" value="remove" />
                       <input type="hidden" name="email" value={member.email} />
                       <button class="btn-text" type="submit">Remove</button>

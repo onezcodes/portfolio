@@ -36,6 +36,8 @@ export async function logEvent(
 
 export function eventHref(row: StudioEvent) {
   if (row.entity_type === 'credential' && row.entity_id) return `/team/credentials/${row.entity_id}`;
+  if (row.entity_type === 'checkin' && row.project_id) return `/team/projects/${row.project_id}?tab=schedule#checkin`;
+  if (row.entity_type === 'task' && row.project_id) return `/team/projects/${row.project_id}?tab=schedule`;
   if (row.project_id) return `/team/projects/${row.project_id}`;
   if (row.entity_type === 'project' && row.entity_id) return `/team/projects/${row.entity_id}`;
   if (row.entity_type === 'profile') return '/team/profile';
@@ -64,6 +66,12 @@ const titles: Record<string, string> = {
   'milestone.update': 'Updated a stage',
   'milestone.status': 'Changed stage status',
   'milestone.delete': 'Removed a stage',
+  'task.create': 'Added a task',
+  'task.update': 'Updated a task',
+  'task.status': 'Changed task status',
+  'task.delete': 'Removed a task',
+  'checkin.create': 'Posted a check-in',
+  'checkin.delete': 'Removed a check-in',
   'member.add': 'Whitelisted an email',
   'member.remove': 'Removed a team email',
   'member.invite': 'Sent a team invite',

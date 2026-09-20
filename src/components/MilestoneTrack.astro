@@ -134,7 +134,7 @@ function statusCopy(row: Milestone) {
                         </div>
                         <button class="btn" type="submit">Save</button>
                       </form>
-                      <form method="post" class="ms-remove" onsubmit="return confirm('Remove this stage?')">
+                      <form method="post" class="ms-remove" data-confirm="Remove this stage?">
                         <input type="hidden" name="intent" value="delete-milestone" />
                         <input type="hidden" name="milestone_id" value={row.id} />
                         <button class="ms-text" type="submit">Remove</button>

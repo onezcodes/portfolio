@@ -1,8 +1,9 @@
 import { money, type LedgerEntry } from './ledger';
 import type { Contribution } from './funding';
 import type { Milestone } from './milestones';
+import { taskStatusLabel, type ProjectTask } from './tasks';
 
-export type CalKind = 'milestone' | 'income' | 'expense' | 'contribution' | 'start';
+export type CalKind = 'milestone' | 'income' | 'expense' | 'contribution' | 'start' | 'task';
 
 export type CalEvent = {
   date: string;
@@ -11,6 +12,7 @@ export type CalEvent = {
   detail: string;
   href?: string;
   project?: string;
+  chip?: string;
 };
 
 export type CalCell = {
@@ -53,6 +55,7 @@ export function projectEvents(
   contributions: Pick<Contribution, 'amount' | 'currency' | 'occurred_on' | 'member_email' | 'notes'>[],
   entries: Pick<LedgerEntry, 'kind' | 'amount' | 'currency' | 'occurred_on' | 'category' | 'notes'>[],
   includeMoney = true,
+  tasks: Pick<ProjectTask, 'title' | 'due_on' | 'status' | 'assignee_email'>[] = [],
 ): CalEvent[] {
   const events: CalEvent[] = [];
   if (startedOn) {
@@ -66,6 +69,15 @@ export function projectEvents(
       kind: 'milestone',
       title: row.title,
       detail: `${state} milestone`,
+    });
+  }
+  for (const row of tasks) {
+    if (!row.due_on || row.status === 'done') continue;
+    events.push({
+      date: row.due_on,
+      kind: 'task',
+      title: row.title,
+      detail: `${taskStatusLabel(row.status)}${row.assignee_email ? ` · ${row.assignee_email}` : ''}`,
     });
   }
   if (includeMoney) {
@@ -108,6 +120,7 @@ export function studioEvents(
     canFinance: (projectId: string) => boolean;
     includeOverhead?: boolean;
   },
+  tasks: (Pick<ProjectTask, 'title' | 'due_on' | 'status' | 'assignee_email'> & { project_id: string })[] = [],
 ): CalEvent[] {
   const events: CalEvent[] = [];
 
@@ -121,6 +134,7 @@ export function studioEvents(
       finance ? contributions.filter((row) => row.project_id === project.id) : [],
       finance ? entries.filter((row) => row.project_id === project.id) : [],
       finance,
+      schedule ? tasks.filter((row) => row.project_id === project.id) : [],
     );
     for (const event of rows) {
       events.push({
@@ -128,6 +142,7 @@ export function studioEvents(
         project: project.name,
         href: `/team/projects/${project.id}?tab=${eventTab(event.kind, finance)}&month=${event.date.slice(0, 7)}#calendar`,
         title: `${project.name} · ${event.title}`,
+        chip: event.title,
       });
     }
   }

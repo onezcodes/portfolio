@@ -690,6 +690,87 @@ a.work-card:hover {
   resize: vertical;
 }
 
+.image-pick-frame {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 8rem;
+  height: 8rem;
+  overflow: hidden;
+  border: 1px dashed color-mix(in srgb, var(--ink) 22%, transparent);
+  background: color-mix(in srgb, var(--ink) 3%, var(--surface));
+  cursor: pointer;
+  text-transform: none;
+  letter-spacing: 0;
+  font-weight: 400;
+  color: inherit;
+}
+
+.image-pick.qr .image-pick-frame {
+  width: 9rem;
+  height: 9rem;
+}
+
+.image-pick-frame:hover,
+.image-pick-frame:focus-within {
+  border-color: var(--gold);
+  background: color-mix(in srgb, var(--gold) 12%, var(--surface));
+}
+
+.image-pick-frame input {
+  padding: 0;
+  border: 0;
+}
+
+.image-pick-preview {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.image-pick.qr .image-pick-preview {
+  object-fit: contain;
+  padding: 0.45rem;
+  background: var(--surface);
+}
+
+.image-pick-empty {
+  display: grid;
+  gap: 0.2rem;
+  padding: 0.7rem;
+  text-align: center;
+  color: var(--muted);
+  font-size: 0.82rem;
+  line-height: 1.3;
+}
+
+.image-pick-empty strong {
+  color: var(--ink);
+  font-size: 0.9rem;
+  font-weight: 600;
+}
+
+.image-pick-swap {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  padding: 0.35rem 0.4rem;
+  background: color-mix(in srgb, var(--ink) 74%, transparent);
+  color: var(--canvas);
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  text-align: center;
+}
+
+.image-pick-empty[hidden],
+.image-pick-preview[hidden],
+.image-pick-swap[hidden] {
+  display: none;
+}
+
 .page-intro {
   padding-block: clamp(2.75rem, 6vw, 4.75rem) 0;
   display: grid;
@@ -2258,10 +2339,12 @@ fieldset.role-picks {
 }
 
 .cal-day {
+  min-width: 0;
   min-height: 5.25rem;
   padding: 0.4rem 0.4rem 0.5rem;
   border-right: 1px solid var(--line);
   border-bottom: 1px solid var(--line);
+  overflow: hidden;
 }
 
 .cal-day.muted {
@@ -2283,10 +2366,20 @@ fieldset.role-picks {
   padding: 0;
   display: grid;
   gap: 0.18rem;
+  min-width: 0;
+}
+
+.cal-day li {
+  min-width: 0;
+  max-width: 100%;
 }
 
 .cal-event {
   display: block;
+  box-sizing: border-box;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
   font-size: 0.68rem;
   line-height: 1.25;
   padding: 0.12rem 0.28rem;
@@ -2300,9 +2393,45 @@ fieldset.role-picks {
 i.cal-event {
   display: inline-block;
   width: 0.65rem;
+  max-width: 0.65rem;
   height: 0.65rem;
   padding: 0;
+  overflow: visible;
   vertical-align: middle;
+}
+
+.checkin-lede {
+  margin: 0.65rem 0 0;
+  color: var(--ink);
+  max-width: 42rem;
+}
+
+.checkin-lede strong {
+  color: var(--gold);
+  font-size: 0.72rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  margin-right: 0.4rem;
+}
+
+.checkin-latest {
+  margin: 0 0 1.1rem;
+  padding: 0;
+  border: 0;
+}
+
+.checkin-latest p {
+  margin: 0 0 0.45rem;
+  font-size: 1.05rem;
+}
+
+.checkin-latest footer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.65rem 1rem;
+  color: var(--muted);
+  font-size: 0.88rem;
 }
 
 .cal-event.milestone {
@@ -2325,6 +2454,10 @@ i.cal-event {
 
 .cal-event.start {
   box-shadow: inset 0 0 0 1px var(--ink);
+}
+
+.cal-event.task {
+  background: color-mix(in srgb, var(--gold) 55%, var(--canvas));
 }
 
 .cal-more {
@@ -2572,6 +2705,73 @@ i.cal-event {
   margin-top: 0.35rem;
 }
 
+.task-list {
+  list-style: none;
+  margin: 0 0 1rem;
+  padding: 0;
+  display: grid;
+  gap: 0.75rem;
+}
+
+.task-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.5rem 1rem;
+  padding-bottom: 0.75rem;
+  border-bottom: 1px solid var(--line);
+}
+
+.task-list.done .task-row,
+.task-row:last-child {
+  border-bottom: 0;
+  padding-bottom: 0;
+}
+
+.task-copy {
+  display: grid;
+  gap: 0.25rem;
+  min-width: 0;
+  flex: 1;
+}
+
+.task-row .team-voucher-link {
+  flex: 0 0 auto;
+}
+
+.task-copy a {
+  color: var(--ink);
+  text-decoration: underline;
+  text-underline-offset: 0.12em;
+}
+
+.task-copy p {
+  margin: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem 0.7rem;
+  color: var(--muted);
+  font-size: 0.92rem;
+}
+
+.task-row.done .task-copy strong {
+  color: var(--muted);
+  font-weight: 500;
+}
+
+.ms-chip.doing {
+  color: var(--ink);
+  font-weight: 600;
+}
+
+.ms-chip.blocked,
+.task-row.blocked .ms-chip,
+.task-row.late .ms-chip {
+  color: #b42318;
+  font-weight: 600;
+}
+
 @media (max-width: 40rem) {
   .ms-row {
     grid-template-columns: 0.9rem minmax(0, 1fr);
@@ -2674,6 +2874,49 @@ i.cal-event {
 
 .team-danger {
   margin-top: 1.25rem;
+}
+
+.team-confirm {
+  position: fixed;
+  inset: 0;
+  width: 100%;
+  max-width: none;
+  height: 100%;
+  margin: 0;
+  padding: 1rem;
+  border: 0;
+  background: transparent;
+}
+
+.team-confirm[open] {
+  display: grid;
+  place-items: center;
+}
+
+.team-confirm::backdrop {
+  background: color-mix(in srgb, var(--ink) 42%, transparent);
+}
+
+.team-confirm-card {
+  display: grid;
+  gap: 0;
+  width: min(24rem, 100%);
+  padding: 1.35rem 1.4rem 1.2rem;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  box-shadow: 0 16px 40px color-mix(in srgb, var(--ink) 14%, transparent);
+}
+
+.team-confirm-card p {
+  margin: 0;
+  font-size: var(--step-1);
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.team-confirm-card .hero-actions {
+  margin-top: 1.15rem;
+  justify-content: flex-end;
 }
 
 .team-foot {

@@ -11,15 +11,17 @@ import { eventHref, eventTitle, formatEventTime, type StudioEvent } from '../../
 import { logoHrefs } from '../../lib/projectHub';
 import ProjectMark from '../../components/ProjectMark.astro';
 import FacePile from '../../components/FacePile.astro';
-import { facesByProject } from '../../lib/profile';
+import { facesByProject, personLabel } from '../../lib/profile';
 import ProjectCalendar from '../../components/ProjectCalendar.astro';
 import { parseMonth, studioEvents } from '../../lib/calendar';
+import { attentionTasks, myOpenTasks, taskIsLate, taskStatusLabel, type ProjectTask } from '../../lib/tasks';
+import { latestByProject, type ProjectCheckin } from '../../lib/checkins';
 
 const supabase = Astro.locals.supabase;
 const studio = Astro.locals.studio;
 const ledgerSelect = 'kind, amount, currency, project_id, occurred_on, category';
 
-const [{ data: projects }, { data: entries }, { data: contribs }, { data: milestoneRows }, { data: eventRows }, creds, { data: crewRows }, { data: memberRows }] =
+const [{ data: projects }, { data: entries }, { data: contribs }, { data: milestoneRows }, { data: taskRows }, { data: checkinRows }, { data: eventRows }, creds, { data: crewRows }, { data: memberRows }] =
   await Promise.all([
     supabase.from('projects').select('id, name, client, status, logo_url, started_on').order('updated_at', { ascending: false }),
     studio?.canLedger
@@ -29,6 +31,8 @@ const [{ data: projects }, { data: entries }, { data: contribs }, { data: milest
       ? supabase.from('project_contributions').select('project_id, amount, currency')
       : Promise.resolve({ data: [] }),
     supabase.from('project_milestones').select('project_id, title, status, estimated_on, sort_order'),
+    supabase.from('project_tasks').select('id, project_id, title, status, assignee_email, due_on, milestone_id, notes, sort_order, created_at, updated_at'),
+    supabase.from('project_checkins').select('id, project_id, author_email, body, created_at').order('created_at', { ascending: false }).limit(40),
     supabase.from('studio_events').select('id, action, entity_type, entity_id, project_id, actor_email, detail, created_at').order('created_at', { ascending: false }).limit(8),
     studio?.canVault
       ? supabase.from('studio_credentials').select('id, title, updated_at')
@@ -63,6 +67,13 @@ const crewFaces = facesByProject(
 const visibleProjects = studio
   ? projectRows.filter((project) => capsFor(studio, project.id).assigned)
   : [];
+const allTasks = (taskRows ?? []) as ProjectTask[];
+const people = (memberRows ?? []) as Pick<TeamMember, 'email' | 'display_name' | 'avatar_url'>[];
+const mine = studio ? myOpenTasks(allTasks, studio.email) : [];
+const flagged = attentionTasks(allTasks).filter((row) => !mine.some((item) => item.id === row.id));
+const notes = [...latestByProject((checkinRows ?? []) as ProjectCheckin).values()]
+  .filter((row) => visibleProjects.some((project) => project.id === row.project_id))
+  .slice(0, 6);
 const calCursor = parseMonth(Astro.url.searchParams.get('month'), new Date());
 const calendarEvents = studio
   ? studioEvents(
@@ -75,6 +86,7 @@ const calendarEvents = studio
         canFinance: (projectId) => capsFor(studio, projectId).canFinance,
         includeOverhead: studio.canLedger,
       },
+      allTasks,
     )
   : [];
 const calendarHasMoney = calendarEvents.some(
@@ -86,15 +98,15 @@ const calendarHasMoney = calendarEvents.some(
   <div class="wrap team-page">
     <header class="team-intro">
       <p class="kicker">Overview</p>
-      <h1>{studio?.canLedger ? 'Studio books' : 'Your jobs'}</h1>
+      <h1>Work</h1>
       <p class="lede">
         {studio?.canLedger
-          ? 'Internal projects, income, and expenses. Nothing here is published to the public site.'
-          : 'Projects you can access. Schedule and progress only — funding stays with leads and collaborators.'}
+          ? 'Owned tasks, jobs, and studio books. Nothing here is published to the public site.'
+          : 'Projects you can access. Your tasks and the plan — funding stays with leads and collaborators.'}
       </p>
       <form class="search-form" method="get" action="/team/search">
         <label class="sr-only" for="q">Search the team app</label>
-        <input id="q" name="q" placeholder="Search projects or credentials" />
+        <input id="q" name="q" placeholder="Search projects, tasks, or credentials" />
         <button class="btn" type="submit">Search</button>
       </form>
     </header>
@@ -105,6 +117,53 @@ const calendarHasMoney = calendarEvents.some(
       {studio?.superAdmin && <a class="btn btn-ghost" href="/team/members">Whitelist email</a>}
     </nav>
     <TeamFlash />
+
+    {
+      mine.length > 0 && (
+        <section class="team-card">
+          <div class="section-head tight">
+            <h2>My work</h2>
+            <p class="muted">{mine.length} open {mine.length === 1 ? 'task' : 'tasks'} assigned to you</p>
+          </div>
+          <ul class="team-list">
+            {mine.slice(0, 8).map((row) => (
+              <li>
+                <a href={`/team/projects/${row.project_id}?tab=schedule`}>
+                  <strong>{row.title}</strong>
+                  <span>
+                    {byProject.get(row.project_id) || 'Project'} · {taskIsLate(row, today) ? 'Late' : taskStatusLabel(row.status)}
+                    {row.due_on ? ` · due ${row.due_on}` : ''}
+                  </span>
+                </a>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )
+    }
+
+    {
+      notes.length > 0 && (
+        <section class="team-card">
+          <div class="section-head tight">
+            <h2>Now</h2>
+            <p class="muted">Latest check-in on each job</p>
+          </div>
+          <ul class="team-list">
+            {notes.map((row) => (
+              <li>
+                <a href={`/team/projects/${row.project_id}?tab=schedule#checkin`}>
+                  <strong>{byProject.get(row.project_id) || 'Project'}</strong>
+                  <span>
+                    {row.body} · {personLabel(row.author_email, people)} · {formatEventTime(row.created_at)}
+                  </span>
+                </a>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )
+    }
 
     <section class="team-split overview-lead">
       <div class="team-card">
@@ -117,7 +176,11 @@ const calendarHasMoney = calendarEvents.some(
           <p class="muted">No projects yet.</p>
         ) : (
           <ul class="team-list">
-            {projectRows.slice(0, 8).map((project) => (
+            {visibleProjects
+              .filter((project) => project.status === 'active')
+              .concat(visibleProjects.filter((project) => project.status !== 'active'))
+              .slice(0, 8)
+              .map((project) => (
               <li>
                 <a class="project-hit" href={`/team/projects/${project.id}`}>
                   <ProjectMark name={project.name} src={marks.get(project.logo_url)} />
@@ -139,9 +202,27 @@ const calendarHasMoney = calendarEvents.some(
       }
       </div>
       {
-        (overdue.length > 0 || currentWork.length > 0 || staleVault.length > 0) && (
+        (overdue.length > 0 || currentWork.length > 0 || staleVault.length > 0 || flagged.length > 0) && (
         <section class="team-card">
           <h2>Needs attention</h2>
+          {flagged.length > 0 && (
+            <>
+              <p class="muted">Blocked or late work</p>
+              <ul class="team-list">
+                {flagged.slice(0, 6).map((row) => (
+                  <li>
+                    <a href={`/team/projects/${row.project_id}?tab=schedule`}>
+                      <strong>{row.title}</strong>
+                      <span>
+                        {byProject.get(row.project_id) || 'Project'} · {taskIsLate(row, today) ? 'Late' : taskStatusLabel(row.status)}
+                        {row.assignee_email ? ` · ${personLabel(row.assignee_email, people)}` : ''}
+                      </span>
+                    </a>
+                  </li>
+                ))}
+              </ul>
+            </>
+          )}
           {overdue.length > 0 && (
             <>
               <p class="muted">Stages past their estimate</p>
@@ -204,8 +285,8 @@ const calendarHasMoney = calendarEvents.some(
           showMoney={calendarHasMoney}
           lede={
             calendarHasMoney
-              ? 'Stages and money dates for projects you can access.'
-              : 'Stages and start dates for projects you can access.'
+              ? 'Stages, tasks, and money dates for projects you can access.'
+              : 'Stages, tasks, and start dates for projects you can access.'
           }
         />
       )

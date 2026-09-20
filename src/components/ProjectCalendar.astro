@@ -9,12 +9,14 @@ import {
 import type { Contribution } from '../lib/funding';
 import type { LedgerEntry } from '../lib/ledger';
 import type { Milestone } from '../lib/milestones';
+import type { ProjectTask } from '../lib/tasks';
 
 interface Props {
   cursor: Date;
   today: string;
   startedOn?: string | null;
   milestones?: Milestone[];
+  tasks?: Pick<ProjectTask, 'title' | 'due_on' | 'status' | 'assignee_email'>[];
   contributions?: Pick<Contribution, 'amount' | 'currency' | 'occurred_on' | 'member_email' | 'notes'>[];
   entries?: Pick<LedgerEntry, 'kind' | 'amount' | 'currency' | 'occurred_on' | 'category' | 'notes'>[];
   monthHref: (month: string) => string;
@@ -28,6 +30,7 @@ const {
   today,
   startedOn = null,
   milestones = [],
+  tasks = [],
   contributions = [],
   entries = [],
   monthHref,
@@ -35,7 +38,7 @@ const {
   events: givenEvents,
   lede,
 } = Astro.props;
-const events = givenEvents ?? projectEvents(startedOn, milestones, contributions, entries, showMoney);
+const events = givenEvents ?? projectEvents(startedOn, milestones, contributions, entries, showMoney, tasks);
 const cells = monthGrid(cursor, events, today);
 const key = monthKey(cursor);
 const heading = cursor.toLocaleDateString('en-GB', { month: 'long', year: 'numeric' });
@@ -43,7 +46,7 @@ const monthEvents = events.filter((event) => event.date.startsWith(key));
 const moneyOnCal = showMoney || events.some((event) => event.kind === 'contribution' || event.kind === 'income' || event.kind === 'expense');
 const caption =
   lede ??
-  (showMoney ? 'Stages, funding, and ledger dates for this project.' : 'Stages and start date for this project.');
+  (showMoney ? 'Stages, tasks, funding, and ledger dates for this project.' : 'Stages, tasks, and start date for this project.');
 const weekdays = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 const prev = shiftMonth(cursor, -1);
 const next = shiftMonth(cursor, 1);
@@ -59,6 +62,7 @@ function pretty(iso: string) {
 
 function kindLabel(kind: CalEvent['kind']) {
   if (kind === 'milestone') return 'Stage';
+  if (kind === 'task') return 'Task';
   if (kind === 'contribution') return 'Funding';
   if (kind === 'income') return 'Income';
   if (kind === 'expense') return 'Expense';
@@ -95,11 +99,11 @@ function kindLabel(kind: CalEvent['kind']) {
             <li>
               {event.href ? (
                 <a class={`cal-event ${event.kind}`} href={event.href} title={`${event.title} · ${event.detail}`}>
-                  {event.title}
+                  {event.chip ?? event.title}
                 </a>
               ) : (
                 <span class={`cal-event ${event.kind}`} title={`${event.title} · ${event.detail}`}>
-                  {event.title}
+                  {event.chip ?? event.title}
                 </span>
               )}
             </li>
@@ -112,6 +116,7 @@ function kindLabel(kind: CalEvent['kind']) {
 
   <p class="cal-legend">
     <span><i class="cal-event milestone"></i> Stage</span>
+    <span><i class="cal-event task"></i> Task</span>
     {moneyOnCal && <span><i class="cal-event contribution"></i> Funding</span>}
     {moneyOnCal && <span><i class="cal-event income"></i> Income</span>}
     {moneyOnCal && <span><i class="cal-event expense"></i> Expense</span>}

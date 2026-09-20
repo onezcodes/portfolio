@@ -7,6 +7,8 @@ import BankPayCard from '../../../components/BankPayCard.astro';
 import IncomeExpenseChart from '../../../components/IncomeExpenseChart.astro';
 import FundingPie from '../../../components/FundingPie.astro';
 import MilestoneTrack from '../../../components/MilestoneTrack.astro';
+import CheckIn from '../../../components/CheckIn.astro';
+import TaskBoard from '../../../components/TaskBoard.astro';
 import ProjectCalendar from '../../../components/ProjectCalendar.astro';
 import { parseMonth } from '../../../lib/calendar';
 import { projectFromForm } from '../../../lib/forms';
@@ -31,11 +33,21 @@ import {
   sortMilestones,
   type Milestone,
 } from '../../../lib/milestones';
+import {
+  addTask,
+  isTaskStatus,
+  removeTask,
+  setTaskStatus,
+  updateTask,
+  type ProjectTask,
+} from '../../../lib/tasks';
+import { addCheckin, removeCheckin, type ProjectCheckin } from '../../../lib/checkins';
 import { sendProjectInvite } from '../../../lib/mail';
 import { logEvent } from '../../../lib/events';
 import { personFace, personInitial, personLabel } from '../../../lib/profile';
 import SecretField from '../../../components/SecretField.astro';
 import ProjectMark from '../../../components/ProjectMark.astro';
+import ImagePick from '../../../components/ImagePick.astro';
 import { decryptSecret, vaultReady, websiteHref } from '../../../lib/credentials';
 import {
   extraLinksOf,
@@ -114,9 +126,14 @@ if (Astro.request.method === 'POST') {
     await track('reveal', 'login password');
   } else if (intent === 'delete') {
     const { data: current } = await supabase.from('projects').select('logo_url, qr_url').eq('id', id).maybeSingle();
+    const { data: taskFiles } = await supabase.from('project_tasks').select('image_url').eq('project_id', id);
     const { error } = await supabase.from('projects').delete().eq('id', id);
     if (error) return bounce({ error: 'invalid' });
-    const stored = [current?.logo_url, current?.qr_url].filter((path): path is string => Boolean(path) && !isHttpUrl(path));
+    const stored = [
+      current?.logo_url,
+      current?.qr_url,
+      ...(taskFiles ?? []).map((item) => item.image_url),
+    ].filter((path): path is string => Boolean(path) && !isHttpUrl(path));
     if (stored.length > 0) await supabase.storage.from('vouchers').remove(stored);
     await track('delete');
     return Astro.redirect('/team/projects?notice=deleted');
@@ -204,6 +221,64 @@ if (Astro.request.method === 'POST') {
     return bounce({ notice: 'deleted' });
   }
 
+  if (intent === 'add-task') {
+    const result = await addTask(supabase, form, id, user?.id ?? null);
+    if (result.error) return bounce({ error: result.error });
+    await track('create', String(form.get('title') ?? '').trim(), 'task');
+    return bounce({ notice: 'created' });
+  }
+
+  if (intent === 'update-task') {
+    const result = await updateTask(supabase, form, id, user?.id ?? null);
+    if (result.error) return bounce({ error: result.error });
+    await track('update', String(form.get('title') ?? '').trim(), 'task');
+    return bounce({ notice: 'saved' });
+  }
+
+  if (intent === 'task-todo' || intent === 'task-doing' || intent === 'task-blocked' || intent === 'task-done') {
+    const taskId = String(form.get('task_id') ?? '');
+    const status = intent.slice('task-'.length);
+    if (!taskId || !isTaskStatus(status)) return bounce({ error: 'invalid' });
+    const result = await setTaskStatus(supabase, id, taskId, status);
+    if (result.error) return bounce({ error: 'invalid' });
+    await track('status', status, 'task');
+    return bounce({ notice: 'saved' });
+  }
+
+  if (intent === 'delete-task') {
+    const taskId = String(form.get('task_id') ?? '');
+    if (!taskId) return bounce({ error: 'invalid' });
+    const result = await removeTask(supabase, taskId, id);
+    if (result.error) return bounce({ error: 'invalid' });
+    await track('delete', '', 'task');
+    return bounce({ notice: 'deleted' });
+  }
+
+  if (intent === 'add-checkin') {
+    const result = await addCheckin(supabase, form, id, actor);
+    if (result.error) return bounce({ error: result.error });
+    await track('create', String(form.get('body') ?? '').trim().slice(0, 80), 'checkin');
+    return bounce({ notice: 'created' });
+  }
+
+  if (intent === 'delete-checkin') {
+    const checkinId = String(form.get('checkin_id') ?? '');
+    if (!checkinId) return bounce({ error: 'invalid' });
+    if (!caps.canPlan) {
+      const { data: note } = await supabase
+        .from('project_checkins')
+        .select('author_email')
+        .eq('id', checkinId)
+        .eq('project_id', id)
+        .maybeSingle();
+      if (note?.author_email !== actor) return bounce({ error: 'forbidden' });
+    }
+    const result = await removeCheckin(supabase, checkinId, id);
+    if (result.error) return bounce({ error: 'invalid' });
+    await track('delete', '', 'checkin');
+    return bounce({ notice: 'deleted' });
+  }
+
   if (intent === 'add-member') {
     const email = String(form.get('email') ?? '').trim().toLowerCase();
     const roles = rolesFromForm(form);
@@ -279,13 +354,15 @@ const tab = pickTab(Astro.url.searchParams.get('tab'), caps);
 const action = Astro.url.searchParams.get('action') ?? '';
 const calCursor = parseMonth(Astro.url.searchParams.get('month'), new Date());
 const needMoney = tab === 'funding' || tab === 'ledger' || (tab === 'schedule' && caps.canFinance);
-const needMembers = tab === 'people' || tab === 'funding';
-const needCrew = tab === 'people';
+const needMembers = tab === 'people' || tab === 'funding' || tab === 'schedule';
+const needCrew = tab === 'people' || tab === 'schedule';
 const none = { data: [] as never[] };
 
 const [
   { data: project, error },
   { data: milestoneRows },
+  { data: taskRows },
+  { data: checkinRows },
   { data: entryRows },
   { data: contribRows },
   { data: memberRows },
@@ -293,6 +370,10 @@ const [
 ] = await Promise.all([
   supabase.from('projects').select('*').eq('id', id).maybeSingle(),
   supabase.from('project_milestones').select('*').eq('project_id', id).order('sort_order'),
+  tab === 'schedule'
+    ? supabase.from('project_tasks').select('*').eq('project_id', id)
+    : Promise.resolve(none),
+  supabase.from('project_checkins').select('*').eq('project_id', id).order('created_at', { ascending: false }).limit(tab === 'schedule' ? 8 : 1),
   needMoney
     ? supabase.from('ledger_entries').select('*').eq('project_id', id).order('occurred_on', { ascending: false })
     : Promise.resolve(none),
@@ -313,8 +394,12 @@ const entries = (entryRows ?? []) as LedgerEntry[];
 const contributions = (contribRows ?? []) as Contribution[];
 const members = (memberRows ?? []) as TeamMember[];
 const milestones = sortMilestones((milestoneRows ?? []) as Milestone[]);
+const tasks = (taskRows ?? []) as ProjectTask[];
+const checkins = (checkinRows ?? []) as ProjectCheckin[];
+const latestCheckin = checkins[0] ?? null;
 const crew = (crewRows ?? []) as ProjectMemberRow[];
 const onProject = new Set(crew.map((person) => person.email));
+const taskPeople = members.filter((member) => onProject.has(member.email));
 const invitees = members.filter((member) => !onProject.has(member.email));
 const totals = totalsByCurrency(entries);
 const expenses = entries.filter((entry) => entry.kind === 'expense');
@@ -331,6 +416,7 @@ const slips = await voucherHrefs(supabase, [
     : []),
   { voucher_url: row.qr_url },
   { voucher_url: row.logo_url },
+  ...tasks.map((item) => ({ voucher_url: item.image_url })),
 ]);
 const qrHref = slips.get(row.qr_url);
 const logoHref = slips.get(row.logo_url) ?? '';
@@ -367,6 +453,13 @@ const today = todayIso();
           {' · '}
           {caps.roleLabels.join(' · ')}
         </p>
+        {
+          latestCheckin && (
+            <p class="checkin-lede">
+              <strong>Now.</strong> {latestCheckin.body}
+            </p>
+          )
+        }
         {
           links.length > 0 && (
             <nav class="project-links" aria-label="Project links">
@@ -406,6 +499,16 @@ const today = todayIso();
         )
       }
       {
+        caps.canProgress && (
+          <a class="btn btn-ghost" href={`${projectHref(row.id, { tab: 'schedule' })}#checkin`}>Check-in</a>
+        )
+      }
+      {
+        caps.canPlan && (
+          <a class="btn btn-ghost" href={`${projectHref(row.id, { tab: 'schedule', action: 'task' })}#add-task`}>Add task</a>
+        )
+      }
+      {
         caps.canPeople && (
           <a class="btn btn-ghost" href={`${projectHref(row.id, { tab: 'people', action: 'invite' })}#add-person`}>Add person</a>
         )
@@ -440,11 +543,29 @@ const today = todayIso();
               canPlan={caps.canPlan}
               canProgress={caps.canProgress}
             />
+            <TaskBoard
+              tasks={tasks}
+              milestones={milestones}
+              people={taskPeople}
+              images={slips}
+              canPlan={caps.canPlan}
+              canProgress={caps.canProgress}
+              openAdd={action === 'task'}
+            />
+            <CheckIn
+              latest={latestCheckin}
+              recent={checkins}
+              people={taskPeople}
+              canPost={caps.canProgress}
+              canRemove={caps.canPlan}
+              actorEmail={studio.email}
+            />
             <ProjectCalendar
               cursor={calCursor}
               today={today}
               startedOn={row.started_on}
               milestones={milestones}
+              tasks={tasks}
               contributions={contributions}
               entries={entries}
               monthHref={(month) => projectHref(row.id, { tab: 'schedule', month })}
@@ -555,13 +676,16 @@ const today = todayIso();
             <label for="contrib_notes">Note</label>
             <input id="contrib_notes" name="notes" placeholder="Optional" />
           </p>
-          <p class="field">
-            <label for="contrib_voucher">Voucher slip</label>
-            <input id="contrib_voucher" name="voucher" type="file" accept="image/jpeg,image/png,image/webp,image/gif" />
-          </p>
+          <ImagePick id="contrib_voucher" name="voucher" label="Voucher slip" />
           <p class="field">
             <label for="contrib_voucher_url">Or slip URL</label>
-            <input id="contrib_voucher_url" name="voucher_url" type="url" placeholder="https://" />
+            <input
+              id="contrib_voucher_url"
+              name="voucher_url"
+              type="url"
+              placeholder="https://"
+              data-image-url-for="contrib_voucher"
+            />
           </p>
           <button class="btn" type="submit">Add</button>
         </form>
@@ -702,15 +826,11 @@ const today = todayIso();
             <input type="hidden" name="tab" value="details" />
             <h3 class="tx-heading">Logo and identity</h3>
             <div class="hub-logo-edit">
-              <ProjectMark name={row.name} src={logoHref} size="lg" />
+              <ImagePick id="logo" name="logo" label="Logo" current={logoHref} />
               <div>
                 <p class="field">
-                  <label for="logo">Logo</label>
-                  <input id="logo" name="logo" type="file" accept="image/jpeg,image/png,image/webp,image/gif" />
-                </p>
-                <p class="field">
                   <label for="logo_url">Or image link</label>
-                  <input id="logo_url" name="logo_url" type="url" placeholder="https://" />
+                  <input id="logo_url" name="logo_url" type="url" placeholder="https://" data-image-url-for="logo" />
                 </p>
                 {
                   row.logo_url && (
@@ -822,7 +942,7 @@ const today = todayIso();
       }
       {
         editing && caps.canDelete && (
-      <form class="team-danger" method="post" onsubmit="return confirm('Delete this project and its ledger entries?')">
+      <form class="team-danger" method="post" data-confirm="Delete this project and its ledger entries?" data-confirm-action="Delete">
         <input type="hidden" name="intent" value="delete" />
         <button class="btn btn-ghost" type="submit">Delete project</button>
       </form>
@@ -960,7 +1080,7 @@ const today = todayIso();
                           {face.name !== person.email && <span class="muted">{person.email}</span>}
                         </span>
                       </div>
-                      <form method="post" onsubmit="return confirm('Remove this person from the project?')">
+                      <form method="post" data-confirm="Remove this person from the project?">
                         <input type="hidden" name="intent" value="remove-member" />
                         <input type="hidden" name="tab" value="people" />
                         <input type="hidden" name="email" value={person.email} />

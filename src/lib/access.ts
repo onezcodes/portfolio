@@ -110,7 +110,7 @@ export function pickTab(value: string | null, caps: ProjectCaps): ProjectTab {
 
 export function tabForIntent(intent: string): ProjectTab {
   if (intent.includes('member')) return 'people';
-  if (intent.includes('milestone')) return 'schedule';
+  if (intent.includes('milestone') || intent.includes('task') || intent.includes('checkin')) return 'schedule';
   if (intent.includes('funding') || intent.includes('contribution')) return 'funding';
   if (intent.includes('entry')) return 'ledger';
   return 'details';
@@ -118,10 +118,20 @@ export function tabForIntent(intent: string): ProjectTab {
 
 export function allowedIntent(intent: string, caps: ProjectCaps) {
   if (intent.includes('member')) return caps.canPeople;
-  if (intent === 'add-milestone' || intent === 'seed-milestones' || intent === 'update-milestone' || intent === 'delete-milestone') {
+  if (
+    intent === 'add-milestone' ||
+    intent === 'seed-milestones' ||
+    intent === 'update-milestone' ||
+    intent === 'delete-milestone' ||
+    intent === 'add-task' ||
+    intent === 'update-task' ||
+    intent === 'delete-task'
+  ) {
     return caps.canPlan;
   }
-  if (intent.includes('milestone')) return caps.canProgress;
+  if (intent.includes('milestone') || intent.startsWith('task-')) return caps.canProgress;
+  if (intent === 'add-checkin') return caps.canProgress;
+  if (intent === 'delete-checkin') return caps.canProgress;
   if (intent.includes('funding') || intent.includes('contribution')) return caps.canFinance;
   if (intent.includes('entry')) return caps.canFinance;
   if (intent === 'delete') return caps.canDelete;

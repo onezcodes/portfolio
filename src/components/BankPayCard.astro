@@ -1,4 +1,6 @@
 ---
+import ImagePick from './ImagePick.astro';
+
 interface Props {
   bankName: string;
   accountNumber: string;
@@ -92,13 +94,10 @@ const hasAccount = Boolean(bankName || accountNumber || qrPath);
         </p>
       </div>
       <div class="pay-upload">
-        <label class="pay-file" for="qr">
-          <span>Replace QR</span>
-          <input id="qr" name="qr" type="file" accept="image/jpeg,image/png,image/webp,image/gif" />
-        </label>
+        <ImagePick id="qr" name="qr" label="QR" current={qrHref} size="qr" />
         <p class="field">
           <label for="qr_url">Or image link</label>
-          <input id="qr_url" name="qr_url" type="url" placeholder="https://…" />
+          <input id="qr_url" name="qr_url" type="url" placeholder="https://…" data-image-url-for="qr" />
         </p>
       </div>
       <button class="btn" type="submit">Save</button>

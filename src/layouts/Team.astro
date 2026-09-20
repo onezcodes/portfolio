@@ -114,6 +114,15 @@ function current(href: string) {
     <footer class="team-foot wrap">
       <a href="/">Public site</a>
     </footer>
+    <dialog class="team-confirm" id="team-confirm" aria-labelledby="team-confirm-copy">
+      <form method="dialog" class="team-confirm-card">
+        <p id="team-confirm-copy"></p>
+        <div class="hero-actions">
+          <button class="btn btn-ghost" value="cancel">Cancel</button>
+          <button class="btn" value="ok" id="team-confirm-go">Remove</button>
+        </div>
+      </form>
+    </dialog>
     <script is:inline>
       document.addEventListener('click', async (event) => {
         const target = event.target;
@@ -131,6 +140,125 @@ function current(href: string) {
           }, 1200);
         } catch {}
       });
+
+      (function () {
+        const dialog = document.getElementById('team-confirm');
+        const copy = document.getElementById('team-confirm-copy');
+        const go = document.getElementById('team-confirm-go');
+        if (!(dialog instanceof HTMLDialogElement) || !copy || !go) return;
+        const allowed = new WeakSet();
+        let pending = null;
+
+        document.addEventListener('submit', (event) => {
+          const form = event.target;
+          if (!(form instanceof HTMLFormElement)) return;
+          const message = form.getAttribute('data-confirm');
+          if (!message || allowed.has(form)) return;
+          event.preventDefault();
+          pending = form;
+          copy.textContent = message;
+          go.textContent = form.getAttribute('data-confirm-action') || 'Remove';
+          dialog.showModal();
+        });
+
+        dialog.addEventListener('close', () => {
+          const form = pending;
+          pending = null;
+          if (dialog.returnValue !== 'ok' || !form) return;
+          allowed.add(form);
+          form.requestSubmit();
+        });
+
+        dialog.addEventListener('click', (event) => {
+          if (event.target === dialog) dialog.close('cancel');
+        });
+      })();
+
+      (function () {
+        function frameOf(input) {
+          return input.closest('.image-pick-frame');
+        }
+
+        function showPreview(input, src, blob) {
+          const frame = frameOf(input);
+          if (!frame) return;
+          const img = frame.querySelector('[data-image-preview]');
+          const empty = frame.querySelector('[data-image-empty]');
+          const swap = frame.querySelector('[data-image-swap]');
+          if (!(img instanceof HTMLImageElement)) return;
+          if (img.dataset.blob) {
+            URL.revokeObjectURL(img.dataset.blob);
+            delete img.dataset.blob;
+          }
+          if (blob) img.dataset.blob = blob;
+          if (src) {
+            img.src = src;
+            img.hidden = false;
+            if (empty) empty.hidden = true;
+            if (swap) swap.hidden = false;
+            return;
+          }
+          img.removeAttribute('src');
+          img.hidden = true;
+          if (empty) empty.hidden = false;
+          if (swap) swap.hidden = true;
+        }
+
+        function previewFile(input) {
+          const file = input.files && input.files[0];
+          if (!file) {
+            const current =
+              frameOf(input)?.querySelector('[data-image-preview]')?.getAttribute('data-current') || '';
+            showPreview(input, current);
+            return;
+          }
+          if (!file.type.startsWith('image/')) return;
+          const url = URL.createObjectURL(file);
+          showPreview(input, url, url);
+        }
+
+        document.addEventListener('change', (event) => {
+          const input = event.target;
+          if (!(input instanceof HTMLInputElement) || !input.matches('[data-image-pick]')) return;
+          previewFile(input);
+        });
+
+        document.addEventListener('input', (event) => {
+          const field = event.target;
+          if (!(field instanceof HTMLInputElement)) return;
+          const id = field.getAttribute('data-image-url-for');
+          if (!id) return;
+          const input = document.getElementById(id);
+          if (!(input instanceof HTMLInputElement) || (input.files && input.files[0])) return;
+          const pasted = field.value.trim();
+          if (!pasted) {
+            const current = frameOf(input)?.querySelector('[data-image-preview]')?.getAttribute('data-current') || '';
+            showPreview(input, current);
+            return;
+          }
+          showPreview(input, pasted);
+        });
+
+        document.addEventListener('dragover', (event) => {
+          const frame = event.target instanceof Element ? event.target.closest('.image-pick-frame') : null;
+          if (!frame) return;
+          event.preventDefault();
+        });
+
+        document.addEventListener('drop', (event) => {
+          const frame = event.target instanceof Element ? event.target.closest('.image-pick-frame') : null;
+          if (!frame || !event.dataTransfer) return;
+          event.preventDefault();
+          const input = frame.querySelector('[data-image-pick]');
+          if (!(input instanceof HTMLInputElement)) return;
+          const file = [...event.dataTransfer.files].find((item) => item.type.startsWith('image/'));
+          if (!file) return;
+          const transfer = new DataTransfer();
+          transfer.items.add(file);
+          input.files = transfer.files;
+          previewFile(input);
+        });
+      })();
     </script>
   </body>
 </html>

@@ -5,7 +5,7 @@ import { remainingLabel } from '../../../lib/funding';
 import { projectFromForm } from '../../../lib/forms';
 import { logEvent } from '../../../lib/events';
 import type { LedgerEntry, Project, TeamMember } from '../../../lib/ledger';
-import { stagesByProject, type Milestone } from '../../../lib/milestones';
+import { seedMilestones, stagesByProject, type Milestone } from '../../../lib/milestones';
 import { capsFor } from '../../../lib/access';
 import { logoHrefs } from '../../../lib/projectHub';
 import ProjectMark from '../../../components/ProjectMark.astro';
@@ -41,6 +41,7 @@ if (Astro.request.method === 'POST') {
     projectId: data.id,
     detail: data.name,
   });
+  await seedMilestones(supabase, data.id, payload.started_on);
   return Astro.redirect(`/team/projects/${data.id}?notice=created`);
 }
 
@@ -66,9 +67,12 @@ const assignments = (crewRows ?? []) as { project_id: string; email: string }[];
 const crewFaces = facesByProject(assignments, people);
 const assignees = assignedPeople(assignments, people);
 const memberFilter = Astro.url.searchParams.get('member')?.trim().toLowerCase() ?? '';
-const visible = memberFilter
-  ? projects.filter((project) => (crewFaces.get(project.id) ?? []).some((person) => person.email === memberFilter))
-  : projects;
+const statusFilter = Astro.url.searchParams.get('status')?.trim() ?? '';
+const visible = projects.filter((project) => {
+  if (memberFilter && !(crewFaces.get(project.id) ?? []).some((person) => person.email === memberFilter)) return false;
+  if (statusFilter && project.status !== statusFilter) return false;
+  return true;
+});
 const creating = Astro.url.searchParams.has('new') || Astro.url.searchParams.get('error') === 'invalid';
 const marks = await logoHrefs(supabase, visible);
 ---
@@ -128,15 +132,32 @@ const marks = await logoHrefs(supabase, visible);
 
     <section>
       <h2 class="team-h2">{creating ? 'All projects' : 'Projects'}</h2>
+      <nav class="member-filter" aria-label="Filter projects">
+        {
+          [
+            { id: '', label: 'All' },
+            { id: 'active', label: 'Active' },
+            { id: 'paused', label: 'Paused' },
+            { id: 'done', label: 'Done' },
+          ].map((item) => (
+            <a
+              href={item.id ? `/team/projects?status=${item.id}${memberFilter ? `&member=${encodeURIComponent(memberFilter)}` : ''}` : `/team/projects${memberFilter ? `?member=${encodeURIComponent(memberFilter)}` : ''}`}
+              aria-current={statusFilter === item.id ? 'page' : undefined}
+            >
+              {item.label}
+            </a>
+          ))
+        }
+      </nav>
       {
         assignees.length > 0 && (
           <nav class="member-filter" aria-label="Filter by assigned person">
-            <a href="/team/projects" aria-current={memberFilter ? undefined : 'page'}>
+            <a href={statusFilter ? `/team/projects?status=${statusFilter}` : '/team/projects'} aria-current={memberFilter ? undefined : 'page'}>
               Everyone
             </a>
             {assignees.map((person) => (
               <a
-                href={`/team/projects?member=${encodeURIComponent(person.email)}`}
+                href={`/team/projects?member=${encodeURIComponent(person.email)}${statusFilter ? `&status=${statusFilter}` : ''}`}
                 title={person.name}
                 aria-current={memberFilter === person.email ? 'page' : undefined}
               >
@@ -158,7 +179,9 @@ const marks = await logoHrefs(supabase, visible);
           <p class="muted">
             {projects.length === 0
               ? 'None yet.'
-              : `No projects assigned to ${personLabel(memberFilter, people)}.`}
+              : memberFilter
+                ? `No ${statusFilter || 'matching'} projects assigned to ${personLabel(memberFilter, people)}.`
+                : 'No projects match that filter.'}
           </p>
         ) : (
           <ul class="team-list">

@@ -1,0 +1,334 @@
+---
+import type { TeamMember } from '../lib/ledger';
+import type { Milestone } from '../lib/milestones';
+import { personLabel } from '../lib/profile';
+import { websiteHref } from '../lib/credentials';
+import VoucherLink from './VoucherLink.astro';
+import {
+  sortTasks,
+  taskIsLate,
+  taskIsOpen,
+  taskStatusLabel,
+  type ProjectTask,
+} from '../lib/tasks';
+import { todayIso } from '../lib/ledger';
+import ImagePick from './ImagePick.astro';
+
+interface Props {
+  tasks: ProjectTask[];
+  milestones: Milestone[];
+  people: Pick<TeamMember, 'email' | 'display_name'>[];
+  images?: Map<string, string>;
+  canPlan?: boolean;
+  canProgress?: boolean;
+  openAdd?: boolean;
+}
+
+const {
+  tasks: raw,
+  milestones,
+  people,
+  images = new Map(),
+  canPlan = false,
+  canProgress = false,
+  openAdd = false,
+} = Astro.props;
+const tasks = sortTasks(raw);
+const open = tasks.filter(taskIsOpen);
+const done = tasks.filter((row) => row.status === 'done');
+const today = todayIso();
+const currentId = milestones.find((row) => row.status === 'current')?.id ?? '';
+
+function pretty(iso: string | null) {
+  if (!iso) return 'No due date';
+  const date = new Date(`${iso}T12:00:00`);
+  const sameYear = date.getFullYear() === new Date(`${today}T12:00:00`).getFullYear();
+  return date.toLocaleDateString('en-GB', {
+    day: 'numeric',
+    month: 'short',
+    ...(sameYear ? {} : { year: 'numeric' }),
+  });
+}
+
+function stageTitle(id: string | null) {
+  if (!id) return 'No stage';
+  return milestones.find((row) => row.id === id)?.title ?? 'Stage';
+}
+
+function nextActions(status: ProjectTask['status']) {
+  if (status === 'done') return [{ intent: 'task-todo', label: 'Reopen' }];
+  const actions = [];
+  if (status !== 'doing') actions.push({ intent: 'task-doing', label: 'Doing' });
+  if (status !== 'blocked') actions.push({ intent: 'task-blocked', label: 'Block' });
+  actions.push({ intent: 'task-done', label: 'Done' });
+  if (status === 'blocked') actions.unshift({ intent: 'task-todo', label: 'Unblock' });
+  return actions;
+}
+
+function linkLabel(url: string) {
+  try {
+    return new URL(websiteHref(url)).hostname.replace(/^www\./, '');
+  } catch {
+    return 'Open';
+  }
+}
+---
+
+<section class="team-card task-card">
+  <div class="pay-head">
+    <h2>Work</h2>
+    <p class="muted">
+      {
+        tasks.length === 0
+          ? 'Slices with an owner and a date. Stages stay the backbone.'
+          : `${open.length} open · ${done.length} done`
+      }
+    </p>
+  </div>
+
+  {
+    open.length === 0 ? (
+      <p class="muted">{done.length > 0 ? 'Nothing open. Done work is below.' : 'No tasks yet.'}</p>
+    ) : (
+      <ul class="task-list">
+        {open.map((row) => (
+          <li class={`task-row ${row.status}${taskIsLate(row, today) ? ' late' : ''}`}>
+            {
+              row.image_url && images.get(row.image_url) && (
+                <VoucherLink path={row.image_url} href={images.get(row.image_url)} alt={row.title} />
+              )
+            }
+            <div class="task-copy">
+              <strong>{row.title}</strong>
+              <p>
+                <span class={`ms-chip ${row.status}${taskIsLate(row, today) ? ' late' : ''}`}>
+                  {taskIsLate(row, today) ? 'Late' : taskStatusLabel(row.status)}
+                </span>
+                <span>
+                  {personLabel(row.assignee_email, people) || 'Unassigned'} · {pretty(row.due_on)} · {stageTitle(row.milestone_id)}
+                </span>
+              </p>
+              {row.notes && <p class="muted">{row.notes}</p>}
+              {
+                row.link_url && (
+                  <p>
+                    <a href={websiteHref(row.link_url)} target="_blank" rel="noopener noreferrer">
+                      {linkLabel(row.link_url)}
+                    </a>
+                  </p>
+                )
+              }
+            </div>
+            <div class="ms-tools">
+              {
+                canProgress &&
+                  nextActions(row.status).map((item) => (
+                    <form method="post">
+                      <input type="hidden" name="intent" value={item.intent} />
+                      <input type="hidden" name="tab" value="schedule" />
+                      <input type="hidden" name="task_id" value={row.id} />
+                      <button class={item.intent === 'task-done' ? 'btn' : 'ms-text'} type="submit">
+                        {item.label}
+                      </button>
+                    </form>
+                  ))
+              }
+              {
+                canPlan && (
+                  <details class="ms-more">
+                    <summary>Edit</summary>
+                    <form class="form team-form" method="post" enctype="multipart/form-data">
+                      <input type="hidden" name="intent" value="update-task" />
+                      <input type="hidden" name="tab" value="schedule" />
+                      <input type="hidden" name="task_id" value={row.id} />
+                      <p class="field">
+                        <label for={`task_title_${row.id}`}>Task</label>
+                        <input id={`task_title_${row.id}`} name="title" required value={row.title} />
+                      </p>
+                      <div class="team-form-row">
+                        <p class="field">
+                          <label for={`task_owner_${row.id}`}>Owner</label>
+                          <select id={`task_owner_${row.id}`} name="assignee_email">
+                            <option value="">Unassigned</option>
+                            {people.map((person) => (
+                              <option value={person.email} selected={person.email === row.assignee_email}>
+                                {personLabel(person.email, people)}
+                              </option>
+                            ))}
+                          </select>
+                        </p>
+                        <p class="field">
+                          <label for={`task_due_${row.id}`}>Due</label>
+                          <input id={`task_due_${row.id}`} name="due_on" type="date" value={row.due_on ?? ''} />
+                        </p>
+                        <p class="field">
+                          <label for={`task_stage_${row.id}`}>Stage</label>
+                          <select id={`task_stage_${row.id}`} name="milestone_id">
+                            <option value="">No stage</option>
+                            {milestones.map((stage) => (
+                              <option value={stage.id} selected={stage.id === row.milestone_id}>
+                                {stage.title}
+                              </option>
+                            ))}
+                          </select>
+                        </p>
+                      </div>
+                      <p class="field">
+                        <label for={`task_notes_${row.id}`}>Note</label>
+                        <input id={`task_notes_${row.id}`} name="notes" value={row.notes} />
+                      </p>
+                      <ImagePick
+                        id={`task_image_${row.id}`}
+                        name="image"
+                        label="Image"
+                        current={images.get(row.image_url) ?? ''}
+                      />
+                      <p class="field">
+                        <label for={`task_image_url_${row.id}`}>Or image URL</label>
+                        <input
+                          id={`task_image_url_${row.id}`}
+                          name="image_url"
+                          type="url"
+                          placeholder="https://"
+                          data-image-url-for={`task_image_${row.id}`}
+                          value={row.image_url && row.image_url.startsWith('http') ? row.image_url : ''}
+                        />
+                      </p>
+                      {
+                        row.image_url && (
+                          <p class="check-line">
+                            <label>
+                              <input type="checkbox" name="clear_image" value="1" />
+                              Remove image
+                            </label>
+                          </p>
+                        )
+                      }
+                      <p class="field">
+                        <label for={`task_link_${row.id}`}>URL</label>
+                        <input id={`task_link_${row.id}`} name="link_url" type="url" placeholder="https://" value={row.link_url} />
+                      </p>
+                      <button class="btn" type="submit">Save</button>
+                    </form>
+                    <form method="post" class="ms-remove" data-confirm="Remove this task?">
+                      <input type="hidden" name="intent" value="delete-task" />
+                      <input type="hidden" name="tab" value="schedule" />
+                      <input type="hidden" name="task_id" value={row.id} />
+                      <button class="ms-text" type="submit">Remove</button>
+                    </form>
+                  </details>
+                )
+              }
+            </div>
+          </li>
+        ))}
+      </ul>
+    )
+  }
+
+  {
+    canPlan && (
+      <details class="pay-edit" id="add-task" open={openAdd || tasks.length === 0}>
+        <summary>Add a task</summary>
+        <form class="form team-form" method="post" enctype="multipart/form-data">
+          <input type="hidden" name="intent" value="add-task" />
+          <input type="hidden" name="tab" value="schedule" />
+          <p class="field">
+            <label for="task_title">Task</label>
+            <input id="task_title" name="title" required placeholder="What needs doing" />
+          </p>
+          <div class="team-form-row">
+            <p class="field">
+              <label for="task_owner">Owner</label>
+              <select id="task_owner" name="assignee_email">
+                <option value="">Unassigned</option>
+                {people.map((person) => (
+                  <option value={person.email}>{personLabel(person.email, people)}</option>
+                ))}
+              </select>
+            </p>
+            <p class="field">
+              <label for="task_due">Due</label>
+              <input id="task_due" name="due_on" type="date" />
+            </p>
+            <p class="field">
+              <label for="task_stage">Stage</label>
+              <select id="task_stage" name="milestone_id">
+                <option value="">No stage</option>
+                {milestones.map((stage) => (
+                  <option value={stage.id} selected={stage.id === currentId}>
+                    {stage.title}
+                  </option>
+                ))}
+              </select>
+            </p>
+          </div>
+          <p class="field">
+            <label for="task_notes">Note</label>
+            <input id="task_notes" name="notes" placeholder="Optional" />
+          </p>
+          <ImagePick id="task_image" name="image" label="Image" />
+          <p class="field">
+            <label for="task_image_url">Or image URL</label>
+            <input
+              id="task_image_url"
+              name="image_url"
+              type="url"
+              placeholder="https://"
+              data-image-url-for="task_image"
+            />
+          </p>
+          <p class="field">
+            <label for="task_link">URL</label>
+            <input id="task_link" name="link_url" type="url" placeholder="https://" />
+          </p>
+          <button class="btn" type="submit">Add task</button>
+        </form>
+      </details>
+    )
+  }
+
+  {
+    done.length > 0 && (
+      <details class="pay-edit">
+        <summary>Done ({done.length})</summary>
+        <ul class="task-list done">
+          {done.map((row) => (
+            <li class="task-row done">
+              {
+                row.image_url && images.get(row.image_url) && (
+                  <VoucherLink path={row.image_url} href={images.get(row.image_url)} alt={row.title} />
+                )
+              }
+              <div class="task-copy">
+                <strong>{row.title}</strong>
+                <p>
+                  {personLabel(row.assignee_email, people) || 'Unassigned'} · {stageTitle(row.milestone_id)}
+                </p>
+                {
+                  row.link_url && (
+                    <p>
+                      <a href={websiteHref(row.link_url)} target="_blank" rel="noopener noreferrer">
+                        {linkLabel(row.link_url)}
+                      </a>
+                    </p>
+                  )
+                }
+              </div>
+              {
+                canProgress && (
+                  <form method="post">
+                    <input type="hidden" name="intent" value="task-todo" />
+                    <input type="hidden" name="tab" value="schedule" />
+                    <input type="hidden" name="task_id" value={row.id} />
+                    <button class="ms-text" type="submit">Reopen</button>
+                  </form>
+                )
+              }
+            </li>
+          ))}
+        </ul>
+      </details>
+    )
+  }
+</section>

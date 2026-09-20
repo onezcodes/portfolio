@@ -2,6 +2,7 @@
 import Team from '../../layouts/Team.astro';
 import type { CredentialRecord } from '../../lib/credentials';
 import type { Project, TeamMember } from '../../lib/ledger';
+import type { ProjectTask } from '../../lib/tasks';
 import { logoHrefs } from '../../lib/projectHub';
 import ProjectMark from '../../components/ProjectMark.astro';
 
@@ -11,12 +12,14 @@ const supabase = Astro.locals.supabase;
 const pattern = q ? `%${q.replace(/[%_,]/g, '')}%` : '';
 
 let projects: Pick<Project, 'id' | 'name' | 'client' | 'logo_url'>[] = [];
+let tasks: Pick<ProjectTask, 'id' | 'title' | 'project_id'>[] = [];
 let credentials: Pick<CredentialRecord, 'id' | 'title' | 'website'>[] = [];
 let people: Pick<TeamMember, 'email' | 'display_name'>[] = [];
 
 if (pattern) {
-  const [{ data: projectRows }, creds, members] = await Promise.all([
+  const [{ data: projectRows }, { data: taskRows }, creds, members] = await Promise.all([
     supabase.from('projects').select('id, name, client, logo_url').or(`name.ilike.${pattern},client.ilike.${pattern}`).limit(20),
+    supabase.from('project_tasks').select('id, title, project_id').ilike('title', pattern).limit(20),
     studio?.canVault
       ? supabase.from('studio_credentials').select('id, title, website').ilike('title', pattern).limit(20)
       : Promise.resolve({ data: [] }),
@@ -29,11 +32,12 @@ if (pattern) {
       : Promise.resolve({ data: [] }),
   ]);
   projects = (projectRows ?? []) as Pick<Project, 'id' | 'name' | 'client' | 'logo_url'>[];
+  tasks = (taskRows ?? []) as Pick<ProjectTask, 'id' | 'title' | 'project_id'>[];
   credentials = (creds.data ?? []) as Pick<CredentialRecord, 'id' | 'title' | 'website'>[];
   people = (members.data ?? []) as Pick<TeamMember, 'email' | 'display_name'>[];
 }
 
-const empty = Boolean(q) && projects.length === 0 && credentials.length === 0 && people.length === 0;
+const empty = Boolean(q) && projects.length === 0 && tasks.length === 0 && credentials.length === 0 && people.length === 0;
 const marks = await logoHrefs(supabase, projects);
 ---
 
@@ -42,11 +46,11 @@ const marks = await logoHrefs(supabase, projects);
     <header class="team-intro">
       <p class="kicker">Studio</p>
       <h1>Search</h1>
-      <p class="lede">Find a project, credential, or (if you are super admin) a team email.</p>
+      <p class="lede">Find a project, task, credential, or (if you are super admin) a team email.</p>
     </header>
     <form class="search-form" method="get" action="/team/search">
       <label class="sr-only" for="q">Search</label>
-      <input id="q" name="q" value={q} placeholder="Project, client, credential…" />
+      <input id="q" name="q" value={q} placeholder="Project, task, credential…" />
       <button class="btn" type="submit">Search</button>
     </form>
 
@@ -69,6 +73,21 @@ const marks = await logoHrefs(supabase, projects);
                         <strong>{project.name}</strong>
                         <span>{project.client || 'No client'}</span>
                       </span>
+                    </a>
+                  </li>
+                ))}
+              </ul>
+            </section>
+          )}
+          {tasks.length > 0 && (
+            <section>
+              <h2 class="team-h2">Tasks</h2>
+              <ul class="team-list">
+                {tasks.map((row) => (
+                  <li>
+                    <a href={`/team/projects/${row.project_id}?tab=schedule`}>
+                      <strong>{row.title}</strong>
+                      <span>Task</span>
                     </a>
                   </li>
                 ))}
