@@ -82,6 +82,7 @@ export function projectEvents(
   }
   if (includeMoney) {
   for (const row of contributions) {
+    if (!row.occurred_on) continue;
     events.push({
       date: row.occurred_on,
       kind: 'contribution',
@@ -90,6 +91,7 @@ export function projectEvents(
     });
   }
   for (const row of entries) {
+    if (!row.occurred_on) continue;
     events.push({
       date: row.occurred_on,
       kind: row.kind,
@@ -149,7 +151,7 @@ export function studioEvents(
 
   if (access.includeOverhead) {
     for (const row of entries) {
-      if (row.project_id) continue;
+      if (row.project_id || !row.occurred_on) continue;
       events.push({
         date: row.occurred_on,
         kind: row.kind,

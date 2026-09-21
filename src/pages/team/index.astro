@@ -28,7 +28,7 @@ const [{ data: projects }, { data: entries }, { data: contribs }, { data: milest
       ? supabase.from('ledger_entries').select(ledgerSelect).order('occurred_on', { ascending: false })
       : Promise.resolve({ data: [] }),
     studio?.canLedger
-      ? supabase.from('project_contributions').select('project_id, amount, currency')
+      ? supabase.from('project_contributions').select('project_id, amount, currency, occurred_on, member_email, notes')
       : Promise.resolve({ data: [] }),
     supabase.from('project_milestones').select('project_id, title, status, estimated_on, sort_order'),
     supabase.from('project_tasks').select('id, project_id, title, status, assignee_email, due_on, milestone_id, notes, sort_order, created_at, updated_at'),
