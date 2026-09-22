@@ -2407,7 +2407,8 @@ fieldset.role-picks {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  gap: 1rem;
+  gap: 0.65rem 1rem;
+  flex-wrap: wrap;
   padding: 0.85rem 0;
   border-bottom: 1px solid var(--line);
 }
@@ -2415,11 +2416,14 @@ fieldset.role-picks {
 .tx-log li > span {
   display: grid;
   gap: 0.15rem;
+  flex: 1 1 14rem;
+  min-width: 0;
 }
 
 .tx-log li span span {
   color: var(--muted);
   font-size: 0.9rem;
+  overflow-wrap: anywhere;
 }
 
 .tx-in strong {
@@ -2433,8 +2437,11 @@ fieldset.role-picks {
 .tx-actions {
   display: flex;
   align-items: center;
+  justify-content: flex-end;
   gap: 0.65rem;
   flex: none;
+  flex-wrap: wrap;
+  margin-left: auto;
 }
 
 #calendar {

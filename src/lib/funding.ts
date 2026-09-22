@@ -77,17 +77,29 @@ export async function addContribution(
   return { error: null };
 }
 
+export type FundViewer = { email: string; superAdmin: boolean };
+
+export function canRemoveContribution(memberEmail: string, viewer: FundViewer) {
+  if (viewer.superAdmin) return true;
+  return memberEmail.toLowerCase() === viewer.email.trim().toLowerCase();
+}
+
 export async function removeContribution(
   supabase: SupabaseClient,
   contributionId: string,
   projectId: string,
+  viewer: FundViewer,
 ) {
   const { data } = await supabase
     .from('project_contributions')
-    .select('voucher_url')
+    .select('voucher_url, member_email')
     .eq('id', contributionId)
     .eq('project_id', projectId)
     .maybeSingle();
+  if (!data) return { error: 'invalid' as const };
+  if (!canRemoveContribution(String(data.member_email ?? ''), viewer)) {
+    return { error: 'forbidden' as const };
+  }
   const stored = data?.voucher_url as string | undefined;
   if (stored && !isHttpUrl(stored)) {
     await supabase.storage.from('vouchers').remove([stored]);
@@ -225,6 +237,7 @@ export function fundTransactions(
     notes: string;
     voucher_url?: string;
   }[],
+  viewer: FundViewer,
 ): FundTx[] {
   const incoming: FundTx[] = contributions.map((row) => ({
     id: `in-${row.id}`,
@@ -236,7 +249,9 @@ export function fundTransactions(
     amount: Number(row.amount) || 0,
     currency: row.currency || 'THB',
     voucher_url: row.voucher_url || '',
-    delete: { intent: 'delete-contribution', id: row.id },
+    delete: canRemoveContribution(row.member_email, viewer)
+      ? { intent: 'delete-contribution', id: row.id }
+      : undefined,
   }));
   const outgoing: FundTx[] = expenses.map((row) => ({
     id: `out-${row.id}`,

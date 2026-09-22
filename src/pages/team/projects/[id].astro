@@ -103,6 +103,8 @@ if (!caps.assigned) {
   return Astro.redirect('/team/projects?error=forbidden');
 }
 
+const fundViewer = { email: studio.email, superAdmin: studio.superAdmin };
+
 let revealedLogin = false;
 
 if (Astro.request.method === 'POST') {
@@ -176,8 +178,8 @@ if (Astro.request.method === 'POST') {
   if (intent === 'delete-contribution') {
     const contribId = String(form.get('contribution_id') ?? '');
     if (!contribId) return bounce({ error: 'invalid' });
-    const result = await removeContribution(supabase, contribId, id);
-    if (result.error) return bounce({ error: 'invalid' });
+    const result = await removeContribution(supabase, contribId, id, fundViewer);
+    if (result.error) return bounce({ error: result.error });
     await track('delete', '', 'contribution');
     return bounce({ notice: 'deleted' });
   }
@@ -429,7 +431,7 @@ const totals = totalsByCurrency(entries);
 const expenses = entries.filter((entry) => entry.kind === 'expense');
 const funding = fundingByCurrency(contributions, expenses);
 const byMember = contributionsByMember(contributions);
-const txs = fundTransactions(contributions, expenses);
+const txs = fundTransactions(contributions, expenses, fundViewer);
 const primaryFund = funding[0];
 const fundRemaining = funding.map((item) => money(item.remaining, item.currency)).join(' · ');
 const fundIn = funding.map((item) => money(item.funded, item.currency)).join(' · ');
@@ -739,7 +741,14 @@ const today = todayIso();
                 <div class="tx-actions">
                   <VoucherLink path={tx.voucher_url} href={slips.get(tx.voucher_url)} />
                   {tx.delete && (
-                    <form method="post">
+                    <form
+                      method="post"
+                      data-confirm={
+                        tx.delete.intent === 'delete-contribution'
+                          ? `Remove this contribution of ${money(tx.amount, tx.currency)}?`
+                          : `Remove this expense of ${money(tx.amount, tx.currency)}?`
+                      }
+                    >
                       <input type="hidden" name="tab" value="funding" />
                       <input type="hidden" name="intent" value={tx.delete.intent} />
                       <input
