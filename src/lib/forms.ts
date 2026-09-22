@@ -19,9 +19,9 @@ export function projectFromForm(form: FormData) {
 }
 
 export function entryFromForm(form: FormData) {
-  const amount = asAmount(form.get('amount'));
+  const amount = asAmount(form.get('amount'), true);
   const kind = String(form.get('kind') ?? '') as LedgerKind;
-  if (!amount || !kinds.has(kind)) return null;
+  if (amount === null || !kinds.has(kind)) return null;
   const occurred = String(form.get('occurred_on') ?? '').trim();
   if (!occurred) return null;
   const projectRaw = String(form.get('project_id') ?? '').trim();

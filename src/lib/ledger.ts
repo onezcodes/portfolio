@@ -63,10 +63,12 @@ export function money(amount: number | string, currency = 'THB') {
   }).format(Number.isFinite(value) ? value : 0);
 }
 
-export function asAmount(value: FormDataEntryValue | null) {
+export function asAmount(value: FormDataEntryValue | null, allowZero = false) {
   const raw = String(value ?? '').replace(/,/g, '').trim();
+  if (!raw) return null;
   const amount = Number(raw);
-  if (!Number.isFinite(amount) || amount <= 0) return null;
+  if (!Number.isFinite(amount)) return null;
+  if (allowZero ? amount < 0 : amount <= 0) return null;
   return Math.round(amount * 100) / 100;
 }
 
