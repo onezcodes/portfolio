@@ -552,8 +552,14 @@ a.work-card:hover {
   font-weight: 600;
 }
 
-.sector.soon {
+.sector.soon,
+.sector .soon-note {
   color: var(--gold);
+}
+
+.sector .soon-note::before {
+  content: ' · ';
+  color: var(--muted);
 }
 
 .chips {

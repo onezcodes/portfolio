@@ -41,8 +41,19 @@ const Tag = project.href ? 'a' : 'article';
     )
   }
   <div class="work-meta">
-    <p class:list={['sector', project.comingSoon && 'soon']}>
-      {project.comingSoon ? 'Coming soon' : project.sector}
+    <p class:list={['sector', project.comingSoon && !project.href && 'soon']}>
+      {
+        project.comingSoon && project.href ? (
+          <>
+            {project.sector}
+            <span class="soon-note">App coming soon</span>
+          </>
+        ) : project.comingSoon ? (
+          'Coming soon'
+        ) : (
+          project.sector
+        )
+      }
     </p>
     <h3>{project.title}</h3>
     <p>{project.outcome}</p>

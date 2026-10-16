@@ -2,10 +2,13 @@ import type { ImageMetadata } from 'astro';
 import ftzLogo from '../assets/ftz-logo.webp';
 import ftzShot from '../assets/ftz-shot.webp';
 import lumiereLogo from '../assets/lumiere-logo.webp';
+import lumiereShot from '../assets/lumiere-shot.webp';
 import inoutLogo from '../assets/inout-logo.webp';
 import onezvpnLogo from '../assets/onezvpn-logo.webp';
 import saydiagramLogo from '../assets/saydiagram-logo.webp';
 import saydiagramShot from '../assets/saydiagram-shot.webp';
+import ochordsLogo from '../assets/ochords-logo.webp';
+import unseenLogo from '../assets/unseen-logo.webp';
 import strideLogo from '../assets/stride-logo.webp';
 
 export const site = {
@@ -148,9 +151,34 @@ export const projects: Project[] = [
     outcome:
       'A marketplace for monthly readings — follow trusted readers, or ask a question of your own, on iOS and the web.',
     stack: ['Readings', 'Marketplace', 'iOS / web'],
+    featured: true,
+    comingSoon: true,
+    href: 'https://lumiere.onezcodes.com/',
+    logo: lumiereLogo,
+    shot: lumiereShot,
+    logoSquare: true,
+    logoLarge: true,
+  },
+  {
+    title: 'O Chords',
+    sector: 'Music',
+    outcome:
+      'Turns a handwritten, printed, or screenshotted chord sheet into a clean song you can transpose, practise, and share — built for Myanmar players first.',
+    stack: ['Chord sheets', 'Transpose', 'iOS'],
     featured: false,
     comingSoon: true,
-    logo: lumiereLogo,
+    logo: ochordsLogo,
+  },
+  {
+    title: 'Unseen',
+    sector: 'Developer tools',
+    outcome:
+      'A feature inventory for projects built with coding agents — what was implemented, what has been shown to work, and what still needs a look.',
+    stack: ['Feature inventory', 'Verification', 'CLI'],
+    featured: false,
+    comingSoon: true,
+    logo: unseenLogo,
+    logoSquare: true,
   },
   {
     title: 'Stride',
