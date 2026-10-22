@@ -18,6 +18,15 @@ export function createServiceSupabase() {
   });
 }
 
+export function createPublicSupabase() {
+  const url = import.meta.env.PUBLIC_SUPABASE_URL;
+  const key = import.meta.env.PUBLIC_SUPABASE_ANON_KEY;
+  if (!url || !key) return null;
+  return createClient(url, key, {
+    auth: { persistSession: false, autoRefreshToken: false },
+  });
+}
+
 export type TeamSupabase = ReturnType<typeof createTeamSupabase>;
 
 export function createTeamSupabase(request: Request, cookies: AstroCookies) {

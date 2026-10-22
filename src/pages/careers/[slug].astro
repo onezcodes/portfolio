@@ -12,10 +12,10 @@ import {
   jobParagraphs,
   openJobBySlug,
 } from '../../lib/jobs';
-import { createServiceSupabase } from '../../lib/supabase';
+import { createPublicSupabase } from '../../lib/supabase';
 
 const slug = Astro.params.slug ?? '';
-const client = createServiceSupabase();
+const client = createPublicSupabase();
 const job = client ? await openJobBySlug(client, slug) : null;
 
 if (!job) {

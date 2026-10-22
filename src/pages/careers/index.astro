@@ -4,9 +4,9 @@ export const prerender = false;
 import Base from '../../layouts/Base.astro';
 import { pages } from '../../data/seo';
 import { employmentLabel, listOpenJobs } from '../../lib/jobs';
-import { createServiceSupabase } from '../../lib/supabase';
+import { createPublicSupabase } from '../../lib/supabase';
 
-const client = createServiceSupabase();
+const client = createPublicSupabase();
 const jobs = client ? await listOpenJobs(client) : [];
 ---
 
