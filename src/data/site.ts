@@ -217,6 +217,7 @@ export const projects: Project[] = [
 export const nav = [
   { href: '/work', label: 'Work' },
   { href: '/services', label: 'Services' },
+  { href: '/careers', label: 'Careers' },
   { href: '/contact', label: 'Contact' },
 ] as const;
 

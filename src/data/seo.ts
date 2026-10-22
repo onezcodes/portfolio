@@ -18,6 +18,11 @@ export const pages = {
     description:
       'Web applications, iOS and Android apps, custom software, product & UX, and ongoing support from Onez Codes. Senior engineering, small surface area, available worldwide.',
   },
+  careers: {
+    title: 'Careers',
+    description:
+      'Open roles at Onez Codes. Senior engineering on a small team, worldwide — web, iOS, Android, and custom software.',
+  },
   contact: {
     title: 'Contact',
     description:
@@ -38,6 +43,10 @@ const crumbs: Record<string, { name: string; path: string }[]> = {
   '/services': [
     { name: 'Home', path: '/' },
     { name: 'Services', path: '/services' },
+  ],
+  '/careers': [
+    { name: 'Home', path: '/' },
+    { name: 'Careers', path: '/careers' },
   ],
   '/contact': [
     { name: 'Home', path: '/' },
@@ -152,8 +161,16 @@ function images() {
   ];
 }
 
-function breadcrumb(path: string) {
-  const items = crumbs[path] ?? [{ name: 'Home', path: '/' }];
+function breadcrumb(path: string, leaf?: string) {
+  const items =
+    crumbs[path] ??
+    (path.startsWith('/careers/')
+      ? [
+          { name: 'Home', path: '/' },
+          { name: 'Careers', path: '/careers' },
+          { name: leaf || 'Role', path },
+        ]
+      : [{ name: 'Home', path: '/' }]);
   return {
     '@type': 'BreadcrumbList',
     '@id': `${canonicalUrl(path)}#breadcrumb`,
@@ -170,6 +187,7 @@ function pageType(path: string): string {
   if (path === '/contact') return 'ContactPage';
   if (path === '/work') return 'CollectionPage';
   if (path === '/services') return 'CollectionPage';
+  if (path === '/careers') return 'CollectionPage';
   return 'WebPage';
 }
 
@@ -222,7 +240,7 @@ function workList() {
   };
 }
 
-export function jsonLdGraph(opts: { path: string; title: string; description: string }) {
+export function jsonLdGraph(opts: { path: string; title: string; description: string; crumb?: string }) {
   const url = canonicalUrl(opts.path);
   const webpage = {
     '@type': pageType(opts.path),
@@ -242,7 +260,7 @@ export function jsonLdGraph(opts: { path: string; title: string; description: st
     website(),
     ...images(),
     webpage,
-    breadcrumb(opts.path),
+    breadcrumb(opts.path, opts.crumb),
   ];
 
   if (opts.path === '/' || opts.path === '/services') graph.push(serviceList());

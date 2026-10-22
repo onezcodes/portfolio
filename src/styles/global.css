@@ -892,6 +892,68 @@ a.work-card:hover {
   border-top: 0;
 }
 
+.role-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.role-hit {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 0.65rem;
+  padding-block: 1.5rem;
+  border-top: 1px solid var(--line);
+  text-decoration: none;
+  color: inherit;
+}
+
+.role-list > li:first-child .role-hit {
+  border-top: 0;
+  padding-top: 0;
+}
+
+.role-hit h2 {
+  margin: 0;
+  font-size: clamp(1.35rem, 2vw, 1.75rem);
+}
+
+.role-hit p {
+  margin: 0;
+  max-width: 40rem;
+  color: var(--muted);
+}
+
+.role-hit .chips,
+.page-intro .chips {
+  grid-column: 1;
+  justify-self: start;
+}
+
+.role-hit:hover h2 {
+  color: var(--gold);
+}
+
+.role-prose {
+  display: grid;
+  gap: 1rem;
+  max-width: 40rem;
+}
+
+.role-prose p {
+  margin: 0;
+  white-space: pre-wrap;
+}
+
+.role-copy {
+  display: grid;
+  gap: 0.75rem;
+}
+
+.role-copy .fact-value {
+  white-space: pre-wrap;
+}
+
 .deliverables {
   margin: 0.25rem 0 0;
   padding: 0;

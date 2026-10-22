@@ -14,6 +14,7 @@ interface Props {
   fullTitle?: boolean;
   noindex?: boolean;
   home?: boolean;
+  crumb?: string;
 }
 
 const {
@@ -22,6 +23,7 @@ const {
   fullTitle = false,
   noindex = false,
   home = false,
+  crumb,
 } = Astro.props;
 
 const pageTitle = fullTitle && title ? title : title ? `${title} · ${site.name}` : pages.home.title;
@@ -32,7 +34,7 @@ const ogAlt = `${site.name} — ${site.tagline}`;
 const robots = noindex
   ? 'noindex, follow'
   : 'index, follow, max-image-preview:large, max-snippet:-1, max-video-preview:-1';
-const jsonLd = jsonLdGraph({ path, title: pageTitle, description });
+const jsonLd = jsonLdGraph({ path, title: pageTitle, description, crumb });
 ---
 
 <!doctype html>

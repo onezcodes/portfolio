@@ -1,0 +1,110 @@
+---
+export const prerender = false;
+
+import Base from '../../layouts/Base.astro';
+import { site } from '../../data/site';
+import { pages } from '../../data/seo';
+import {
+  applyHref,
+  employmentLabel,
+  employmentSchema,
+  isRemoteLocation,
+  jobParagraphs,
+  openJobBySlug,
+} from '../../lib/jobs';
+import { createServiceSupabase } from '../../lib/supabase';
+
+const slug = Astro.params.slug ?? '';
+const client = createServiceSupabase();
+const job = client ? await openJobBySlug(client, slug) : null;
+
+if (!job) {
+  Astro.response.status = 404;
+  Astro.response.statusText = 'Not Found';
+}
+
+const paragraphs = job ? jobParagraphs(job.body) : [];
+const description = job?.summary || pages.careers.description;
+const posted = job?.published_at?.slice(0, 10);
+const posting = job
+  ? {
+      '@context': 'https://schema.org',
+      '@type': 'JobPosting',
+      title: job.title,
+      description: job.body || job.summary || job.title,
+      ...(posted ? { datePosted: posted } : {}),
+      employmentType: employmentSchema(job.employment_type),
+      hiringOrganization: {
+        '@type': 'Organization',
+        name: site.name,
+        sameAs: site.url,
+        email: job.apply_email || site.email,
+      },
+      directApply: true,
+      url: Astro.url.href,
+      ...(isRemoteLocation(job.location)
+        ? {
+            jobLocationType: 'TELECOMMUTE',
+            applicantLocationRequirements: { '@type': 'Country', name: 'Worldwide' },
+          }
+        : {
+            jobLocation: {
+              '@type': 'Place',
+              address: { '@type': 'PostalAddress', addressLocality: job.location },
+            },
+          }),
+    }
+  : null;
+---
+
+<Base
+  title={job ? job.title : pages.notFound.title}
+  description={job ? description : pages.notFound.description}
+  noindex={!job}
+  crumb={job?.title}
+>
+  {
+    job && posting ? (
+      <script type="application/ld+json" set:html={JSON.stringify(posting).replace(/</g, '\\u003c')} />
+    ) : null
+  }
+  {
+    job ? (
+      <>
+        <header class="page-intro wrap">
+          <p class="kicker"><a href="/careers">Careers</a></p>
+          <h1>{job.title}</h1>
+          <ul class="chips">
+            <li class="chip">{job.location}</li>
+            <li class="chip">{employmentLabel(job.employment_type)}</li>
+          </ul>
+          {job.summary ? <p class="lede">{job.summary}</p> : null}
+          <p class="hero-actions">
+            <a class="btn" href={applyHref(job, site.email)}>Apply</a>
+          </p>
+        </header>
+        {
+          paragraphs.length > 0 && (
+            <section class="section" aria-label="Role description">
+              <div class="wrap role-prose">
+                {paragraphs.map((paragraph) => (
+                  <p>{paragraph}</p>
+                ))}
+              </div>
+            </section>
+          )
+        }
+      </>
+    ) : (
+      <header class="page-intro wrap">
+        <p class="kicker">404</p>
+        <h1>This page is not here</h1>
+        <p class="lede">That role is not open. See the current list, or send a note anyway.</p>
+        <p class="hero-actions">
+          <a class="btn" href="/careers">Careers</a>
+          <a class="btn btn-ghost" href="/contact">Contact</a>
+        </p>
+      </header>
+    )
+  }
+</Base>

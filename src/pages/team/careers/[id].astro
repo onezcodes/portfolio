@@ -1,0 +1,199 @@
+---
+import Team from '../../../layouts/Team.astro';
+import TeamFlash from '../../../components/TeamFlash.astro';
+import { logEvent } from '../../../lib/events';
+import {
+  EMPLOYMENT_TYPES,
+  JOB_STATUSES,
+  applyHref,
+  employmentLabel,
+  isSlugConflict,
+  jobFromForm,
+  jobParagraphs,
+  statusLabel,
+  type JobOpportunity,
+} from '../../../lib/jobs';
+import { emailOf, isSuperAdmin } from '../../../lib/supabase';
+import { site } from '../../../data/site';
+
+const supabase = Astro.locals.supabase;
+const studio = Astro.locals.studio;
+const admin = isSuperAdmin(Astro.locals.user);
+const { id } = Astro.params;
+
+if (!id) return Astro.redirect('/team/careers');
+if (!admin) return Astro.redirect('/team?error=forbidden');
+
+const actor = studio?.email || emailOf(Astro.locals.user);
+
+if (Astro.request.method === 'POST') {
+  const form = await Astro.request.formData();
+  const intent = String(form.get('intent') ?? 'update');
+  const base = `/team/careers/${id}`;
+
+  if (intent === 'delete') {
+    const { data: named } = await supabase.from('job_opportunities').select('title').eq('id', id).maybeSingle();
+    const { error } = await supabase.from('job_opportunities').delete().eq('id', id);
+    if (error) return Astro.redirect(`${base}?error=invalid`);
+    await logEvent(supabase, actor, {
+      action: 'delete',
+      entityType: 'job',
+      entityId: id,
+      detail: named?.title ?? '',
+    });
+    return Astro.redirect('/team/careers?notice=deleted');
+  }
+
+  const { data: current } = await supabase.from('job_opportunities').select('published_at').eq('id', id).maybeSingle();
+  if (!current) return Astro.redirect('/team/careers?error=not-found');
+  const payload = jobFromForm(form, current);
+  if (!payload) return Astro.redirect(`${base}?action=edit&error=invalid`);
+  const { error } = await supabase.from('job_opportunities').update(payload).eq('id', id);
+  if (isSlugConflict(error)) return Astro.redirect(`${base}?action=edit&error=slug`);
+  if (error) {
+    console.error(error.message);
+    return Astro.redirect(`${base}?action=edit&error=invalid`);
+  }
+  await logEvent(supabase, actor, {
+    action: 'update',
+    entityType: 'job',
+    entityId: id,
+    detail: payload.title,
+  });
+  return Astro.redirect(`${base}?notice=saved`);
+}
+
+const { data: row, error } = await supabase.from('job_opportunities').select('*').eq('id', id).maybeSingle();
+if (error || !row) return Astro.redirect('/team/careers?error=not-found');
+
+const job = row as JobOpportunity;
+const editing = Astro.url.searchParams.get('action') === 'edit';
+const paragraphs = jobParagraphs(job.body);
+const publicHref = job.status === 'open' ? `/careers/${job.slug}` : '';
+---
+
+<Team title={job.title}>
+  <div class="wrap team-page">
+    <header class="team-intro">
+      <p class="kicker"><a href="/team/careers">Careers</a></p>
+      <h1>{job.title}</h1>
+      <p class="lede">
+        {employmentLabel(job.employment_type)} · {job.location} · {statusLabel(job.status)}
+      </p>
+      <nav class="quick-actions" aria-label="Role actions">
+        {
+          editing ? (
+            <a class="btn btn-ghost" href={`/team/careers/${job.id}`}>View</a>
+          ) : (
+            <a class="btn btn-ghost" href={`/team/careers/${job.id}?action=edit`}>Edit</a>
+          )
+        }
+        {publicHref && (
+          <a class="btn btn-ghost" href={publicHref}>Public page</a>
+        )}
+      </nav>
+    </header>
+    <TeamFlash />
+
+    {
+      !editing && (
+        <section class="team-card">
+          <div class="fact-list">
+            <div class="fact">
+              <p class="fact-label">Slug</p>
+              <p class="fact-value">/careers/{job.slug}</p>
+            </div>
+            <div class="fact">
+              <p class="fact-label">Apply</p>
+              <p class="fact-value">
+                <a href={applyHref(job, site.email)}>{job.apply_email || site.email}</a>
+              </p>
+            </div>
+            {
+              job.summary && (
+                <div class="fact">
+                  <p class="fact-label">Summary</p>
+                  <p class="fact-value">{job.summary}</p>
+                </div>
+              )
+            }
+            {
+              paragraphs.length > 0 && (
+                <div class="fact">
+                  <p class="fact-label">Description</p>
+                  <div class="role-copy">
+                    {paragraphs.map((paragraph) => (
+                      <p class="fact-value">{paragraph}</p>
+                    ))}
+                  </div>
+                </div>
+              )
+            }
+          </div>
+        </section>
+      )
+    }
+
+    {
+      editing && (
+        <section class="team-card">
+          <h2>Edit</h2>
+          <form class="form team-form" method="post">
+            <input type="hidden" name="intent" value="update" />
+            <p class="field">
+              <label for="title">Title</label>
+              <input id="title" name="title" required maxlength="120" value={job.title} />
+            </p>
+            <p class="field">
+              <label for="slug">URL slug</label>
+              <input id="slug" name="slug" required maxlength="80" value={job.slug} autocomplete="off" />
+            </p>
+            <div class="team-form-row">
+              <p class="field">
+                <label for="location">Location</label>
+                <input id="location" name="location" maxlength="80" value={job.location} />
+              </p>
+              <p class="field">
+                <label for="employment_type">Type</label>
+                <select id="employment_type" name="employment_type">
+                  {EMPLOYMENT_TYPES.map((type) => (
+                    <option value={type} selected={type === job.employment_type}>
+                      {employmentLabel(type)}
+                    </option>
+                  ))}
+                </select>
+              </p>
+              <p class="field">
+                <label for="status">Status</label>
+                <select id="status" name="status">
+                  {JOB_STATUSES.map((status) => (
+                    <option value={status} selected={status === job.status}>
+                      {statusLabel(status)}
+                    </option>
+                  ))}
+                </select>
+              </p>
+            </div>
+            <p class="field">
+              <label for="summary">Summary</label>
+              <textarea id="summary" name="summary" rows="2" maxlength="280">{job.summary}</textarea>
+            </p>
+            <p class="field">
+              <label for="body">Description</label>
+              <textarea id="body" name="body" rows="8" maxlength="8000">{job.body}</textarea>
+            </p>
+            <p class="field">
+              <label for="apply_email">Apply email</label>
+              <input id="apply_email" name="apply_email" type="email" maxlength="200" value={job.apply_email} placeholder="Defaults to the studio address" />
+            </p>
+            <button class="btn" type="submit">Save changes</button>
+          </form>
+          <form class="team-danger" method="post" data-confirm="Delete this role?" data-confirm-action="Delete">
+            <input type="hidden" name="intent" value="delete" />
+            <button class="btn btn-ghost" type="submit">Delete</button>
+          </form>
+        </section>
+      )
+    }
+  </div>
+</Team>

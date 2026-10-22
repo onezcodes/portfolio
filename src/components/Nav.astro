@@ -2,7 +2,12 @@
 import logo from '../assets/logo.webp';
 import { site, nav } from '../data/site';
 
-const path = Astro.url.pathname;
+const path = Astro.url.pathname.replace(/\/+$/, '') || '/';
+
+function current(href: string) {
+  if (href === '/') return path === '/';
+  return path === href || path.startsWith(`${href}/`);
+}
 ---
 
 <header class="site-header">
@@ -30,7 +35,7 @@ const path = Astro.url.pathname;
           {
             nav.map((item) => (
               <li>
-                <a href={item.href} data-astro-prefetch="hover" aria-current={path === item.href ? 'page' : undefined}>
+                <a href={item.href} data-astro-prefetch="hover" aria-current={current(item.href) ? 'page' : undefined}>
                   {item.label}
                 </a>
               </li>

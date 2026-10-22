@@ -35,6 +35,7 @@ export async function logEvent(
 }
 
 export function eventHref(row: StudioEvent) {
+  if (row.entity_type === 'job' && row.entity_id) return `/team/careers/${row.entity_id}`;
   if (row.entity_type === 'credential' && row.entity_id) return `/team/credentials/${row.entity_id}`;
   if (row.entity_type === 'checkin' && row.project_id) return `/team/projects/${row.project_id}?tab=schedule#checkin`;
   if (row.entity_type === 'task' && row.project_id) return `/team/projects/${row.project_id}?tab=schedule`;
@@ -47,6 +48,9 @@ export function eventHref(row: StudioEvent) {
 }
 
 const titles: Record<string, string> = {
+  'job.create': 'Added a role',
+  'job.update': 'Updated a role',
+  'job.delete': 'Deleted a role',
   'credential.create': 'Added credentials',
   'credential.update': 'Updated credentials',
   'credential.delete': 'Deleted credentials',

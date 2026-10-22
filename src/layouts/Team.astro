@@ -24,6 +24,7 @@ const label = studio?.displayName || email;
 const links = [
   { href: '/team', label: 'Overview' },
   { href: '/team/projects', label: 'Projects' },
+  ...(admin ? [{ href: '/team/careers', label: 'Careers' }] : []),
   ...(canLedger ? [{ href: '/team/ledger', label: 'Ledger' }] : []),
   ...(canVault ? [{ href: '/team/credentials', label: 'Credentials' }] : []),
   { href: '/team/activity', label: 'Activity' },

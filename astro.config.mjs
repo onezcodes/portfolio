@@ -20,6 +20,7 @@ export default defineConfig({
   },
   integrations: [
     sitemap({
+      customPages: ['https://www.onezcodes.com/careers'],
       lastmod: new Date(),
       filter: (page) => {
         const skip = ['/robots.txt', '/llms.txt', '/site.webmanifest', '/404', '/team', '/auth'];
@@ -28,7 +29,7 @@ export default defineConfig({
       serialize(item) {
         const path = new URL(item.url).pathname.replace(/\/+$/, '') || '/';
         const priority =
-          path === '/' ? 1 : path === '/work' || path === '/services' ? 0.9 : path === '/contact' ? 0.8 : 0.5;
+          path === '/' ? 1 : path === '/work' || path === '/services' ? 0.9 : path === '/contact' || path === '/careers' ? 0.8 : 0.5;
         item.priority = priority;
         item.changefreq = path === '/' ? 'weekly' : 'monthly';
         return item;

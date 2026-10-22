@@ -1,0 +1,163 @@
+---
+import Team from '../../../layouts/Team.astro';
+import TeamFlash from '../../../components/TeamFlash.astro';
+import { logEvent } from '../../../lib/events';
+import {
+  EMPLOYMENT_TYPES,
+  JOB_STATUSES,
+  employmentLabel,
+  isSlugConflict,
+  jobFromForm,
+  statusLabel,
+  type JobOpportunity,
+} from '../../../lib/jobs';
+import { emailOf, isSuperAdmin } from '../../../lib/supabase';
+
+const supabase = Astro.locals.supabase;
+const studio = Astro.locals.studio;
+const admin = isSuperAdmin(Astro.locals.user);
+
+if (!admin) return Astro.redirect('/team?error=forbidden');
+
+if (Astro.request.method === 'POST') {
+  const form = await Astro.request.formData();
+  const payload = jobFromForm(form);
+  if (!payload) return Astro.redirect('/team/careers?new=1&error=invalid');
+  const { data, error } = await supabase
+    .from('job_opportunities')
+    .insert({ ...payload, created_by: Astro.locals.user?.id ?? null })
+    .select('id, title')
+    .single();
+  if (isSlugConflict(error)) return Astro.redirect('/team/careers?new=1&error=slug');
+  if (error || !data) {
+    console.error(error?.message);
+    return Astro.redirect('/team/careers?new=1&error=invalid');
+  }
+  await logEvent(supabase, studio?.email || emailOf(Astro.locals.user), {
+    action: 'create',
+    entityType: 'job',
+    entityId: data.id,
+    detail: data.title,
+  });
+  return Astro.redirect(`/team/careers/${data.id}?notice=created`);
+}
+
+const statusFilter = Astro.url.searchParams.get('status')?.trim() ?? '';
+const filter = JOB_STATUSES.find((status) => status === statusFilter) ?? '';
+const { data } = await supabase
+  .from('job_opportunities')
+  .select('id, title, slug, location, employment_type, status, updated_at')
+  .order('updated_at', { ascending: false });
+const jobs = ((data ?? []) as Pick<JobOpportunity, 'id' | 'title' | 'slug' | 'location' | 'employment_type' | 'status' | 'updated_at'>[]).filter(
+  (job) => !filter || job.status === filter,
+);
+const creating =
+  Astro.url.searchParams.has('new') ||
+  Astro.url.searchParams.get('error') === 'invalid' ||
+  Astro.url.searchParams.get('error') === 'slug';
+---
+
+<Team title="Careers">
+  <div class="wrap team-page">
+    <header class="team-intro">
+      <p class="kicker">Studio</p>
+      <h1>Job opportunities</h1>
+      <p class="lede">Roles published here appear on /careers. Drafts and closed posts stay off the public site.</p>
+    </header>
+    <nav class="quick-actions" aria-label="Quick actions">
+      <a class="btn" href="/team/careers?new=1">New role</a>
+    </nav>
+    <TeamFlash />
+
+    {
+      creating && (
+        <section class="team-card" id="new-role">
+          <h2>New role</h2>
+          <form class="form team-form" method="post">
+            <p class="field">
+              <label for="title">Title</label>
+              <input id="title" name="title" required maxlength="120" placeholder="Product engineer" />
+            </p>
+            <p class="field">
+              <label for="slug">URL slug</label>
+              <input id="slug" name="slug" maxlength="80" placeholder="Leave blank to build it from the title" autocomplete="off" />
+            </p>
+            <div class="team-form-row">
+              <p class="field">
+                <label for="location">Location</label>
+                <input id="location" name="location" maxlength="80" value="Remote" />
+              </p>
+              <p class="field">
+                <label for="employment_type">Type</label>
+                <select id="employment_type" name="employment_type">
+                  {EMPLOYMENT_TYPES.map((type) => (
+                    <option value={type}>{employmentLabel(type)}</option>
+                  ))}
+                </select>
+              </p>
+              <p class="field">
+                <label for="status">Status</label>
+                <select id="status" name="status">
+                  {JOB_STATUSES.map((status) => (
+                    <option value={status} selected={status === 'draft'}>
+                      {statusLabel(status)}
+                    </option>
+                  ))}
+                </select>
+              </p>
+            </div>
+            <p class="field">
+              <label for="summary">Summary</label>
+              <textarea id="summary" name="summary" rows="2" maxlength="280" placeholder="One or two sentences for the listing."></textarea>
+            </p>
+            <p class="field">
+              <label for="body">Description</label>
+              <textarea id="body" name="body" rows="8" maxlength="8000" placeholder="Blank line between paragraphs."></textarea>
+            </p>
+            <p class="field">
+              <label for="apply_email">Apply email</label>
+              <input id="apply_email" name="apply_email" type="email" maxlength="200" placeholder="Defaults to the studio address" />
+            </p>
+            <div class="ms-tools">
+              <button class="btn" type="submit">Create role</button>
+              <a class="ms-text" href="/team/careers">Cancel</a>
+            </div>
+          </form>
+        </section>
+      )
+    }
+
+    <section>
+      <h2 class="team-h2">{creating ? 'All roles' : 'Roles'}</h2>
+      <nav class="member-filter" aria-label="Filter roles">
+        {
+          [{ id: '', label: 'All' }, ...JOB_STATUSES.map((status) => ({ id: status, label: statusLabel(status) }))].map((item) => (
+            <a href={item.id ? `/team/careers?status=${item.id}` : '/team/careers'} aria-current={filter === item.id ? 'page' : undefined}>
+              {item.label}
+            </a>
+          ))
+        }
+      </nav>
+      {
+        jobs.length === 0 ? (
+          <p class="muted">{filter ? 'No roles match that filter.' : 'None yet.'}</p>
+        ) : (
+          <ul class="team-list">
+            {jobs.map((job) => (
+              <li>
+                <a class="vault-hit" href={`/team/careers/${job.id}`}>
+                  <span>
+                    <strong>{job.title}</strong>
+                    <span>
+                      {employmentLabel(job.employment_type)} · {job.location} · {statusLabel(job.status)}
+                    </span>
+                  </span>
+                </a>
+              </li>
+            ))}
+          </ul>
+        )
+      }
+    </section>
+  </div>
+</Team>

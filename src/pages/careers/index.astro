@@ -1,0 +1,55 @@
+---
+export const prerender = false;
+
+import Base from '../../layouts/Base.astro';
+import { pages } from '../../data/seo';
+import { employmentLabel, listOpenJobs } from '../../lib/jobs';
+import { createServiceSupabase } from '../../lib/supabase';
+
+const client = createServiceSupabase();
+const jobs = client ? await listOpenJobs(client) : [];
+---
+
+<Base title={pages.careers.title} description={pages.careers.description}>
+  <header class="page-intro wrap">
+    <p class="kicker">Careers</p>
+    <h1>Open roles</h1>
+    <p class="lede">
+      {
+        jobs.length === 0
+          ? 'No open roles right now. A short note on what you want to build is still welcome.'
+          : 'A small team. Senior work. If a role fits, write to us.'
+      }
+    </p>
+    {
+      jobs.length === 0 && (
+        <p class="hero-actions">
+          <a class="btn" href="/contact">Get in touch</a>
+        </p>
+      )
+    }
+  </header>
+
+  {
+    jobs.length > 0 && (
+      <section class="section" aria-label="Open roles">
+        <div class="wrap">
+          <ul class="role-list">
+            {jobs.map((job) => (
+              <li>
+                <a class="role-hit" href={`/careers/${job.slug}`}>
+                  <h2>{job.title}</h2>
+                  {job.summary ? <p>{job.summary}</p> : null}
+                  <ul class="chips">
+                    <li class="chip">{job.location}</li>
+                    <li class="chip">{employmentLabel(job.employment_type)}</li>
+                  </ul>
+                </a>
+              </li>
+            ))}
+          </ul>
+        </div>
+      </section>
+    )
+  }
+</Base>
