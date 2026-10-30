@@ -16,6 +16,7 @@ export type JobOpportunity = {
   body: string;
   status: JobStatus;
   apply_email: string;
+  deadline: string | null;
   published_at: string | null;
   created_at: string;
   updated_at: string;
@@ -23,10 +24,10 @@ export type JobOpportunity = {
 
 export type PublicJob = Pick<
   JobOpportunity,
-  'title' | 'slug' | 'location' | 'employment_type' | 'summary' | 'body' | 'apply_email' | 'published_at'
+  'title' | 'slug' | 'location' | 'employment_type' | 'summary' | 'body' | 'apply_email' | 'deadline' | 'published_at'
 >;
 
-export type PublicJobCard = Pick<PublicJob, 'title' | 'slug' | 'location' | 'employment_type' | 'summary' | 'published_at'>;
+export type PublicJobCard = Pick<PublicJob, 'title' | 'slug' | 'location' | 'employment_type' | 'summary' | 'deadline' | 'published_at'>;
 
 const STATUS_LABELS: Record<JobStatus, string> = {
   draft: 'Draft',
@@ -93,6 +94,8 @@ export function jobFromForm(form: FormData, current?: { published_at: string | n
   if (!isEmploymentType(employment_type)) return null;
   const apply_email = cleanApplyTarget(String(form.get('apply_email') ?? ''));
   if (apply_email === null) return null;
+  const deadline = cleanDeadline(String(form.get('deadline') ?? ''));
+  if (deadline === undefined) return null;
   const location = String(form.get('location') ?? '').trim().slice(0, 80) || 'Remote';
   const published_at = status === 'open' ? (current?.published_at ?? new Date().toISOString()) : (current?.published_at ?? null);
   return {
@@ -104,6 +107,7 @@ export function jobFromForm(form: FormData, current?: { published_at: string | n
     body: String(form.get('body') ?? '').trim().slice(0, 8000),
     status,
     apply_email,
+    deadline,
     published_at,
   };
 }
@@ -131,6 +135,33 @@ function cleanApplyTarget(value: string) {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) ? email : null;
 }
 
+// Blank clears the deadline; anything that is not a real yyyy-mm-dd date is rejected.
+function cleanDeadline(value: string) {
+  const raw = value.trim();
+  if (!raw) return null;
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(raw)) return undefined;
+  const date = new Date(`${raw}T00:00:00Z`);
+  return !Number.isNaN(date.getTime()) && date.toISOString().slice(0, 10) === raw ? raw : undefined;
+}
+
+// The deadline day itself is still open; roles drop off the public site the day after.
+function today() {
+  return new Date().toISOString().slice(0, 10);
+}
+
+export function isPastDeadline(deadline: string | null) {
+  return Boolean(deadline) && (deadline as string) < today();
+}
+
+export function deadlineLabel(deadline: string) {
+  return new Date(`${deadline}T12:00:00Z`).toLocaleDateString('en-GB', {
+    day: 'numeric',
+    month: 'short',
+    year: 'numeric',
+    timeZone: 'UTC',
+  });
+}
+
 export function isApplyLink(target: string) {
   return /^https:\/\//i.test(target.trim());
 }
@@ -148,8 +179,9 @@ export function isRemoteLocation(location: string) {
 export async function listOpenJobs(client: SupabaseClient): Promise<PublicJobCard[]> {
   const { data, error } = await client
     .from('job_opportunities')
-    .select('title, slug, location, employment_type, summary, published_at')
+    .select('title, slug, location, employment_type, summary, deadline, published_at')
     .eq('status', 'open')
+    .or(`deadline.is.null,deadline.gte.${today()}`)
     .order('published_at', { ascending: false });
   if (error) {
     console.error(error.message);
@@ -163,8 +195,9 @@ export async function openJobBySlug(client: SupabaseClient, slug: string): Promi
   if (!clean || clean !== slug) return null;
   const { data, error } = await client
     .from('job_opportunities')
-    .select('title, slug, location, employment_type, summary, body, apply_email, published_at')
+    .select('title, slug, location, employment_type, summary, body, apply_email, deadline, published_at')
     .eq('status', 'open')
+    .or(`deadline.is.null,deadline.gte.${today()}`)
     .eq('slug', clean)
     .maybeSingle();
   if (error) {

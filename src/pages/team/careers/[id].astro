@@ -6,7 +6,9 @@ import {
   EMPLOYMENT_TYPES,
   JOB_STATUSES,
   applyHref,
+  deadlineLabel,
   employmentLabel,
+  isPastDeadline,
   isSlugConflict,
   jobFromForm,
   jobParagraphs,
@@ -69,7 +71,8 @@ if (error || !row) return Astro.redirect('/team/careers?error=not-found');
 const job = row as JobOpportunity;
 const editing = Astro.url.searchParams.get('action') === 'edit';
 const paragraphs = jobParagraphs(job.body);
-const publicHref = job.status === 'open' ? `/careers/${job.slug}` : '';
+const expired = isPastDeadline(job.deadline);
+const publicHref = job.status === 'open' && !expired ? `/careers/${job.slug}` : '';
 ---
 
 <Team title={job.title}>
@@ -102,6 +105,12 @@ const publicHref = job.status === 'open' ? `/careers/${job.slug}` : '';
             <div class="fact">
               <p class="fact-label">Slug</p>
               <p class="fact-value">/careers/{job.slug}</p>
+            </div>
+            <div class="fact">
+              <p class="fact-label">Deadline</p>
+              <p class="fact-value">
+                {job.deadline ? `${deadlineLabel(job.deadline)}${expired ? ' — passed, hidden from /careers' : ''}` : 'None'}
+              </p>
             </div>
             <div class="fact">
               <p class="fact-label">Apply</p>
@@ -185,6 +194,10 @@ const publicHref = job.status === 'open' ? `/careers/${job.slug}` : '';
             <p class="field">
               <label for="apply_email">Apply email or link</label>
               <input id="apply_email" name="apply_email" type="text" inputmode="url" maxlength="500" value={job.apply_email} placeholder="Email or https:// form link — defaults to the studio address" />
+            </p>
+            <p class="field">
+              <label for="deadline">Application deadline</label>
+              <input id="deadline" name="deadline" type="date" value={job.deadline ?? ''} />
             </p>
             <button class="btn" type="submit">Save changes</button>
           </form>

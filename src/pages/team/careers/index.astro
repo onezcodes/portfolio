@@ -5,7 +5,9 @@ import { logEvent } from '../../../lib/events';
 import {
   EMPLOYMENT_TYPES,
   JOB_STATUSES,
+  deadlineLabel,
   employmentLabel,
+  isPastDeadline,
   isSlugConflict,
   jobFromForm,
   statusLabel,
@@ -46,9 +48,9 @@ const statusFilter = Astro.url.searchParams.get('status')?.trim() ?? '';
 const filter = JOB_STATUSES.find((status) => status === statusFilter) ?? '';
 const { data } = await supabase
   .from('job_opportunities')
-  .select('id, title, slug, location, employment_type, status, updated_at')
+  .select('id, title, slug, location, employment_type, status, deadline, updated_at')
   .order('updated_at', { ascending: false });
-const jobs = ((data ?? []) as Pick<JobOpportunity, 'id' | 'title' | 'slug' | 'location' | 'employment_type' | 'status' | 'updated_at'>[]).filter(
+const jobs = ((data ?? []) as Pick<JobOpportunity, 'id' | 'title' | 'slug' | 'location' | 'employment_type' | 'status' | 'deadline' | 'updated_at'>[]).filter(
   (job) => !filter || job.status === filter,
 );
 const creating =
@@ -118,6 +120,10 @@ const creating =
               <label for="apply_email">Apply email or link</label>
               <input id="apply_email" name="apply_email" type="text" inputmode="url" maxlength="500" placeholder="Email or https:// form link — defaults to the studio address" />
             </p>
+            <p class="field">
+              <label for="deadline">Application deadline</label>
+              <input id="deadline" name="deadline" type="date" />
+            </p>
             <div class="ms-tools">
               <button class="btn" type="submit">Create role</button>
               <a class="ms-text" href="/team/careers">Cancel</a>
@@ -150,6 +156,7 @@ const creating =
                     <strong>{job.title}</strong>
                     <span>
                       {employmentLabel(job.employment_type)} · {job.location} · {statusLabel(job.status)}
+                      {job.deadline && ` · ${isPastDeadline(job.deadline) ? 'Ended' : 'Until'} ${deadlineLabel(job.deadline)}`}
                     </span>
                   </span>
                 </a>

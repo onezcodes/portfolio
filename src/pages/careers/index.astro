@@ -3,7 +3,7 @@ export const prerender = false;
 
 import Base from '../../layouts/Base.astro';
 import { pages } from '../../data/seo';
-import { employmentLabel, listOpenJobs } from '../../lib/jobs';
+import { deadlineLabel, employmentLabel, listOpenJobs } from '../../lib/jobs';
 import { createPublicSupabase } from '../../lib/supabase';
 
 const client = createPublicSupabase();
@@ -43,6 +43,7 @@ const jobs = client ? await listOpenJobs(client) : [];
                   <ul class="chips">
                     <li class="chip">{job.location}</li>
                     <li class="chip">{employmentLabel(job.employment_type)}</li>
+                    {job.deadline && <li class="chip">Apply by {deadlineLabel(job.deadline)}</li>}
                   </ul>
                 </a>
               </li>

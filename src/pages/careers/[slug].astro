@@ -6,6 +6,7 @@ import { site } from '../../data/site';
 import { pages } from '../../data/seo';
 import {
   applyHref,
+  deadlineLabel,
   employmentLabel,
   employmentSchema,
   isApplyLink,
@@ -35,6 +36,7 @@ const posting = job
       title: job.title,
       description: job.body || job.summary || job.title,
       ...(posted ? { datePosted: posted } : {}),
+      ...(job.deadline ? { validThrough: `${job.deadline}T23:59:59Z` } : {}),
       employmentType: employmentSchema(job.employment_type),
       hiringOrganization: {
         '@type': 'Organization',
@@ -79,6 +81,7 @@ const posting = job
           <ul class="chips">
             <li class="chip">{job.location}</li>
             <li class="chip">{employmentLabel(job.employment_type)}</li>
+            {job.deadline && <li class="chip">Apply by {deadlineLabel(job.deadline)}</li>}
           </ul>
           {job.summary ? <p class="lede">{job.summary}</p> : null}
           <p class="hero-actions">
