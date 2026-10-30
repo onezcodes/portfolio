@@ -91,8 +91,8 @@ export function jobFromForm(form: FormData, current?: { published_at: string | n
   if (!isJobStatus(status)) return null;
   const employment_type = String(form.get('employment_type') ?? 'full-time');
   if (!isEmploymentType(employment_type)) return null;
-  const apply_email = String(form.get('apply_email') ?? '').trim().toLowerCase().slice(0, 200);
-  if (apply_email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(apply_email)) return null;
+  const apply_email = cleanApplyTarget(String(form.get('apply_email') ?? ''));
+  if (apply_email === null) return null;
   const location = String(form.get('location') ?? '').trim().slice(0, 80) || 'Remote';
   const published_at = status === 'open' ? (current?.published_at ?? new Date().toISOString()) : (current?.published_at ?? null);
   return {
@@ -115,7 +115,28 @@ export function jobParagraphs(body: string) {
     .filter(Boolean);
 }
 
+// The apply field holds either an email address or an https link to an external form.
+function cleanApplyTarget(value: string) {
+  const raw = value.trim().slice(0, 500);
+  if (!raw) return '';
+  if (/^https?:\/\//i.test(raw)) {
+    try {
+      const url = new URL(raw);
+      return url.protocol === 'https:' ? url.href : null;
+    } catch {
+      return null;
+    }
+  }
+  const email = raw.toLowerCase().slice(0, 200);
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) ? email : null;
+}
+
+export function isApplyLink(target: string) {
+  return /^https:\/\//i.test(target.trim());
+}
+
 export function applyHref(job: { title: string; apply_email: string }, fallback: string) {
+  if (isApplyLink(job.apply_email)) return job.apply_email.trim();
   const email = job.apply_email.trim() || fallback;
   return `mailto:${email}?subject=${encodeURIComponent(`Application: ${job.title}`)}`;
 }

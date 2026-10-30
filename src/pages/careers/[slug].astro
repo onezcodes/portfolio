@@ -8,6 +8,7 @@ import {
   applyHref,
   employmentLabel,
   employmentSchema,
+  isApplyLink,
   isRemoteLocation,
   jobParagraphs,
   openJobBySlug,
@@ -26,6 +27,7 @@ if (!job) {
 const paragraphs = job ? jobParagraphs(job.body) : [];
 const description = job?.summary || pages.careers.description;
 const posted = job?.published_at?.slice(0, 10);
+const externalApply = job ? isApplyLink(job.apply_email) : false;
 const posting = job
   ? {
       '@context': 'https://schema.org',
@@ -38,9 +40,9 @@ const posting = job
         '@type': 'Organization',
         name: site.name,
         sameAs: site.url,
-        email: job.apply_email || site.email,
+        email: externalApply ? site.email : job.apply_email || site.email,
       },
-      directApply: true,
+      directApply: !externalApply,
       url: Astro.url.href,
       ...(isRemoteLocation(job.location)
         ? {
@@ -80,7 +82,13 @@ const posting = job
           </ul>
           {job.summary ? <p class="lede">{job.summary}</p> : null}
           <p class="hero-actions">
-            <a class="btn" href={applyHref(job, site.email)}>Apply</a>
+            <a
+              class="btn"
+              href={applyHref(job, site.email)}
+              {...(externalApply ? { target: '_blank', rel: 'noopener noreferrer' } : {})}
+            >
+              Apply
+            </a>
           </p>
         </header>
         {

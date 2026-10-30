@@ -183,8 +183,8 @@ const publicHref = job.status === 'open' ? `/careers/${job.slug}` : '';
               <textarea id="body" name="body" rows="8" maxlength="8000">{job.body}</textarea>
             </p>
             <p class="field">
-              <label for="apply_email">Apply email</label>
-              <input id="apply_email" name="apply_email" type="email" maxlength="200" value={job.apply_email} placeholder="Defaults to the studio address" />
+              <label for="apply_email">Apply email or link</label>
+              <input id="apply_email" name="apply_email" type="text" inputmode="url" maxlength="500" value={job.apply_email} placeholder="Email or https:// form link — defaults to the studio address" />
             </p>
             <button class="btn" type="submit">Save changes</button>
           </form>
