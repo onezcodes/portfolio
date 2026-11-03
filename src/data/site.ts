@@ -5,6 +5,7 @@ import lumiereLogo from '../assets/lumiere-logo.webp';
 import lumiereShot from '../assets/lumiere-shot.webp';
 import inoutLogo from '../assets/inout-logo.webp';
 import onezvpnLogo from '../assets/onezvpn-logo.webp';
+import onezvpnShot from '../assets/onezvpn-shot.webp';
 import saydiagramLogo from '../assets/saydiagram-logo.webp';
 import saydiagramShot from '../assets/saydiagram-shot.webp';
 import ochordsLogo from '../assets/ochords-logo.webp';
@@ -194,11 +195,14 @@ export const projects: Project[] = [
     title: 'OnezVPN',
     sector: 'Privacy',
     outcome:
-      'A private VPN for iOS and Android — stay reachable on restricted networks, with Asia-first servers you can actually use.',
-    stack: ['iOS', 'Android', 'Privacy'],
-    featured: false,
+      'A private VPN for iPhone that stays reachable on networks that block VPNs — VLESS + Reality and Hysteria2, a kill switch, and servers in Asia. In English and Myanmar.',
+    stack: ['VLESS + Reality', 'Kill switch', 'iOS'],
+    featured: true,
     comingSoon: true,
+    href: 'https://vpn.onezcodes.com/',
     logo: onezvpnLogo,
+    shot: onezvpnShot,
+    logoSquare: true,
   },
   {
     title: 'InOut',

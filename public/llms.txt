@@ -25,7 +25,7 @@
 - SayDiagram (live): https://saydiagram.com — Mermaid diagram platform
 - Lumiere (coming soon) — marketplace for monthly readings, iOS and web
 - Stride (coming soon) — personal running coach with recovery and nutrition
-- OnezVPN (coming soon) — private VPN for iOS and Android
+- OnezVPN (iOS app coming soon) — private VPN for iPhone that works on networks that block VPNs: https://vpn.onezcodes.com/
 - InOut (coming soon) — money app for multi-currency spending and savings, iOS and Android
 
 ## Stack
