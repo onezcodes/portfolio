@@ -292,6 +292,7 @@ const offTrack = orderedProjects.filter((project) => healthOf(project).level ===
               events={calendarEvents}
               meetings={meetingRows}
               meetingsWithProject
+              zone={studio?.timeZone}
               monthHref={(month) => `/team?month=${month}`}
               agendaCollapsed
               showMoney={calendarHasMoney}
@@ -344,7 +345,7 @@ const offTrack = orderedProjects.filter((project) => healthOf(project).level ===
                   <a class="ov-meeting-copy" href={`/team/projects/${o.meeting.project_id}?tab=schedule#meetings`}>
                     <strong>{o.meeting.projects?.name ?? 'Project'} · {o.meeting.title}</strong>
                     <span>
-                      {whenLabel(o, o.meeting.time_zone)} · <span class="ov-meeting-rel" data-meeting-rel>{relativeLabel(o.start, o.end)}</span>
+                      {whenLabel(o, studio?.timeZone ?? o.meeting.time_zone)} · <span class="ov-meeting-rel" data-meeting-rel>{relativeLabel(o.start, o.end)}</span>
                     </span>
                   </a>
                   <a class:list={['btn', i !== 0 && 'btn-ghost']} href={meetingHref(o.meeting.meeting_url)} target="_blank" rel="noopener noreferrer">Join</a>

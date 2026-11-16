@@ -61,6 +61,8 @@ export type StudioAccess = {
   canVault: boolean;
   displayName: string;
   jobTitle: string;
+  /** Profile time zone; meeting times are shown in it. */
+  timeZone: string;
   avatarUrl: string;
   byProject: Map<string, ProjectRole[]>;
 };
@@ -220,6 +222,7 @@ export async function loadStudioAccess(
     canVault: false,
     displayName: oauthName(user) || email,
     jobTitle: '',
+    timeZone: 'Asia/Bangkok',
     avatarUrl: oauthAvatar(user),
     byProject,
   };
@@ -227,7 +230,7 @@ export async function loadStudioAccess(
 
   const [memberRows, profile, grants] = await Promise.all([
     supabase.from('project_members').select('project_id, roles').eq('email', email),
-    supabase.from('team_members').select('role, display_name, job_title, avatar_url, last_seen_at').eq('email', email).maybeSingle(),
+    supabase.from('team_members').select('role, display_name, job_title, avatar_url, last_seen_at, time_zone').eq('email', email).maybeSingle(),
     supabase.from('studio_credential_access').select('credential_id', { count: 'exact', head: true }).eq('email', email),
   ]);
 
@@ -269,6 +272,7 @@ export async function loadStudioAccess(
     canVault: superAdmin || (grants.count ?? 0) > 0,
     displayName: displayName || email,
     jobTitle: String(profile.data?.job_title ?? '').trim(),
+    timeZone: String(profile.data?.time_zone ?? '') || 'Asia/Bangkok',
     avatarUrl,
     byProject,
   };

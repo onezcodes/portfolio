@@ -212,7 +212,7 @@ function current(href: string) {
               <span class="meeting-bar-dot" aria-hidden="true" />
               <strong>{soonMeeting.meeting.projects?.name ?? 'Project'} · {soonMeeting.meeting.title}</strong>
               <span>
-                {whenLabel(soonMeeting, soonMeeting.meeting.time_zone, nowMs)} ·{' '}
+                {whenLabel(soonMeeting, studio?.timeZone ?? soonMeeting.meeting.time_zone, nowMs)} ·{' '}
                 <span data-meeting-rel>{nowMs >= soonMeeting.start ? 'Live now' : `starts ${relativeLabel(soonMeeting.start, soonMeeting.end, nowMs)}`}</span>
               </span>
             </p>
@@ -221,6 +221,22 @@ function current(href: string) {
                 <a class="btn btn-ghost" href={meetingHref(soonMeeting.meeting.backup_url)} target="_blank" rel="noopener noreferrer">Backup link</a>
               )}
               <a class="btn" href={meetingHref(soonMeeting.meeting.meeting_url)} target="_blank" rel="noopener noreferrer">Join meeting</a>
+            </span>
+          </div>
+        </div>
+      )
+    }
+    {
+      studio?.ok && !viewAs && (
+        <div class="tz-nudge" data-tz-nudge data-profile-zone={studio.timeZone} hidden>
+          <div class="wrap tz-nudge-inner">
+            <p>
+              🌐 Your device is on <strong data-tz-device></strong> time, but your profile says <strong data-tz-profile></strong>.
+              Meeting times and working hours use your profile.
+            </p>
+            <span class="tz-nudge-actions">
+              <button class="btn" type="button" data-tz-use></button>
+              <button class="btn btn-ghost" type="button" data-tz-keep>Keep</button>
             </span>
           </div>
         </div>
@@ -398,6 +414,59 @@ function current(href: string) {
         };
         setInterval(tick, 30000);
         document.addEventListener('astro:page-load', tick);
+      })();
+
+      // Time zone prompt: offer the device's zone when it differs from the profile's.
+      (function () {
+        const key = (profile, device) => 'tz-keep:' + profile + '>' + device;
+        const show = () => {
+          const box = document.querySelector('[data-tz-nudge]');
+          if (!(box instanceof HTMLElement)) return;
+          let device = '';
+          try {
+            device = Intl.DateTimeFormat().resolvedOptions().timeZone || '';
+          } catch {}
+          const profile = box.getAttribute('data-profile-zone') || '';
+          if (!device || device === profile) return;
+          // Same clock right now (e.g. Asia/Bangkok vs Asia/Ho_Chi_Minh)? Nothing would change.
+          const clock = (zone) => new Intl.DateTimeFormat('en-GB', { timeZone: zone, timeStyle: 'short', dateStyle: 'short' }).format(new Date());
+          try {
+            if (clock(device) === clock(profile)) return;
+          } catch {
+            return;
+          }
+          try {
+            if (localStorage.getItem(key(profile, device))) return;
+          } catch {}
+          const city = (zone) => (zone.split('/').pop() || zone).replace(/_/g, ' ');
+          box.querySelectorAll('[data-tz-device]').forEach((el) => (el.textContent = city(device)));
+          box.querySelectorAll('[data-tz-profile]').forEach((el) => (el.textContent = city(profile)));
+          const use = box.querySelector('[data-tz-use]');
+          if (use) use.textContent = 'Use ' + city(device) + ' time';
+          box.dataset.device = device;
+          box.hidden = false;
+        };
+        document.addEventListener('astro:page-load', show);
+        document.addEventListener('click', async (event) => {
+          const target = event.target;
+          if (!(target instanceof Element)) return;
+          const box = target.closest('[data-tz-nudge]');
+          if (!(box instanceof HTMLElement)) return;
+          const device = box.dataset.device || '';
+          const profile = box.getAttribute('data-profile-zone') || '';
+          if (target.closest('[data-tz-keep]')) {
+            try {
+              localStorage.setItem(key(profile, device), '1');
+            } catch {}
+            box.hidden = true;
+          } else if (target.closest('[data-tz-use]')) {
+            const body = new FormData();
+            body.set('time_zone', device);
+            const res = await fetch('/team/timezone', { method: 'POST', body, credentials: 'same-origin' });
+            if (res.ok) location.reload();
+            else box.hidden = true;
+          }
+        });
       })();
 
       // Running timers: refresh "12m" style labels every 30 seconds.

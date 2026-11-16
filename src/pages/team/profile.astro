@@ -10,7 +10,7 @@ import ProjectMark from '../../components/ProjectMark.astro';
 import PresenceList from '../../components/PresenceList.astro';
 import ActivityHeatmap from '../../components/ActivityHeatmap.astro';
 import { activityByDay } from '../../lib/activity';
-import { STATUS_PRESETS, TIME_ZONES, availabilityOf, presenceOf, statusUntil, workingHours } from '../../lib/presence';
+import { STATUS_PRESETS, isTimeZone, TIME_ZONES, availabilityOf, presenceOf, statusUntil, workingHours } from '../../lib/presence';
 import { formatMinutes } from '../../lib/timeTracking';
 import { emailOf, siteUrl } from '../../lib/supabase';
 
@@ -58,7 +58,7 @@ if (Astro.request.method === 'POST') {
     const days = form.getAll('work_days').map(Number).filter((d) => d >= 1 && d <= 7);
     const start = String(form.get('work_start') ?? '');
     const end = String(form.get('work_end') ?? '');
-    if (!TIME_ZONES.includes(zone) || !/^\d{2}:\d{2}$/.test(start) || !/^\d{2}:\d{2}$/.test(end) || start >= end) {
+    if (!isTimeZone(zone) || !/^\d{2}:\d{2}$/.test(start) || !/^\d{2}:\d{2}$/.test(end) || start >= end) {
       return Astro.redirect('/team/profile?error=invalid#hours');
     }
     const { error } = await supabase
@@ -379,7 +379,9 @@ const initial = (name || email).slice(0, 1).toUpperCase();
             <p class="field">
               <label for="time_zone">Time zone</label>
               <select id="time_zone" name="time_zone">
-                {TIME_ZONES.map((zone) => <option value={zone} selected={zone === myZone}>{zone.replace('_', ' ')}</option>)}
+                {(TIME_ZONES.includes(myZone) ? TIME_ZONES : [myZone, ...TIME_ZONES]).map((zone) => (
+                  <option value={zone} selected={zone === myZone}>{zone.replace(/_/g, ' ')}</option>
+                ))}
               </select>
             </p>
             <fieldset class="pf-days">

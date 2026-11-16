@@ -82,6 +82,17 @@ export const TIME_ZONES = [
 
 const WEEKDAY_SHORT = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 
+/** A real IANA zone name (e.g. "Europe/London"), not just one from the short list. */
+export function isTimeZone(zone: string) {
+  if (!zone || zone.length > 64 || !/^[A-Za-z_]+(\/[A-Za-z0-9_+-]+)*$/.test(zone)) return false;
+  try {
+    new Intl.DateTimeFormat('en-GB', { timeZone: zone });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 function validZone(zone: string | null | undefined) {
   try {
     new Intl.DateTimeFormat('en-GB', { timeZone: zone || 'Asia/Bangkok' });

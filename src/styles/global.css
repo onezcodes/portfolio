@@ -10499,3 +10499,45 @@ kbd {
     grid-template-columns: minmax(0, 1fr);
   }
 }
+
+/* Time zones */
+.mt-zone {
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+
+.mt-zone-hint {
+  margin-top: -0.4rem;
+}
+
+.tz-nudge {
+  border-bottom: 1px solid color-mix(in srgb, var(--info) 30%, var(--line));
+  background: color-mix(in srgb, var(--info) 8%, var(--surface));
+}
+
+.tz-nudge[hidden] {
+  display: none;
+}
+
+.tz-nudge-inner {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem 1rem;
+  padding-block: 0.55rem;
+}
+
+.tz-nudge-inner p {
+  font-size: 0.9rem;
+}
+
+.tz-nudge-actions {
+  display: flex;
+  gap: 0.4rem;
+}
+
+.team-body .tz-nudge-actions .btn {
+  min-height: 2.1rem;
+  font-size: 0.85rem;
+}

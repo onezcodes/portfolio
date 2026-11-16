@@ -170,3 +170,29 @@ describe('meeting start', () => {
     expect(sessionsBetween(meeting, '2026-11-01', '2026-11-30').map((o) => o.localDate)).toEqual(['2026-11-16', '2026-11-23', '2026-11-30']);
   });
 });
+
+import { slotsIn, zoneName } from '../../src/lib/meetings';
+
+describe('meetings across time zones', () => {
+  const meeting = {
+    id: 'm', project_id: 'p', title: 'Sync', slots: [{ day: 2, time: '21:00' }, { day: 5, time: '21:00' }],
+    time_zone: 'Asia/Bangkok', duration_minutes: 60, meeting_url: 'https://x', backup_url: '', notes: '', skip_dates: [],
+  };
+  const now = Date.parse('2026-11-16T03:00:00Z'); // Mon 10:00 Bangkok
+
+  it('converts the weekly times to the viewer’s zone', () => {
+    expect(scheduleLabel(meeting, 'Asia/Bangkok', now)).toBe('Tue & Fri · 9:00 PM');
+    expect(scheduleLabel(meeting, 'Asia/Yangon', now)).toBe('Tue & Fri · 8:30 PM');
+    expect(scheduleLabel(meeting, 'Europe/London', now)).toBe('Tue & Fri · 2:00 PM');
+    // 21:00 Bangkok = 06:00 next day in Los Angeles (PST).
+    expect(slotsIn(meeting, 'America/Los_Angeles', now)).toEqual([{ day: 2, time: '06:00' }, { day: 5, time: '06:00' }]);
+  });
+  it('labels the next session in the viewer’s zone', () => {
+    const start = Date.parse('2026-11-17T14:00:00Z'); // Tue 21:00 Bangkok
+    expect(whenLabel({ start, localDate: '2026-11-17' }, 'Asia/Bangkok', now)).toBe('Tomorrow 9:00 PM');
+    expect(whenLabel({ start, localDate: '2026-11-17' }, 'America/Los_Angeles', now)).toBe('Tue 6:00 AM') // still Sunday evening in Los Angeles;
+  });
+  it('names zones plainly', () => {
+    expect(zoneName('America/New_York')).toBe('New York');
+  });
+});

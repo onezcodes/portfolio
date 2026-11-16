@@ -100,8 +100,10 @@ import {
   nextOccurrence,
   projectMeetings,
   relativeLabel,
+  sameClock,
   scheduleLabel,
   whenLabel,
+  zoneName,
   type ProjectMeeting,
 } from '../../../lib/meetings';
 import { siteUrl } from '../../../lib/supabase';
@@ -1010,7 +1012,9 @@ const timeRows = (projectTime ?? []) as { minutes: number; started_at: string; e
 const loggedMinutes = timeRows.reduce((sum, entry) => sum + (entry.minutes || 0), 0);
 const weekMinutes = timeRows.filter((entry) => entry.started_at >= weekAgoIso).reduce((sum, entry) => sum + (entry.minutes || 0), 0);
 const nowMs = Date.now();
-const todayLocal = zonedDate('Asia/Bangkok', nowMs).date;
+const viewerZone = studio.timeZone;
+const todayLocal = zonedDate(viewerZone, nowMs).date;
+const zoneChoices = TIME_ZONES.includes(viewerZone) ? TIME_ZONES : [viewerZone, ...TIME_ZONES];
 const meetingRows = meetings as ProjectMeeting[];
 const meetingNext = meetingRows
   .map((meeting) => nextOccurrence(meeting, nowMs))
@@ -1071,9 +1075,9 @@ function shortDate(iso: string) {
             <span class="pd-meeting-copy">
               <strong>{nextMeeting.meeting.title}</strong>
               <span>
-                {whenLabel(nextMeeting, nextMeeting.meeting.time_zone, nowMs)} ·{' '}
+                {whenLabel(nextMeeting, viewerZone, nowMs)} ·{' '}
                 <span class="pd-meeting-rel" data-meeting-rel>{relativeLabel(nextMeeting.start, nextMeeting.end, nowMs)}</span>
-                {meetingNext.length > 1 && <span class="muted"> · then {whenLabel(meetingNext[1], meetingNext[1].meeting.time_zone, nowMs)}</span>}
+                {meetingNext.length > 1 && <span class="muted"> · then {whenLabel(meetingNext[1], viewerZone, nowMs)}</span>}
               </span>
             </span>
             <span class="pd-meeting-actions">
@@ -1251,7 +1255,10 @@ function shortDate(iso: string) {
                       <li class:list={['mt-item', live && 'is-live']}>
                         <div class="mt-main">
                           <strong>{meeting.title}</strong>
-                          <span class="muted">{scheduleLabel(meeting)} · {meeting.duration_minutes} min{meeting.time_zone !== 'Asia/Bangkok' ? ` · ${meeting.time_zone}` : ''}</span>
+                          <span class="muted">{scheduleLabel(meeting, viewerZone, nowMs)} · {meeting.duration_minutes} min · your time</span>
+                          {!sameClock(viewerZone, meeting.time_zone, nowMs) && (
+                            <span class="mt-zone">Set in {zoneName(meeting.time_zone)} time: {scheduleLabel(meeting)}</span>
+                          )}
                           {(() => {
                             const left = daysLeft(meeting, nowMs);
                             if (left === null) return null;
@@ -1271,7 +1278,7 @@ function shortDate(iso: string) {
                           })()}
                           {next && (
                             <span class="mt-next" data-meeting-start={next.start} data-meeting-end={next.end}>
-                              Next: {whenLabel(next, meeting.time_zone, nowMs)} · <span data-meeting-rel>{relativeLabel(next.start, next.end, nowMs)}</span>
+                              Next: {whenLabel(next, viewerZone, nowMs)} · <span data-meeting-rel>{relativeLabel(next.start, next.end, nowMs)}</span>
                             </span>
                           )}
                           {meeting.notes && <span class="mt-notes">{meeting.notes}</span>}
@@ -1309,7 +1316,7 @@ function shortDate(iso: string) {
                                   <button type="submit">Extend 30 days</button>
                                 </form>
                                 {next && (
-                                  <form method="post" data-confirm={`Cancel the session on ${whenLabel(next, meeting.time_zone, nowMs)}?`} data-confirm-action="Cancel session">
+                                  <form method="post" data-confirm={`Cancel the session on ${whenLabel(next, viewerZone, nowMs)}?`} data-confirm-action="Cancel session">
                                     <input type="hidden" name="intent" value="skip-meeting" />
                                     <input type="hidden" name="meeting_id" value={meeting.id} />
                                     <input type="hidden" name="date" value={next.localDate} />
@@ -1383,6 +1390,7 @@ function shortDate(iso: string) {
               contributions={contributions}
               entries={entries}
               meetings={meetingRows}
+              zone={viewerZone}
               monthHref={(month) => projectHref(row.id, { tab: 'schedule', month })}
               showMoney={caps.canFinance}
             />
@@ -2074,7 +2082,7 @@ function shortDate(iso: string) {
                   <input id={`mt_title_${meeting?.id ?? 'new'}`} name="title" maxlength="80" value={meeting?.title ?? 'Team sync'} required />
                 </p>
                 <fieldset class="mt-slots" data-slots>
-                  <legend>When (every week)</legend>
+                  <legend>When (every week, in the time zone below)</legend>
                   {slots.map((slot) => (
                     <div class="mt-slot" data-slot>
                       <select name="slot_day" aria-label="Day">
@@ -2098,10 +2106,13 @@ function shortDate(iso: string) {
                   <p class="field">
                     <label for={`mt_tz_${meeting?.id ?? 'new'}`}>Time zone</label>
                     <select id={`mt_tz_${meeting?.id ?? 'new'}`} name="time_zone">
-                      {TIME_ZONES.map((zone) => <option value={zone} selected={zone === (meeting?.time_zone ?? 'Asia/Bangkok')}>{zone.replace('_', ' ')}</option>)}
+                      {(meeting && !zoneChoices.includes(meeting.time_zone) ? [meeting.time_zone, ...zoneChoices] : zoneChoices).map((zone) => (
+                        <option value={zone} selected={zone === (meeting?.time_zone ?? viewerZone)}>{zone.replace(/_/g, ' ')}</option>
+                      ))}
                     </select>
                   </p>
                 </div>
+                <p class="field-hint mt-zone-hint">Everyone on the project sees these times converted to their own time zone.</p>
                 <p class="field">
                   <label for={`mt_end_${meeting?.id ?? 'new'}`}>Repeats until</label>
                   <input

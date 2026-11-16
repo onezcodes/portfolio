@@ -42,7 +42,7 @@ export const BANNER_LEAD_MS = 30 * 60 * 1000;
 /** A new series runs this many days unless an end date is picked. */
 export const DEFAULT_RUN_DAYS = 30;
 
-function zoneOr(zone: string | null | undefined) {
+export function zoneOr(zone: string | null | undefined) {
   try {
     new Intl.DateTimeFormat('en-GB', { timeZone: zone || 'Asia/Bangkok' });
     return zone || 'Asia/Bangkok';
@@ -139,13 +139,22 @@ export function daysLeft(meeting: Pick<ProjectMeeting, 'ends_on' | 'time_zone'>,
 }
 
 /** Calendar chips for a month grid: one per session between two local dates. */
-export function meetingCalendarEvents(meetings: ProjectMeeting[], from: string, to: string, opts: { withProject?: boolean } = {}) {
+export function meetingCalendarEvents(
+  meetings: ProjectMeeting[],
+  from: string,
+  to: string,
+  opts: { withProject?: boolean; zone?: string } = {},
+) {
   return meetings.flatMap((meeting) =>
-    sessionsBetween(meeting, from, to).map((o) => {
-      const time = new Date(o.start).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', timeZone: zoneOr(meeting.time_zone) });
+    // Look a day either side: in the viewer's zone a session can land on the next or previous day.
+    sessionsBetween(meeting, addDays(from, -1), addDays(to, 1)).flatMap((o) => {
+      const zone = zoneOr(opts.zone ?? meeting.time_zone);
+      const date = zonedDate(zone, o.start).date;
+      if (date < from || date > to) return [];
+      const time = new Date(o.start).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', timeZone: zone });
       const project = meeting.projects?.name ?? '';
       return {
-        date: o.localDate,
+        date,
         kind: 'meeting' as const,
         title: `${opts.withProject && project ? `${project} · ` : ''}${meeting.title} ${time}`,
         chip: `${time} ${meeting.title}`,
@@ -179,20 +188,22 @@ export function relativeLabel(start: number, end: number, now = Date.now()) {
 
 /** "Today 9:00 PM", "Tomorrow 9:00 PM", "Fri 9:00 PM", "Tue 24 Nov 9:00 PM". */
 export function whenLabel(occurrence: Pick<Occurrence, 'start' | 'localDate'>, zone: string, now = Date.now()) {
+  // Shown in the viewer's zone: the meeting's own local date may be a different day there.
   const z = zoneOr(zone);
   const time = new Date(occurrence.start).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', timeZone: z });
   const today = zonedDate(z, now).date;
-  if (occurrence.localDate === today) return `Today ${time}`;
-  if (occurrence.localDate === addDays(today, 1)) return `Tomorrow ${time}`;
-  const weekday = DAY_SHORT[new Date(`${occurrence.localDate}T12:00:00Z`).getUTCDay()];
-  if (occurrence.localDate <= addDays(today, 6)) return `${weekday} ${time}`;
-  const d = new Date(`${occurrence.localDate}T12:00:00Z`).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', timeZone: 'UTC' });
+  const localDate = zonedDate(z, occurrence.start).date;
+  if (localDate === today) return `Today ${time}`;
+  if (localDate === addDays(today, 1)) return `Tomorrow ${time}`;
+  const weekday = DAY_SHORT[new Date(`${localDate}T12:00:00Z`).getUTCDay()];
+  if (localDate <= addDays(today, 6)) return `${weekday} ${time}`;
+  const d = new Date(`${localDate}T12:00:00Z`).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', timeZone: 'UTC' });
   return `${weekday} ${d} ${time}`;
 }
 
 /** "Tue & Fri · 9:00 PM" or "Tue 9:00 PM, Fri 8:00 PM". */
-export function scheduleLabel(meeting: Pick<ProjectMeeting, 'slots'>) {
-  const slots = normalizeSlots(meeting.slots);
+export function scheduleLabel(meeting: Pick<ProjectMeeting, 'slots'> & { time_zone?: string }, viewerZone?: string, now = Date.now()) {
+  const slots = viewerZone ? slotsIn(meeting, viewerZone, now) : normalizeSlots(meeting.slots);
   const fmt = (t: string) => {
     const [h, m] = t.split(':').map(Number);
     return `${((h + 11) % 12) + 1}:${String(m).padStart(2, '0')} ${h < 12 ? 'AM' : 'PM'}`;
@@ -201,6 +212,40 @@ export function scheduleLabel(meeting: Pick<ProjectMeeting, 'slots'>) {
   const times = new Set(slots.map((s) => s.time));
   if (times.size === 1) return `${slots.map((s) => DAY_SHORT[s.day]).join(' & ')} · ${fmt(slots[0].time)}`;
   return slots.map((s) => `${DAY_SHORT[s.day]} ${fmt(s.time)}`).join(', ');
+}
+
+/** The weekly slots as they fall in another time zone (the day can shift, e.g. Tue 9 PM Bangkok = Tue 3 PM London). */
+export function slotsIn(meeting: Pick<ProjectMeeting, 'slots'> & { time_zone?: string }, viewerZone: string, now = Date.now()) {
+  const from = zoneOr(meeting.time_zone);
+  const to = zoneOr(viewerZone);
+  const today = zonedDate(from, now).date;
+  return normalizeSlots(
+    normalizeSlots(meeting.slots).map((slot) => {
+      let date = today;
+      for (let i = 0; i < 7; i++) {
+        const d = addDays(today, i);
+        if (new Date(`${d}T12:00:00Z`).getUTCDay() === slot.day) {
+          date = d;
+          break;
+        }
+      }
+      const at = zonedToUtc(date, slot.time, from);
+      const time = new Intl.DateTimeFormat('en-GB', { timeZone: to, hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).format(new Date(at));
+      return { day: zonedDate(to, at).weekday, time };
+    }),
+  );
+}
+
+/** "Bangkok", "New York", "UTC". */
+export function zoneName(zone: string) {
+  const z = zoneOr(zone);
+  return (z.split('/').pop() ?? z).replace(/_/g, ' ');
+}
+
+/** Same wall clock in both zones right now? Then there is nothing to convert. */
+export function sameClock(a: string, b: string, now = Date.now()) {
+  const fmt = (z: string) => new Intl.DateTimeFormat('en-GB', { timeZone: zoneOr(z), dateStyle: 'short', timeStyle: 'short' }).format(new Date(now));
+  return fmt(a) === fmt(b);
 }
 
 export function meetingHref(url: string) {

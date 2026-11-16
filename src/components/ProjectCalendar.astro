@@ -27,6 +27,8 @@ interface Props {
   /** Weekly meetings, drawn as one chip per session. */
   meetings?: ProjectMeeting[];
   meetingsWithProject?: boolean;
+  /** Viewer's time zone: meeting chips land on their local day and time. */
+  zone?: string;
   lede?: string;
   /** Start the dated list collapsed (the grid already shows the same events). */
   agendaCollapsed?: boolean;
@@ -45,13 +47,14 @@ const {
   events: givenEvents,
   meetings = [],
   meetingsWithProject = false,
+  zone,
   lede,
   agendaCollapsed = false,
 } = Astro.props;
 const range = gridRange(cursor);
 const events = [
   ...(givenEvents ?? projectEvents(startedOn, milestones, contributions, entries, showMoney, tasks)),
-  ...meetingCalendarEvents(meetings, range.from, range.to, { withProject: meetingsWithProject }),
+  ...meetingCalendarEvents(meetings, range.from, range.to, { withProject: meetingsWithProject, zone }),
 ].sort((a, b) => a.date.localeCompare(b.date) || (a.kind === 'meeting' ? -1 : b.kind === 'meeting' ? 1 : 0));
 const cells = monthGrid(cursor, events, today);
 const key = monthKey(cursor);
