@@ -1,7 +1,9 @@
 import type { APIRoute } from 'astro';
+import { runBackup } from '../../../lib/backup';
 import { createServiceSupabase } from '../../../lib/supabase';
 
 // Free Supabase projects pause after a week without activity; one cheap query a day keeps it awake.
+// The same daily run takes the nightly backup (the Hobby plan allows only two cron jobs).
 export const GET: APIRoute = async ({ request }) => {
   const secret = import.meta.env.CRON_SECRET?.trim();
   const auth = request.headers.get('authorization') ?? '';
@@ -29,7 +31,17 @@ export const GET: APIRoute = async ({ request }) => {
     });
   }
 
-  return new Response(JSON.stringify({ ok: true, members: count ?? 0, at: new Date().toISOString() }), {
+  let backup: Awaited<ReturnType<typeof runBackup>> | { error: string };
+  try {
+    backup = await runBackup(supabase);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.error('backup failed', message);
+    backup = { error: message };
+  }
+
+  return new Response(JSON.stringify({ ok: !('error' in backup), members: count ?? 0, backup, at: new Date().toISOString() }), {
+    status: 'error' in backup ? 500 : 200,
     headers: { 'Content-Type': 'application/json' },
   });
 };

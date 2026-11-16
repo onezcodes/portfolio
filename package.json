@@ -10,7 +10,10 @@
     "build": "astro build",
     "preview": "astro preview",
     "start": "node dist/server/entry.mjs",
-    "astro": "astro"
+    "astro": "astro",
+    "test": "vitest run",
+    "test:db": "scripts/test-db.sh",
+    "backup": "node scripts/backup.mjs"
   },
   "dependencies": {
     "@astrojs/node": "^11.1.6",
@@ -26,6 +29,7 @@
     "esbuild": true
   },
   "devDependencies": {
-    "supabase": "^2.117.0"
+    "supabase": "^2.117.0",
+    "vitest": "5.1.0"
   }
 }
