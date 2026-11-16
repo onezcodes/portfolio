@@ -4,6 +4,7 @@ import { todayIso, type Project, type TeamMember } from '../../lib/ledger';
 import { personFace, personInitial } from '../../lib/profile';
 import { priorityLabel, sortTaskQueue, type ProjectTask } from '../../lib/tasks';
 import { formatMinutes } from '../../lib/timeTracking';
+import { availabilityOf } from '../../lib/presence';
 
 const supabase = Astro.locals.supabase;
 const studio = Astro.locals.studio;
@@ -21,7 +22,7 @@ const [{ data: taskRows }, { data: memberRows }, { data: crewRows }, { data: pro
     .from('project_tasks')
     .select('id, project_id, title, status, assignee_email, due_on, start_on, priority, kind, sort_order')
     .neq('status', 'done'),
-  supabase.from('team_members').select('email, display_name, avatar_url, job_title').order('email'),
+  supabase.from('team_members').select('*').order('email'),
   supabase.from('project_members').select('email, project_id'),
   supabase.from('projects').select('id, name, status'),
   supabase.from('task_time_entries').select('email, minutes, started_at').gte('started_at', weekAgo),
@@ -61,7 +62,7 @@ const people = members
   .sort((a, b) => b.mine.length - a.mine.length);
 const unassigned = rowFor('');
 const heavyWeeks = people.filter((p) => p.cells.slice(1, 3).some((c) => c.length >= HEAVY)).length;
-const lightest = [...people].sort((a, b) => a.cells[1].length + a.cells[2].length - (b.cells[1].length + b.cells[2].length))[0];
+const lightest = [...people].filter((p) => !availabilityOf(p.member as never).away).sort((a, b) => a.cells[1].length + a.cells[2].length - (b.cells[1].length + b.cells[2].length))[0];
 
 const level = (n: number, id: string) => (n === 0 ? '' : id === 'late' ? 'late' : n >= HEAVY ? 'heavy' : n >= BUSY ? 'busy' : 'ok');
 const taskHref = (t: ProjectTask) => `/team/projects/${t.project_id}?tab=tasks&task=${t.id}`;
@@ -105,8 +106,9 @@ const dueText = (t: ProjectTask) =>
         <tbody>
           {[...people, ...(unassigned.mine.length ? [{ member: { email: '', display_name: 'Unassigned', avatar_url: '' }, ...unassigned }] : [])].map((p) => {
             const face = p.email ? personFace(p.email, members) : null;
+            const avail = p.email ? availabilityOf(p.member as never) : null;
             return (
-              <tr>
+              <tr class:list={[avail?.away && 'wl-away']}>
                 <th scope="row">
                   <details class="wl-person">
                     <summary>
@@ -120,8 +122,8 @@ const dueText = (t: ProjectTask) =>
                         <span class="face tw-nobody">?</span>
                       )}
                       <span>
-                        <strong>{face?.name ?? 'Unassigned'}</strong>
-                        <span>{p.mine.length} open</span>
+                        <strong>{face?.name ?? 'Unassigned'}{avail?.status?.emoji ? ` ${avail.status.emoji}` : ''}</strong>
+                        <span>{avail?.away ? avail.detail : `${p.mine.length} open`}</span>
                       </span>
                     </summary>
                     <ul class="wl-tasks">

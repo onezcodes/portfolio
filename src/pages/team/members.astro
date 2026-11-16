@@ -1,6 +1,6 @@
 ---
 import Team from '../../layouts/Team.astro';
-import { presenceOf } from '../../lib/presence';
+import { availabilityOf } from '../../lib/presence';
 import TeamFlash from '../../components/TeamFlash.astro';
 import { emailFromForm } from '../../lib/ledger';
 import { logEvent } from '../../lib/events';
@@ -128,7 +128,7 @@ function hasJoined(member: TeamMember) {
                         {personInitial(name, member.email)}
                       </span>
                     )}
-                    <i class:list={['presence-dot', presenceOf(member.last_seen_at).online && 'is-online']} aria-hidden="true" />
+                    <i class:list={['presence-dot', availabilityOf(member).online && 'is-online', availabilityOf(member).away && 'is-away']} aria-hidden="true" />
                   </span>
                   <span>
                     <strong><a class="member-link" href={`/team/people/${member.email.split('@')[0].toLowerCase()}`}>{name}</a></strong>
@@ -137,8 +137,8 @@ function hasJoined(member: TeamMember) {
                       {member.job_title?.trim() ? `${member.job_title} · ` : ''}
                       {admin ? 'Super admin' : 'Member'}
                     </span>
-                    <span class:list={['presence-label', presenceOf(member.last_seen_at).online && 'is-online']}>
-                      {presenceOf(member.last_seen_at).label}
+                    <span class:list={['presence-label', availabilityOf(member).online && !availabilityOf(member).away && 'is-online', availabilityOf(member).away && 'is-away']}>
+                      {availabilityOf(member).status?.emoji ? `${availabilityOf(member).status?.emoji} ` : ''}{availabilityOf(member).detail}
                     </span>
                   </span>
                 </div>

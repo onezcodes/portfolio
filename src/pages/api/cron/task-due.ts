@@ -34,6 +34,13 @@ export const GET: APIRoute = async ({ request }) => {
     });
   }
 
+  // People who set themselves away (leave, sick, travelling) get inbox reminders but no email.
+  const { data: awayRows } = await supabase.from('team_members').select('email, away, status_until').eq('away', true);
+  const awayEmails = new Set(
+    ((awayRows ?? []) as { email: string; status_until: string | null }[])
+      .filter((row) => !row.status_until || Date.parse(row.status_until) > Date.now())
+      .map((row) => row.email),
+  );
   const projectIds = [...new Set(tasks.map((row) => row.project_id))];
   const { data: projects } = await supabase.from('projects').select('id, name').in('id', projectIds);
   const names = new Map((projects ?? []).map((row) => [row.id as string, String(row.name ?? 'Project')]));
@@ -42,7 +49,7 @@ export const GET: APIRoute = async ({ request }) => {
   for (const task of tasks) {
     if (!task.due_on || !task.assignee_email) continue;
     const href = `${siteUrl(request)}/team/projects/${task.project_id}?tab=tasks&task=${task.id}`;
-    const mail = await sendTaskDue(
+    const mail = awayEmails.has(task.assignee_email) ? { error: 'away' as const } : await sendTaskDue(
       task.assignee_email,
       names.get(task.project_id) ?? 'a project',
       task.title,
@@ -89,7 +96,7 @@ async function sendWeeklyDigests(supabase: Supa, request: Request, today: string
   const weekAgo = new Date(Date.now() - 7 * 86_400_000).toISOString();
   const [{ data: members }, { data: open }, { data: done }, { data: projects }, { data: deps }, { data: unread }, { data: sentToday }] =
     await Promise.all([
-      supabase.from('team_members').select('email, display_name'),
+      supabase.from('team_members').select('email, display_name, away, status_until'),
       supabase.from('project_tasks').select('id, project_id, title, assignee_email, due_on, status').neq('status', 'done'),
       supabase.from('project_tasks').select('assignee_email').eq('status', 'done').gte('completed_at', weekAgo),
       supabase.from('projects').select('id, name'),
@@ -110,8 +117,10 @@ async function sendWeeklyDigests(supabase: Supa, request: Request, today: string
     href: `${base}/team/projects/${t.project_id}?tab=tasks&task=${t.id}`,
   });
   let sent = 0;
-  for (const member of (members ?? []) as { email: string; display_name: string }[]) {
+  for (const member of (members ?? []) as { email: string; display_name: string; away?: boolean; status_until?: string | null }[]) {
     if (already.has(member.email)) continue;
+    // Skip people who are away (leave, sick) until their status ends.
+    if (member.away && (!member.status_until || Date.parse(member.status_until) > Date.now())) continue;
     const mine = openTasks.filter((t) => t.assignee_email === member.email);
     const mineIds = new Set(mine.map((t) => t.id));
     const overdue = mine.filter((t) => t.due_on && t.due_on < today).map(item);

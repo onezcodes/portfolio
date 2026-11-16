@@ -31,6 +31,7 @@ import {
   type TaskEvent,
 } from '../lib/taskCollab';
 import { formatMinutes, liveMinutes, type TimeEntry } from '../lib/timeTracking';
+import { availabilityOf } from '../lib/presence';
 import type { StudioTemplate } from '../lib/templates';
 
 interface Props {
@@ -218,7 +219,7 @@ function longDate(iso: string | null) {
                   <option value="">Unassigned</option>
                   {assignable.map((person) => (
                     <option value={person.email} selected={person.email === task.assignee_email}>
-                      {personLabel(person.email, allPeople)}
+                      {personLabel(person.email, allPeople)}{availabilityOf(allPeople.find((m) => m.email === person.email) ?? {}).away ? ' (away)' : ''}
                     </option>
                   ))}
                 </select>

@@ -85,6 +85,7 @@ import { formatMinutes, logTime, removeTime, startTimer, stopTimer, taskTime } f
 import { maskWebhook, parseWebhookUrl, postToChat, webhookKind } from '../../../lib/chat';
 import { applyChecklist, listTemplates, saveProjectAsTemplate } from '../../../lib/templates';
 import { projectHealth } from '../../../lib/health';
+import { availabilityOf } from '../../../lib/presence';
 import { siteUrl } from '../../../lib/supabase';
 import ImagePick from '../../../components/ImagePick.astro';
 import { decryptSecret, vaultReady, websiteHref } from '../../../lib/credentials';
@@ -894,6 +895,8 @@ const stagePct = milestones.length ? Math.round((stagesDone / milestones.length)
 const openTasks = tasks.filter((item) => item.status !== 'done');
 const lateTasks = openTasks.filter((item) => item.due_on && item.due_on < today);
 const crewFaces = crew.map((person) => personFace(person.email, members));
+const awayEmails = new Set(members.filter((member) => availabilityOf(member).away).map((member) => member.email));
+const awayTag = (email: string) => (awayEmails.has(email) ? ' (away)' : '');
 const health = projectHealth({
   status: row.status,
   today,
@@ -1823,7 +1826,7 @@ function shortDate(iso: string) {
                 <select id="task_owner" name="assignee_email">
                   <option value="">Unassigned</option>
                   {taskPeople.map((person) => (
-                    <option value={person.email}>{personLabel(person.email, taskPeople)}</option>
+                    <option value={person.email}>{personLabel(person.email, taskPeople)}{awayTag(person.email)}</option>
                   ))}
                 </select>
               </p>
@@ -2057,7 +2060,7 @@ function shortDate(iso: string) {
                 <select id="bug_owner" name="assignee_email">
                   <option value="">Triage later</option>
                   {taskPeople.map((person) => (
-                    <option value={person.email}>{personLabel(person.email, taskPeople)}</option>
+                    <option value={person.email}>{personLabel(person.email, taskPeople)}{awayTag(person.email)}</option>
                   ))}
                 </select>
               </p>

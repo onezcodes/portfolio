@@ -10,7 +10,7 @@ import ProjectMark from '../../components/ProjectMark.astro';
 import PresenceList from '../../components/PresenceList.astro';
 import ActivityHeatmap from '../../components/ActivityHeatmap.astro';
 import { activityByDay } from '../../lib/activity';
-import { presenceOf } from '../../lib/presence';
+import { STATUS_PRESETS, TIME_ZONES, availabilityOf, presenceOf, statusUntil, workingHours } from '../../lib/presence';
 import { formatMinutes } from '../../lib/timeTracking';
 import { emailOf, siteUrl } from '../../lib/supabase';
 
@@ -30,6 +30,43 @@ if (Astro.request.method === 'POST') {
     const { error } = await supabase.from('calendar_feed_tokens').insert({ email });
     if (error && error.code !== '23505') console.error('calendar token failed', error.message);
     return Astro.redirect(`/team/profile?${error && error.code !== '23505' ? 'error=invalid' : 'notice=saved'}#calendar`);
+  }
+  if (intent === 'status-set' || intent === 'status-clear') {
+    const zone = String(form.get('time_zone_now') ?? 'Asia/Bangkok');
+    const patch =
+      intent === 'status-clear'
+        ? { status_emoji: '', status_text: '', status_until: null, away: false }
+        : {
+            status_emoji: String(form.get('status_emoji') ?? '').trim().slice(0, 16),
+            status_text: String(form.get('status_text') ?? '').trim().slice(0, 80),
+            away: form.get('away') === '1',
+            status_until:
+              String(form.get('until') ?? '') === 'date'
+                ? (() => {
+                    const day = String(form.get('until_date') ?? '');
+                    return /^\d{4}-\d{2}-\d{2}$/.test(day) ? new Date(`${day}T23:59:00+07:00`).toISOString() : null;
+                  })()
+                : statusUntil(String(form.get('until') ?? ''), zone),
+          };
+    if (intent === 'status-set' && !patch.status_text && !patch.status_emoji) return Astro.redirect('/team/profile?error=invalid#status');
+    const { error } = await supabase.from('team_members').update(patch).eq('email', email);
+    if (error) console.error('status update failed', error.message);
+    return Astro.redirect(`/team/profile?${error ? 'error=invalid' : 'notice=saved'}#status`);
+  }
+  if (intent === 'hours-save') {
+    const zone = String(form.get('time_zone') ?? '');
+    const days = form.getAll('work_days').map(Number).filter((d) => d >= 1 && d <= 7);
+    const start = String(form.get('work_start') ?? '');
+    const end = String(form.get('work_end') ?? '');
+    if (!TIME_ZONES.includes(zone) || !/^\d{2}:\d{2}$/.test(start) || !/^\d{2}:\d{2}$/.test(end) || start >= end) {
+      return Astro.redirect('/team/profile?error=invalid#hours');
+    }
+    const { error } = await supabase
+      .from('team_members')
+      .update({ time_zone: zone, work_days: days.length ? days : [1, 2, 3, 4, 5], work_start: start, work_end: end })
+      .eq('email', email);
+    if (error) console.error('hours update failed', error.message);
+    return Astro.redirect(`/team/profile?${error ? 'error=invalid' : 'notice=saved'}#hours`);
   }
   if (intent === 'calendar-delete') {
     await supabase.from('calendar_feed_tokens').delete().eq('email', email);
@@ -65,7 +102,7 @@ const [{ data }, { data: feed }, { data: openRows }, { count: doneWeek }, { data
     supabase.from('project_members').select('project_id, roles').eq('email', email),
     supabase.from('projects').select('id, name, status, logo_url'),
     supabase.from('team_notifications').select('id', { count: 'exact', head: true }).is('read_at', null),
-    supabase.from('team_members').select('email, display_name, avatar_url, job_title, last_seen_at'),
+    supabase.from('team_members').select('*'),
   ]);
 const openTasks = (openRows ?? []) as { id: string; due_on: string | null }[];
 const overdue = openTasks.filter((t) => t.due_on && t.due_on < todayIso).length;
@@ -75,7 +112,18 @@ const myProjects = ((projectRows ?? []) as { id: string; name: string; status: s
   .filter((p) => roleByProject.has(p.id))
   .sort((a, b) => (a.status === 'active' ? 0 : 1) - (b.status === 'active' ? 0 : 1) || a.name.localeCompare(b.name));
 const [marks, activity] = await Promise.all([logoHrefs(supabase, myProjects), activityByDay(supabase, email)]);
-const team = (teamRows ?? []) as { email: string; display_name: string; avatar_url: string; job_title: string; last_seen_at: string | null }[];
+const team = (teamRows ?? []) as (TeamMember & Record<string, unknown>)[];
+const me = (data ?? {}) as TeamMember & {
+  status_emoji?: string; status_text?: string; status_until?: string | null; away?: boolean;
+  time_zone?: string; work_days?: number[]; work_start?: string; work_end?: string;
+};
+const myAvailability = availabilityOf(me);
+const myHours = workingHours(me);
+const myZone = me.time_zone || 'Asia/Bangkok';
+const statusUntilText = myAvailability.status?.until
+  ? new Date(myAvailability.status.until).toLocaleString('en-GB', { weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit', timeZone: myZone })
+  : '';
+const weekdays = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 const onlineCount = team.filter((m) => presenceOf(m.last_seen_at).online).length;
 const feedUrl = feed?.token ? `${siteUrl(Astro.request)}/api/calendar/${feed.token}.ics` : '';
 const webcalUrl = feedUrl.replace(/^https?:/, 'webcal:');
@@ -105,6 +153,12 @@ const initial = (name || email).slice(0, 1).toUpperCase();
         <div class="pf-who">
           <h1 id="pf-name" data-preview="display_name" data-fallback={email}>{name || email}</h1>
           <p class="pf-title" data-preview="job_title" data-fallback="Add your title">{row?.job_title?.trim() || 'Add your title'}</p>
+          {myAvailability.status && (
+            <p class:list={['pf-status-pill', myAvailability.away && 'is-away']}>
+              <span>{myAvailability.status.emoji}</span> {myAvailability.status.text}
+              {statusUntilText && <span class="muted">· until {statusUntilText}</span>}
+            </p>
+          )}
           <p class="pf-meta">
             <span class="pf-badge">{roleBadge}</span>
             <span>{email}</span>
@@ -162,6 +216,70 @@ const initial = (name || email).slice(0, 1).toUpperCase();
           </div>
         </form>
       </section>
+        <section class="team-card pf-status-card" id="status">
+          <div class="ov-card-head">
+            <h2>Status</h2>
+            {myAvailability.status && (
+              <form method="post">
+                <input type="hidden" name="intent" value="status-clear" />
+                <button class="btn-text" type="submit">Clear status</button>
+              </form>
+            )}
+          </div>
+          <p class="muted pf-copy">Let the team know if you're focusing, away, or on leave. "Away" greys you out in Workload and warns people who assign you work.</p>
+          <div class="pf-presets">
+            {STATUS_PRESETS.map((preset) => (
+              <form method="post">
+                <input type="hidden" name="intent" value="status-set" />
+                <input type="hidden" name="status_emoji" value={preset.emoji} />
+                <input type="hidden" name="status_text" value={preset.text} />
+                <input type="hidden" name="until" value={preset.until} />
+                <input type="hidden" name="time_zone_now" value={myZone} />
+                {preset.away && <input type="hidden" name="away" value="1" />}
+                <button class:list={['pf-preset', myAvailability.status?.text === preset.text && 'is-on']} type="submit">
+                  <span aria-hidden="true">{preset.emoji}</span> {preset.text}
+                </button>
+              </form>
+            ))}
+          </div>
+          <details class="pf-custom">
+            <summary>Custom status</summary>
+            <form method="post" class="form team-form">
+              <input type="hidden" name="intent" value="status-set" />
+              <input type="hidden" name="time_zone_now" value={myZone} />
+              <div class="pf-custom-row">
+                <label class="sr-only" for="status_emoji">Emoji</label>
+                <input id="status_emoji" name="status_emoji" maxlength="16" placeholder="🙂" value={me.status_emoji ?? ''} class="pf-emoji" />
+                <label class="sr-only" for="status_text">Status</label>
+                <input id="status_text" name="status_text" maxlength="80" placeholder="What's your status?" value={me.status_text ?? ''} />
+              </div>
+              <div class="team-form-row">
+                <p class="field">
+                  <label for="status_until">Clear after</label>
+                  <select id="status_until" name="until" data-until-select>
+                    <option value="none">Don't clear</option>
+                    <option value="hour">1 hour</option>
+                    <option value="hours">3 hours</option>
+                    <option value="today" selected>Today</option>
+                    <option value="week">This week</option>
+                    <option value="date">Pick a date…</option>
+                  </select>
+                </p>
+                <p class="field" data-until-date hidden>
+                  <label for="until_date">Until</label>
+                  <input id="until_date" name="until_date" type="date" min={new Date().toISOString().slice(0, 10)} />
+                </p>
+              </div>
+              <label class="check-line">
+                <input type="checkbox" name="away" value="1" checked={Boolean(me.away)} />
+                Mark me as away (not available for new work)
+              </label>
+              <button class="btn" type="submit">Set status</button>
+            </form>
+          </details>
+        </section>
+
+
         <section class="team-card pf-calendar" id="calendar">
           <div class="ov-card-head">
             <h2>Calendar feed</h2>
@@ -250,6 +368,43 @@ const initial = (name || email).slice(0, 1).toUpperCase();
           <PresenceList members={team} me={email} limit={20} />
         </section>
 
+        <section class="team-card" id="hours">
+          <div class="ov-card-head">
+            <h2>Working hours</h2>
+            <span class:list={['presence-count', myHours.working && 'is-online']}><i aria-hidden="true" />{myHours.working ? 'Working now' : 'Off hours'}</span>
+          </div>
+          <p class="muted pf-copy">Outside these hours you show as "Off hours · back …" instead of "Last seen".</p>
+          <form method="post" class="form team-form pf-hours">
+            <input type="hidden" name="intent" value="hours-save" />
+            <p class="field">
+              <label for="time_zone">Time zone</label>
+              <select id="time_zone" name="time_zone">
+                {TIME_ZONES.map((zone) => <option value={zone} selected={zone === myZone}>{zone.replace('_', ' ')}</option>)}
+              </select>
+            </p>
+            <fieldset class="pf-days">
+              <legend>Days</legend>
+              {weekdays.map((label, i) => (
+                <label>
+                  <input type="checkbox" name="work_days" value={i + 1} checked={myHours.days.includes(i + 1)} />
+                  <span>{label}</span>
+                </label>
+              ))}
+            </fieldset>
+            <div class="team-form-row">
+              <p class="field">
+                <label for="work_start">Start</label>
+                <input id="work_start" name="work_start" type="time" value={myHours.start} required />
+              </p>
+              <p class="field">
+                <label for="work_end">End</label>
+                <input id="work_end" name="work_end" type="time" value={myHours.end} required />
+              </p>
+            </div>
+            <button class="btn btn-ghost" type="submit">Save hours</button>
+          </form>
+        </section>
+
       </div>
     </div>
   </div>
@@ -277,6 +432,11 @@ const initial = (name || email).slice(0, 1).toUpperCase();
     };
     fields.forEach((f) => f.addEventListener('input', sync));
     form.addEventListener('reset', () => setTimeout(sync));
+    const until = document.querySelector<HTMLSelectElement>('[data-until-select]');
+    const untilDate = document.querySelector<HTMLElement>('[data-until-date]');
+    until?.addEventListener('change', () => {
+      if (untilDate) untilDate.hidden = until.value !== 'date';
+    });
     document.querySelector('[data-show-shortcuts]')?.addEventListener('click', (event) => {
       event.preventDefault();
       (document.getElementById('modal-shortcuts') as HTMLDialogElement | null)?.showModal();

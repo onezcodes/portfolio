@@ -6,7 +6,7 @@ import { activityByDay, studioDay } from '../../../lib/activity';
 import { roleLabels } from '../../../lib/access';
 import { eventHref, eventTitle, formatEventTime, type StudioEvent } from '../../../lib/events';
 import type { TeamMember } from '../../../lib/ledger';
-import { presenceOf } from '../../../lib/presence';
+import { availabilityOf, workingHours } from '../../../lib/presence';
 import { personInitial } from '../../../lib/profile';
 import { logoHrefs } from '../../../lib/projectHub';
 import { mentionHandle } from '../../../lib/taskCollab';
@@ -35,7 +35,12 @@ const [activity, { data: taskRows }, { data: memberships }, { data: projectRows 
 ]);
 
 const name = member.display_name?.trim() || email.split('@')[0];
-const presence = presenceOf(member.last_seen_at);
+const presence = availabilityOf(member);
+const hours = workingHours(member);
+const zone = (member as { time_zone?: string }).time_zone || 'Asia/Bangkok';
+const localTime = new Date().toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', timeZone: zone });
+const dayNames = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+const daysText = hours.days.length === 5 && hours.days.join() === '1,2,3,4,5' ? 'Mon–Fri' : hours.days.map((d) => dayNames[d - 1]).join(', ');
 const roles = new Map(((memberships ?? []) as { project_id: string; roles: string[] }[]).map((m) => [m.project_id, m.roles]));
 const projects = ((projectRows ?? []) as { id: string; name: string; status: string; logo_url: string }[]).filter((p) => roles.has(p.id));
 const projectName = new Map(((projectRows ?? []) as { id: string; name: string }[]).map((p) => [p.id, p.name]));
@@ -60,12 +65,18 @@ const joined = member.created_at ? new Date(member.created_at).toLocaleDateStrin
           ) : (
             <span class="pf-photo pf-photo-fallback" aria-hidden="true">{personInitial(name, email)}</span>
           )}
-          <i class:list={['presence-dot', 'pf-presence', presence.online && 'is-online']} aria-hidden="true" />
+          <i class:list={['presence-dot', 'pf-presence', presence.online && 'is-online', presence.away && 'is-away']} aria-hidden="true" />
         </span>
         <div class="pf-who">
           <p class="kicker"><a href="/team/members">Team</a></p>
           <h1 id="pf-name">{name}</h1>
           <p class="pf-title">{member.job_title?.trim() || 'Team member'}</p>
+          {presence.status && (
+            <p class:list={['pf-status-pill', presence.away && 'is-away']}>
+              <span>{presence.status.emoji}</span> {presence.status.text}
+              {presence.status.until && <span class="muted">· until {new Date(presence.status.until).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', timeZone: zone })}</span>}
+            </p>
+          )}
           <p class="pf-meta">
             <span class="pf-badge">{badge}</span>
             <span>{email}</span>
@@ -73,7 +84,8 @@ const joined = member.created_at ? new Date(member.created_at).toLocaleDateStrin
           </p>
         </div>
         <div class="pf-signin">
-          <span class:list={['presence-label', presence.online && 'is-online']}>{presence.label}</span>
+          <span class:list={['presence-label', presence.online && !presence.away && 'is-online', presence.away && 'is-away']}>{presence.away || presence.offHours ? presence.detail : presence.label}</span>
+          <span class="muted pf-local">{localTime} local · {daysText} {hours.start}–{hours.end}</span>
           {member.phone?.trim() && <a class="btn btn-ghost" href={`tel:${member.phone.replace(/[^+\d]/g, '')}`}>Call</a>}
         </div>
       </div>

@@ -9298,3 +9298,193 @@ kbd {
   height: 1.1rem;
   border-width: 3px;
 }
+
+/* ---------- Status & working hours ---------- */
+.presence-dot.is-away {
+  background: #d97706;
+  animation: none;
+  box-shadow: none;
+}
+
+.presence-label.is-away {
+  color: #b45309;
+  font-weight: 600;
+}
+
+.presence-label.is-off {
+  color: var(--muted);
+}
+
+.presence-emoji {
+  font-size: 0.9rem;
+}
+
+.pf-status-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  width: fit-content;
+  margin-top: 0.15rem;
+  padding: 0.2rem 0.7rem;
+  border-radius: 999px;
+  background: var(--surface-2);
+  font-size: 0.85rem;
+  font-weight: 500;
+}
+
+.pf-status-pill.is-away {
+  background: color-mix(in srgb, #d97706 12%, var(--surface));
+  color: #92400e;
+}
+
+.pf-local {
+  font-size: 0.78rem;
+}
+
+.pf-presets {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+
+.pf-presets form {
+  margin: 0;
+}
+
+.pf-preset {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  min-height: 2.2rem;
+  padding: 0 0.8rem;
+  border: 1px solid var(--line-strong);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--ink);
+  font: inherit;
+  font-size: 0.85rem;
+  cursor: pointer;
+  transition: background 0.12s ease, border-color 0.12s ease;
+}
+
+.pf-preset:hover {
+  background: var(--surface-2);
+}
+
+.pf-preset.is-on {
+  border-color: var(--ink);
+  background: var(--ink);
+  color: var(--canvas);
+}
+
+.pf-custom {
+  margin-top: 0.85rem;
+}
+
+.pf-custom > summary {
+  color: var(--ink);
+  font-size: 0.88rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.pf-custom .team-form {
+  display: grid;
+  gap: 0.75rem;
+  margin-top: 0.75rem;
+}
+
+.pf-custom-row {
+  display: grid;
+  grid-template-columns: 4rem minmax(0, 1fr);
+  gap: 0.5rem;
+}
+
+.pf-custom-row input {
+  min-height: 2.6rem;
+  padding: 0 0.75rem;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-sm);
+  font: inherit;
+}
+
+.pf-emoji {
+  text-align: center;
+  font-size: 1.2rem !important;
+}
+
+.pf-hours {
+  display: grid;
+  gap: 0.85rem;
+}
+
+.pf-days {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.pf-days legend {
+  margin-bottom: 0.4rem;
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.pf-days label {
+  position: relative;
+}
+
+.pf-days input {
+  position: absolute;
+  opacity: 0;
+}
+
+.pf-days span {
+  display: inline-grid;
+  place-items: center;
+  min-width: 2.8rem;
+  height: 2.2rem;
+  border: 1px solid var(--line-strong);
+  border-radius: 999px;
+  font-size: 0.85rem;
+  cursor: pointer;
+}
+
+.pf-days input:checked + span {
+  border-color: var(--ink);
+  background: var(--ink);
+  color: var(--canvas);
+}
+
+.pf-days input:focus-visible + span {
+  outline: 2px solid var(--gold);
+  outline-offset: 2px;
+}
+
+.pf-hours > .btn {
+  justify-self: start;
+}
+
+.wl-away th,
+.wl-away td {
+  background: color-mix(in srgb, #d97706 5%, var(--surface));
+}
+
+.wl-away td {
+  opacity: 0.55;
+}
+
+.wl-away .wl-person summary span span {
+  color: #b45309;
+  font-weight: 600;
+}
+
+.ov-away span {
+  color: #b45309;
+}

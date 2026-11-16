@@ -191,3 +191,34 @@ describe('activity heatmap', () => {
     expect(dayScore({ actions: 2, minutes: 90 })).toBe(5);
   });
 });
+
+describe('status and working hours', () => {
+  // 2026-11-16 is a Monday. 03:00Z = 10:00 in Bangkok.
+  const mon10 = Date.parse('2026-11-16T03:00:00Z');
+  const mon20 = Date.parse('2026-11-16T13:00:00Z');
+  const sat10 = Date.parse('2026-11-21T03:00:00Z');
+  it('knows when someone is working, in their time zone', async () => {
+    const { workingHours } = await import('../../src/lib/presence');
+    const m = { time_zone: 'Asia/Bangkok', work_days: [1, 2, 3, 4, 5], work_start: '09:00:00', work_end: '18:00:00' };
+    expect(workingHours(m, mon10).working).toBe(true);
+    expect(workingHours(m, mon20)).toMatchObject({ working: false, backAt: 'tomorrow 09:00' });
+    expect(workingHours(m, sat10)).toMatchObject({ working: false, backAt: 'Mon 09:00' });
+    expect(workingHours({ ...m, time_zone: 'Europe/London' }, mon10).working).toBe(false); // 03:00 in London
+  });
+  it('shows away status until it expires, then falls back to presence', async () => {
+    const { availabilityOf } = await import('../../src/lib/presence');
+    const base = { last_seen_at: new Date(mon10 - 60_000).toISOString(), time_zone: 'Asia/Bangkok' };
+    const leave = { ...base, status_emoji: '🏖', status_text: 'On leave', away: true, status_until: '2026-11-24T16:59:00Z' };
+    expect(availabilityOf(leave, mon10)).toMatchObject({ away: true, detail: 'On leave until 24 Nov' });
+    expect(availabilityOf(leave, Date.parse('2026-11-25T00:00:00Z'))).toMatchObject({ away: false, status: null });
+    expect(availabilityOf(base, mon10)).toMatchObject({ online: true, away: false, detail: 'Online' });
+    expect(availabilityOf({ ...base, last_seen_at: null }, mon20).detail).toBe('Off hours · back tomorrow 09:00');
+  });
+  it('computes preset end times', async () => {
+    const { statusUntil } = await import('../../src/lib/presence');
+    expect(statusUntil('hour', 'Asia/Bangkok', mon10)).toBe('2026-11-16T04:00:00.000Z');
+    expect(statusUntil('today', 'Asia/Bangkok', mon10)).toBe('2026-11-16T17:00:00.000Z'); // midnight Bangkok
+    expect(statusUntil('week', 'Asia/Bangkok', mon10)).toBe('2026-11-22T17:00:00.000Z'); // end of Sunday
+    expect(statusUntil('none', 'Asia/Bangkok', mon10)).toBeNull();
+  });
+});
