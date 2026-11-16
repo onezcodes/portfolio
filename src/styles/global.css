@@ -10426,3 +10426,8 @@ kbd {
   background: color-mix(in srgb, #16a34a 14%, var(--surface));
   color: color-mix(in srgb, #15803d 85%, var(--ink));
 }
+
+.mine-fab:focus-visible {
+  outline: 3px solid var(--gold);
+  outline-offset: 2px;
+}
