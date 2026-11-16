@@ -4,6 +4,7 @@ import TeamFlash from '../../components/TeamFlash.astro';
 import { fundingByCurrency, remainingLabel, type Contribution } from '../../lib/funding';
 import { projectHealth } from '../../lib/health';
 import { availabilityOf, byPresence, presenceOf } from '../../lib/presence';
+import { meetingHref, projectMeetings, relativeLabel, upcoming, whenLabel } from '../../lib/meetings';
 import { personInitial } from '../../lib/profile';
 import IncomeExpenseChart from '../../components/IncomeExpenseChart.astro';
 import { money, todayIso, totalsByCurrency, type LedgerEntry, type Project, type TeamMember } from '../../lib/ledger';
@@ -91,7 +92,7 @@ const calendarEvents = studio
       {
         canSchedule: (projectId) => capsFor(studio, projectId).canSchedule,
         canFinance: (projectId) => capsFor(studio, projectId).canFinance,
-        includeOverhead: studio.canLedger,
+        includeOverhead: studio.superAdmin,
       },
       allTasks,
     )
@@ -111,6 +112,8 @@ const orderedProjects = visibleProjects
   .filter((project) => project.status === 'active')
   .concat(visibleProjects.filter((project) => project.status !== 'active'));
 const ATTENTION_CAP = 4;
+const meetingRows = (await projectMeetings(supabase)).filter((m) => !studio?.superAdmin || studio.byProject.has(m.project_id));
+const meetingSoon = upcoming(meetingRows, Date.now(), 7).slice(0, 5);
 const nowMs = Date.now();
 const teamByPresence = byPresence((memberRows ?? []) as (TeamMember & { last_seen_at: string | null })[], nowMs);
 const awayNow = teamByPresence.filter((m) => m.email !== studio?.email && availabilityOf(m, nowMs).away);
@@ -160,7 +163,7 @@ const offTrack = orderedProjects.filter((project) => healthOf(project).level ===
         <button class="btn" type="submit">Search</button>
       </form>
       <nav class="quick-actions" aria-label="Quick actions">
-        <a class="btn" href="/team/projects?new=1"><span aria-hidden="true">+</span> New project</a>
+        {studio?.superAdmin && <a class="btn" href="/team/projects?new=1"><span aria-hidden="true">+</span> New project</a>}
         {studio?.canLedger && <a class="btn btn-ghost" href="/team/ledger">Add ledger entry</a>}
         {studio?.canVault && <a class="btn btn-ghost" href="/team/credentials">Credentials</a>}
         {studio?.superAdmin && <a class="btn btn-ghost" href="/team/members">Whitelist email</a>}
@@ -184,7 +187,7 @@ const offTrack = orderedProjects.filter((project) => healthOf(project).level ===
         <span class="ov-stat-note">{attentionCount === 0 ? 'All clear' : 'Blocked, late, or stale'}</span>
       </a>
       {
-        studio?.canLedger && (
+        studio?.superAdmin && (
           <a class="ov-stat is-money" href="/team/ledger">
             <span class="ov-stat-label">Net this month</span>
             <strong>{monthLead ? money(monthLead.profit, monthLead.currency) : '—'}</strong>
@@ -291,6 +294,27 @@ const offTrack = orderedProjects.filter((project) => healthOf(project).level ===
       </div>
 
       <aside class="ov-side">
+        {meetingSoon.length > 0 && (
+          <section class="team-card ov-meetings">
+            <div class="ov-card-head">
+              <h2>Meetings</h2>
+              <span class="muted">Next 7 days</span>
+            </div>
+            <ul class="ov-meeting-list">
+              {meetingSoon.map((o, i) => (
+                <li class:list={[i === 0 && 'is-next']} data-meeting-start={o.start} data-meeting-end={o.end}>
+                  <a class="ov-meeting-copy" href={`/team/projects/${o.meeting.project_id}?tab=schedule#meetings`}>
+                    <strong>{o.meeting.projects?.name ?? 'Project'} · {o.meeting.title}</strong>
+                    <span>
+                      {whenLabel(o, o.meeting.time_zone)} · <span class="ov-meeting-rel" data-meeting-rel>{relativeLabel(o.start, o.end)}</span>
+                    </span>
+                  </a>
+                  <a class:list={['btn', i !== 0 && 'btn-ghost']} href={meetingHref(o.meeting.meeting_url)} target="_blank" rel="noopener noreferrer">Join</a>
+                </li>
+              ))}
+            </ul>
+          </section>
+        )}
         <section class="team-card ov-online">
           <div class="ov-card-head">
             <h2>Online now</h2>
@@ -459,7 +483,7 @@ const offTrack = orderedProjects.filter((project) => healthOf(project).level ===
     </div>
 
     {
-      studio?.canLedger && (
+      studio?.superAdmin && (
         <section class="ov-books" aria-label="Studio books">
           <div class="ov-books-head">
             <h2>Studio books</h2>

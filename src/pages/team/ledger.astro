@@ -7,6 +7,7 @@ import IncomeExpenseChart from '../../components/IncomeExpenseChart.astro';
 import { money, type LedgerEntry, type Project } from '../../lib/ledger';
 import { createLedgerEntry, removeLedgerEntry, voucherHrefs } from '../../lib/vouchers';
 import { logEvent } from '../../lib/events';
+import { capsFor } from '../../lib/access';
 
 const supabase = Astro.locals.supabase;
 const user = Astro.locals.user;
@@ -46,6 +47,8 @@ const [{ data: projectRows }, { data: entryRows }] = await Promise.all([
 ]);
 
 const projects = (projectRows ?? []) as Pick<Project, 'id' | 'name'>[];
+// Members record money only on projects where they hold a finance role.
+const financeProjects = projects.filter((project) => capsFor(studio, project.id).canFinance);
 const entries = (entryRows ?? []) as LedgerEntry[];
 const names = new Map(projects.map((project) => [project.id, project.name]));
 const slips = await voucherHrefs(supabase, entries);
@@ -68,7 +71,7 @@ const slips = await voucherHrefs(supabase, entries);
     <div class="team-two">
     <section class="team-card team-two-aside">
       <h2>New entry</h2>
-      <LedgerForm action="/team/ledger" projects={projects} />
+      <LedgerForm action="/team/ledger" projects={financeProjects} allowOverhead={Boolean(studio?.superAdmin)} />
     </section>
 
     <section class="team-two-main">

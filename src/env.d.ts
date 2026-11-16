@@ -23,5 +23,7 @@ declare namespace App {
     /** The signed-in account, even during a "view as" preview (where `user` is the teammate). */
     realUser: import('@supabase/supabase-js').User | null;
     viewAs: import('./lib/viewAs').ViewAs | null;
+    /** The signed-in account's own access, even during a "view as" preview. */
+    realStudio: import('./lib/access').StudioAccess | null;
   }
 }

@@ -3,10 +3,11 @@ import '@fontsource-variable/outfit/wght.css';
 import '../styles/global.css';
 import logo from '../assets/logo.webp';
 import { site } from '../data/site';
-import { emailOf, isSuperAdmin } from '../lib/supabase';
+import { emailOf } from '../lib/supabase';
 import NavChrome from '../components/NavChrome.astro';
 import { unreadCount } from '../lib/taskCollab';
 import { formatMinutes, liveMinutes, runningTimer } from '../lib/timeTracking';
+import { BANNER_LEAD_MS, meetingHref, projectMeetings, relativeLabel, upcoming, whenLabel } from '../lib/meetings';
 
 interface Props {
   title: string;
@@ -15,17 +16,29 @@ interface Props {
 const { title } = Astro.props;
 const user = Astro.locals.user;
 const email = emailOf(user);
-const admin = isSuperAdmin(user);
 const studio = Astro.locals.studio;
+// Studio admins (owner or admin) see Careers and Team.
+const admin = Boolean(studio?.superAdmin);
 const canLedger = studio?.canLedger ?? admin;
 const canVault = studio?.canVault ?? admin;
 const path = Astro.url.pathname.replace(/\/+$/, '') || '/team';
 const pageTitle = `${title} · Team · ${site.name}`;
 const label = studio?.displayName || email;
 const viewAs = Astro.locals.viewAs;
-const [unread, timer] = studio && Astro.locals.supabase
-  ? await Promise.all([unreadCount(Astro.locals.supabase), runningTimer(Astro.locals.supabase, studio.email)])
-  : [0, null];
+const [unread, timer, meetingList] = studio && Astro.locals.supabase
+  ? await Promise.all([
+      unreadCount(Astro.locals.supabase),
+      runningTimer(Astro.locals.supabase, studio.email),
+      projectMeetings(Astro.locals.supabase),
+    ])
+  : [0, null, []];
+// Meeting banner: from 30 minutes before until the end, only for projects you are on.
+const nowMs = Date.now();
+const soonMeeting = upcoming(
+  meetingList.filter((meeting) => !studio?.superAdmin || studio.byProject.has(meeting.project_id)),
+  nowMs,
+  1,
+).find((o) => o.start - nowMs <= BANNER_LEAD_MS && o.end > nowMs);
 const here = `${Astro.url.pathname}${Astro.url.search}`;
 const previewEnds = viewAs
   ? new Date(viewAs.expiresAt).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })
@@ -191,6 +204,28 @@ function current(href: string) {
         </div>
       )
     }
+    {
+      soonMeeting && (
+        <div class:list={['meeting-bar', nowMs >= soonMeeting.start && 'is-live']} role="status" data-meeting-start={soonMeeting.start} data-meeting-end={soonMeeting.end}>
+          <div class="wrap meeting-bar-inner">
+            <p>
+              <span class="meeting-bar-dot" aria-hidden="true" />
+              <strong>{soonMeeting.meeting.projects?.name ?? 'Project'} · {soonMeeting.meeting.title}</strong>
+              <span>
+                {whenLabel(soonMeeting, soonMeeting.meeting.time_zone, nowMs)} ·{' '}
+                <span data-meeting-rel>{nowMs >= soonMeeting.start ? 'Live now' : `starts ${relativeLabel(soonMeeting.start, soonMeeting.end, nowMs)}`}</span>
+              </span>
+            </p>
+            <span class="meeting-bar-actions">
+              {soonMeeting.meeting.backup_url && (
+                <a class="btn btn-ghost" href={meetingHref(soonMeeting.meeting.backup_url)} target="_blank" rel="noopener noreferrer">Backup link</a>
+              )}
+              <a class="btn" href={meetingHref(soonMeeting.meeting.meeting_url)} target="_blank" rel="noopener noreferrer">Join meeting</a>
+            </span>
+          </div>
+        </div>
+      )
+    }
     <main id="main" class="team-main">
       <slot />
     </main>
@@ -321,7 +356,38 @@ function current(href: string) {
         document.addEventListener('visibilitychange', ping);
       })();
 
-            // Running timers: refresh "12m" style labels every 30 seconds.
+            // Meeting countdowns: refresh "in 12 min" / "Live now" labels every 30 seconds.
+      (function () {
+        const rel = (start, end, now) => {
+          if (now >= start && now < end) return 'Live now';
+          if (now >= end) return 'Ended';
+          const ms = start - now;
+          const minutes = Math.max(1, Math.round(ms / 60000));
+          if (minutes < 60) return 'in ' + minutes + ' min';
+          const hours = ms / 3600000;
+          if (hours < 24) return 'in ' + (hours < 10 ? Math.round(hours * 2) / 2 : Math.round(hours)) + ' hr';
+          const days = Math.round(hours / 24);
+          return 'in ' + days + (days === 1 ? ' day' : ' days');
+        };
+        const tick = () => {
+          const now = Date.now();
+          document.querySelectorAll('[data-meeting-start]').forEach((box) => {
+            const start = Number(box.getAttribute('data-meeting-start'));
+            const end = Number(box.getAttribute('data-meeting-end'));
+            const label = rel(start, end, now);
+            const live = label === 'Live now';
+            box.classList.toggle('is-live', live);
+            box.classList.toggle('is-soon', !live && start - now < 3600000);
+            box.querySelectorAll('[data-meeting-rel]').forEach((el) => {
+              el.textContent = box.classList.contains('meeting-bar') && !live && label !== 'Ended' ? 'starts ' + label : label;
+            });
+          });
+        };
+        setInterval(tick, 30000);
+        document.addEventListener('astro:page-load', tick);
+      })();
+
+      // Running timers: refresh "12m" style labels every 30 seconds.
       setInterval(() => {
         document.querySelectorAll('.team-timer [data-live-since]').forEach((el) => {
           const minutes = Math.max(0, Math.round((Date.now() - Date.parse(el.getAttribute('data-live-since') || '')) / 60000));

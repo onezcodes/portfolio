@@ -85,7 +85,18 @@ import { formatMinutes, logTime, removeTime, startTimer, stopTimer, taskTime } f
 import { maskWebhook, parseWebhookUrl, postToChat, webhookKind } from '../../../lib/chat';
 import { applyChecklist, listTemplates, saveProjectAsTemplate } from '../../../lib/templates';
 import { projectHealth } from '../../../lib/health';
-import { availabilityOf } from '../../../lib/presence';
+import { availabilityOf, TIME_ZONES } from '../../../lib/presence';
+import {
+  DAY_NAMES,
+  meetingFromForm,
+  meetingHref,
+  nextOccurrence,
+  projectMeetings,
+  relativeLabel,
+  scheduleLabel,
+  whenLabel,
+  type ProjectMeeting,
+} from '../../../lib/meetings';
 import { siteUrl } from '../../../lib/supabase';
 import ImagePick from '../../../components/ImagePick.astro';
 import { decryptSecret, vaultReady, websiteHref } from '../../../lib/credentials';
@@ -140,7 +151,7 @@ function projectHref(
 const supabase = Astro.locals.supabase;
 const user = Astro.locals.user;
 // Super admin can preview the app as a teammate (read-only). Hidden while already previewing.
-const canViewAs = Boolean(Astro.locals.studio?.superAdmin && !Astro.locals.viewAs);
+const canViewAs = Boolean(Astro.locals.realStudio?.owner && !Astro.locals.viewAs);
 const studio = Astro.locals.studio;
 const { id } = Astro.params;
 if (!id) {
@@ -523,6 +534,47 @@ if (Astro.request.method === 'POST') {
     return result.error ? bounce({ error: result.error }) : bounce({ notice: 'deleted' });
   }
 
+  if (intent === 'add-meeting' || intent === 'update-meeting') {
+    const payload = meetingFromForm(form);
+    if (!payload) return bounce({ error: 'meeting' });
+    const meetingId = String(form.get('meeting_id') ?? '');
+    const { error: meetingError } =
+      intent === 'add-meeting'
+        ? await supabase.from('project_meetings').insert({ ...payload, project_id: id, created_by: actor })
+        : await supabase.from('project_meetings').update(payload).eq('id', meetingId).eq('project_id', id);
+    if (meetingError) {
+      console.error('meeting save failed', meetingError.message);
+      return bounce({ error: 'invalid' });
+    }
+    await track(intent === 'add-meeting' ? 'create' : 'update', `meeting: ${payload.title}`);
+    if (intent === 'add-meeting') await chat(`📅 ${who} set up “${payload.title}”: ${payload.slots.length} ${payload.slots.length === 1 ? 'session' : 'sessions'} a week`);
+    return bounce({ notice: 'saved' });
+  }
+
+  if (intent === 'skip-meeting' || intent === 'unskip-meeting') {
+    const meetingId = String(form.get('meeting_id') ?? '');
+    const date = String(form.get('date') ?? '');
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return bounce({ error: 'invalid' });
+    const { data: current } = await supabase.from('project_meetings').select('skip_dates, title').eq('id', meetingId).eq('project_id', id).maybeSingle();
+    if (!current) return bounce({ error: 'not-found' });
+    const today = new Date().toISOString().slice(0, 10);
+    const dates = new Set(((current.skip_dates ?? []) as string[]).filter((d) => d >= today));
+    if (intent === 'skip-meeting') dates.add(date);
+    else dates.delete(date);
+    const { error: skipError } = await supabase.from('project_meetings').update({ skip_dates: [...dates].sort() }).eq('id', meetingId).eq('project_id', id);
+    if (skipError) return bounce({ error: 'invalid' });
+    if (intent === 'skip-meeting') await chat(`🚫 ${who} cancelled “${current.title}” on ${date}`);
+    return bounce({ notice: 'saved' });
+  }
+
+  if (intent === 'delete-meeting') {
+    const meetingId = String(form.get('meeting_id') ?? '');
+    const { error: deleteError } = await supabase.from('project_meetings').delete().eq('id', meetingId).eq('project_id', id);
+    if (deleteError) return bounce({ error: 'invalid' });
+    await track('delete', 'meeting');
+    return bounce({ notice: 'deleted' });
+  }
+
   if (intent === 'start-timer') {
     const taskId = String(form.get('task_id') ?? '');
     const result = await startTimer(supabase, taskId, actor);
@@ -802,6 +854,7 @@ const [
   checklists,
   { data: shareLink },
   { data: projectTime },
+  meetings,
 ] = await Promise.all([
   supabase.from('projects').select('*').eq('id', id).maybeSingle(),
   supabase.from('project_milestones').select('*').eq('project_id', id).order('sort_order'),
@@ -829,6 +882,7 @@ const [
     ? supabase.from('project_share_links').select('token, show_checkin, created_at').eq('project_id', id).maybeSingle()
     : Promise.resolve({ data: null }),
   supabase.from('task_time_entries').select('minutes, started_at, ended_at').eq('project_id', id),
+  projectMeetings(supabase, [id]),
 ]);
 if (error || !project) {
   return Astro.redirect('/team/projects?error=not-found');
@@ -909,6 +963,15 @@ const weekAgoIso = new Date(Date.now() - 7 * 86_400_000).toISOString();
 const timeRows = (projectTime ?? []) as { minutes: number; started_at: string; ended_at: string | null }[];
 const loggedMinutes = timeRows.reduce((sum, entry) => sum + (entry.minutes || 0), 0);
 const weekMinutes = timeRows.filter((entry) => entry.started_at >= weekAgoIso).reduce((sum, entry) => sum + (entry.minutes || 0), 0);
+const nowMs = Date.now();
+const meetingRows = meetings as ProjectMeeting[];
+const meetingNext = meetingRows
+  .map((meeting) => nextOccurrence(meeting, nowMs))
+  .filter((o): o is NonNullable<typeof o> => Boolean(o))
+  .sort((a, b) => a.start - b.start);
+const nextMeeting = meetingNext[0] ?? null;
+const meetingSoon = Boolean(nextMeeting && nextMeeting.start - nowMs < 60 * 60_000);
+const meetingLive = Boolean(nextMeeting && nowMs >= nextMeeting.start && nowMs < nextMeeting.end);
 const shareUrl = shareLink?.token ? `${siteUrl(Astro.request)}/p/${shareLink.token}` : '';
 function shortDate(iso: string) {
   return new Date(`${iso}T12:00:00`).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
@@ -946,13 +1009,39 @@ function shortDate(iso: string) {
               <span>{crewFaces.length} on team</span>
             </a>
           )}
-          {row.meeting_url && (
+          {!nextMeeting && row.meeting_url && (
             <a class="btn" href={websiteHref(row.meeting_url)} target="_blank" rel="noopener noreferrer" data-astro-reload>
               Join meeting
             </a>
           )}
         </div>
       </div>
+
+      {
+        nextMeeting && (
+          <div class:list={['pd-meeting', meetingSoon && 'is-soon', meetingLive && 'is-live']} data-meeting-start={nextMeeting.start} data-meeting-end={nextMeeting.end}>
+            <span class="pd-meeting-icon" aria-hidden="true">{meetingLive ? '●' : '📅'}</span>
+            <span class="pd-meeting-copy">
+              <strong>{nextMeeting.meeting.title}</strong>
+              <span>
+                {whenLabel(nextMeeting, nextMeeting.meeting.time_zone, nowMs)} ·{' '}
+                <span class="pd-meeting-rel" data-meeting-rel>{relativeLabel(nextMeeting.start, nextMeeting.end, nowMs)}</span>
+                {meetingNext.length > 1 && <span class="muted"> · then {whenLabel(meetingNext[1], meetingNext[1].meeting.time_zone, nowMs)}</span>}
+              </span>
+            </span>
+            <span class="pd-meeting-actions">
+              <a class="btn" href={meetingHref(nextMeeting.meeting.meeting_url)} target="_blank" rel="noopener noreferrer" data-astro-reload>
+                {meetingLive ? 'Join now' : 'Join'}
+              </a>
+              {nextMeeting.meeting.backup_url && (
+                <a class="btn btn-ghost" href={meetingHref(nextMeeting.meeting.backup_url)} target="_blank" rel="noopener noreferrer" data-astro-reload>
+                  Backup link
+                </a>
+              )}
+            </span>
+          </div>
+        )
+      }
 
       {
         links.length > 0 && (
@@ -1086,6 +1175,83 @@ function shortDate(iso: string) {
       {
         tab === 'schedule' && (
           <>
+            {(meetingRows.length > 0 || (caps.canPlan && !Astro.locals.viewAs)) && (
+              <section class="team-card mt-card" id="meetings">
+                <div class="card-head">
+                  <div class="pay-head">
+                    <h2>Meetings</h2>
+                    <p class="muted">{meetingRows.length === 0 ? 'Set a regular time and link so the team always knows when to join.' : 'Everyone on this project sees these and gets a reminder banner 30 minutes before.'}</p>
+                  </div>
+                  {caps.canPlan && !Astro.locals.viewAs && (
+                    <a class="btn btn-ghost card-add" href={projectHref(row.id, { tab: 'schedule', action: 'meeting' })} data-modal-open="meeting">+ {meetingRows.length ? 'Add meeting' : 'Set up meeting'}</a>
+                  )}
+                </div>
+                <ul class="mt-list">
+                  {meetingRows.map((meeting) => {
+                    const next = nextOccurrence(meeting, nowMs);
+                    const live = Boolean(next && nowMs >= next.start && nowMs < next.end);
+                    return (
+                      <li class:list={['mt-item', live && 'is-live']}>
+                        <div class="mt-main">
+                          <strong>{meeting.title}</strong>
+                          <span class="muted">{scheduleLabel(meeting)} · {meeting.duration_minutes} min{meeting.time_zone !== 'Asia/Bangkok' ? ` · ${meeting.time_zone}` : ''}</span>
+                          {next && (
+                            <span class="mt-next" data-meeting-start={next.start} data-meeting-end={next.end}>
+                              Next: {whenLabel(next, meeting.time_zone, nowMs)} · <span data-meeting-rel>{relativeLabel(next.start, next.end, nowMs)}</span>
+                            </span>
+                          )}
+                          {meeting.notes && <span class="mt-notes">{meeting.notes}</span>}
+                          {meeting.skip_dates.length > 0 && (
+                            <span class="mt-skipped">
+                              Cancelled: {meeting.skip_dates.map((d) => (
+                                <span>
+                                  {new Date(`${d}T12:00:00Z`).toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short', timeZone: 'UTC' })}
+                                  {caps.canPlan && !Astro.locals.viewAs && (
+                                    <form method="post">
+                                      <input type="hidden" name="intent" value="unskip-meeting" />
+                                      <input type="hidden" name="meeting_id" value={meeting.id} />
+                                      <input type="hidden" name="date" value={d} />
+                                      <button type="submit" title="Restore this session" aria-label="Restore this session">↺</button>
+                                    </form>
+                                  )}
+                                </span>
+                              ))}
+                            </span>
+                          )}
+                        </div>
+                        <div class="mt-actions">
+                          <a class="btn" href={meetingHref(meeting.meeting_url)} target="_blank" rel="noopener noreferrer" data-astro-reload>Join</a>
+                          {meeting.backup_url && (
+                            <a class="btn btn-ghost" href={meetingHref(meeting.backup_url)} target="_blank" rel="noopener noreferrer" data-astro-reload>Backup</a>
+                          )}
+                          {caps.canPlan && !Astro.locals.viewAs && (
+                            <details class="pd-more mt-more">
+                              <summary class="btn btn-ghost" aria-label="Meeting options">•••</summary>
+                              <div class="pd-menu">
+                                <a href={projectHref(row.id, { tab: 'schedule' })} data-modal-open={`meeting-${meeting.id}`}>Edit</a>
+                                {next && (
+                                  <form method="post" data-confirm={`Cancel the session on ${whenLabel(next, meeting.time_zone, nowMs)}?`} data-confirm-action="Cancel session">
+                                    <input type="hidden" name="intent" value="skip-meeting" />
+                                    <input type="hidden" name="meeting_id" value={meeting.id} />
+                                    <input type="hidden" name="date" value={next.localDate} />
+                                    <button type="submit">Cancel next session</button>
+                                  </form>
+                                )}
+                                <form method="post" data-confirm={`Delete “${meeting.title}” and all its sessions?`} data-confirm-action="Delete">
+                                  <input type="hidden" name="intent" value="delete-meeting" />
+                                  <input type="hidden" name="meeting_id" value={meeting.id} />
+                                  <button type="submit" class="td-delete">Delete meeting</button>
+                                </form>
+                              </div>
+                            </details>
+                          )}
+                        </div>
+                      </li>
+                    );
+                  })}
+                </ul>
+              </section>
+            )}
             <MilestoneTrack
               milestones={milestones}
               openAdd={action === 'stage'}
@@ -1808,6 +1974,75 @@ function shortDate(iso: string) {
         />
       )
     }
+    {
+      caps.canPlan && !Astro.locals.viewAs &&
+        [null, ...meetingRows].map((meeting) => {
+          const slots = meeting?.slots?.length ? meeting.slots : [{ day: 2, time: '21:00' }, { day: 5, time: '21:00' }];
+          return (
+            <Modal
+              id={meeting ? `meeting-${meeting.id}` : 'meeting'}
+              title={meeting ? `Edit ${meeting.title}` : 'Set up a meeting'}
+              lede="Pick the weekly times and links. Everyone on this project sees the next session with a countdown."
+              open={!meeting && action === 'meeting'}
+            >
+              <form class="form team-form meeting-form" method="post">
+                <input type="hidden" name="intent" value={meeting ? 'update-meeting' : 'add-meeting'} />
+                <input type="hidden" name="tab" value="schedule" />
+                {meeting && <input type="hidden" name="meeting_id" value={meeting.id} />}
+                <p class="field">
+                  <label for={`mt_title_${meeting?.id ?? 'new'}`}>Name</label>
+                  <input id={`mt_title_${meeting?.id ?? 'new'}`} name="title" maxlength="80" value={meeting?.title ?? 'Team sync'} required />
+                </p>
+                <fieldset class="mt-slots" data-slots>
+                  <legend>When (every week)</legend>
+                  {slots.map((slot) => (
+                    <div class="mt-slot" data-slot>
+                      <select name="slot_day" aria-label="Day">
+                        {DAY_NAMES.map((name, i) => <option value={i} selected={i === slot.day}>{name}</option>)}
+                      </select>
+                      <input type="time" name="slot_time" value={slot.time} required aria-label="Time" />
+                      <button type="button" class="mt-slot-x" data-slot-remove aria-label="Remove this time">×</button>
+                    </div>
+                  ))}
+                  <button type="button" class="btn-text" data-slot-add>+ Add another time</button>
+                </fieldset>
+                <div class="team-form-row">
+                  <p class="field">
+                    <label for={`mt_dur_${meeting?.id ?? 'new'}`}>Length</label>
+                    <select id={`mt_dur_${meeting?.id ?? 'new'}`} name="duration_minutes">
+                      {[15, 30, 45, 60, 90, 120].map((m) => (
+                        <option value={m} selected={m === (meeting?.duration_minutes ?? 60)}>{m < 60 ? `${m} min` : `${m / 60} hr`}</option>
+                      ))}
+                    </select>
+                  </p>
+                  <p class="field">
+                    <label for={`mt_tz_${meeting?.id ?? 'new'}`}>Time zone</label>
+                    <select id={`mt_tz_${meeting?.id ?? 'new'}`} name="time_zone">
+                      {TIME_ZONES.map((zone) => <option value={zone} selected={zone === (meeting?.time_zone ?? 'Asia/Bangkok')}>{zone.replace('_', ' ')}</option>)}
+                    </select>
+                  </p>
+                </div>
+                <p class="field">
+                  <label for={`mt_url_${meeting?.id ?? 'new'}`}>Meeting link</label>
+                  <input id={`mt_url_${meeting?.id ?? 'new'}`} name="meeting_url" type="url" required placeholder="https://meet.google.com/…" value={meeting?.meeting_url ?? (row.meeting_url ? websiteHref(row.meeting_url) : '')} />
+                </p>
+                <p class="field">
+                  <label for={`mt_backup_${meeting?.id ?? 'new'}`}>Backup link (optional)</label>
+                  <input id={`mt_backup_${meeting?.id ?? 'new'}`} name="backup_url" type="url" placeholder="https://zoom.us/j/… if the main link fails" value={meeting?.backup_url ?? ''} />
+                </p>
+                <p class="field">
+                  <label for={`mt_notes_${meeting?.id ?? 'new'}`}>Notes (optional)</label>
+                  <input id={`mt_notes_${meeting?.id ?? 'new'}`} name="notes" maxlength="500" placeholder="Agenda doc, passcode…" value={meeting?.notes ?? ''} />
+                </p>
+                <div class="modal-actions">
+                  <button class="btn btn-ghost" type="button" data-modal-close>Cancel</button>
+                  <button class="btn" type="submit">{meeting ? 'Save changes' : 'Create meeting'}</button>
+                </div>
+              </form>
+            </Modal>
+          );
+        })
+    }
     {/* Pop-up forms. They live outside the tabs so the action bar can open them anywhere. */}
     {
       caps.canPlan && (
@@ -2138,6 +2373,24 @@ function shortDate(iso: string) {
 </Team>
 
 <script>
+  // Meeting form: add or remove weekly time rows (keep at least one).
+  document.addEventListener('click', (event) => {
+    const target = event.target as Element | null;
+    const add = target?.closest('[data-slot-add]');
+    const remove = target?.closest('[data-slot-remove]');
+    if (add) {
+      const box = add.closest('[data-slots]');
+      const rows = box?.querySelectorAll('[data-slot]');
+      const last = rows?.[rows.length - 1];
+      if (!box || !last || (rows?.length ?? 0) >= 14) return;
+      const copy = last.cloneNode(true) as HTMLElement;
+      box.insertBefore(copy, add);
+    } else if (remove) {
+      const box = remove.closest('[data-slots]');
+      if ((box?.querySelectorAll('[data-slot]').length ?? 0) > 1) remove.closest('[data-slot]')?.remove();
+    }
+  });
+
   // "Mark done" on a stage opens the sign-off pop-up for that stage.
   document.addEventListener('click', (event) => {
     const button = (event.target as Element | null)?.closest<HTMLElement>('[data-signoff-for]');

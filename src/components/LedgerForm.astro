@@ -11,9 +11,11 @@ interface Props {
   submitLabel?: string;
   /** Pop-up layout: cursor starts on Amount, notes and slip fold away. */
   compact?: boolean;
+  /** Studio overhead (no project) is for owners and admins. */
+  allowOverhead?: boolean;
 }
 
-const { projects = [], projectId = null, action, defaultKind = 'income', idPrefix = '', submitLabel = 'Add entry', compact = false } = Astro.props;
+const { projects = [], projectId = null, action, defaultKind = 'income', idPrefix = '', submitLabel = 'Add entry', compact = false, allowOverhead = true } = Astro.props;
 const fid = (name: string) => `${idPrefix}${name}`;
 const today = new Date().toISOString().slice(0, 10);
 ---
@@ -24,8 +26,8 @@ const today = new Date().toISOString().slice(0, 10);
     projects.length > 0 && (
       <p class="field">
         <label for={fid('project_id')}>Project</label>
-        <select id={fid('project_id')} name="project_id">
-          <option value="">Overhead (no project)</option>
+        <select id={fid('project_id')} name="project_id" required={!allowOverhead}>
+          {allowOverhead ? <option value="">Overhead (no project)</option> : <option value="">Choose a project</option>}
           {projects.map((project) => (
             <option value={project.id} selected={project.id === projectId}>
               {project.name}

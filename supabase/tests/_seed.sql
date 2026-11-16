@@ -3,7 +3,7 @@
 select setseed(0.42);
 set session_replication_role = replica; -- skip the add-lead trigger while seeding
 insert into team_members(email, role) select 'u' || i || '@x.com', 'member' from generate_series(1, 12) i;
-insert into team_members(email, role) values ('boss@x.com', 'super_admin');
+insert into team_members(email, role) values ('boss@x.com', 'owner');
 insert into projects(id, name) select gen_random_uuid(), 'P' || i from generate_series(1, 40) i;
 insert into project_members(project_id, email, roles)
 select p.id, m.email, r.roles

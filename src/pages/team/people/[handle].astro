@@ -3,7 +3,7 @@ import Team from '../../../layouts/Team.astro';
 import ActivityHeatmap from '../../../components/ActivityHeatmap.astro';
 import ProjectMark from '../../../components/ProjectMark.astro';
 import { activityByDay, studioDay } from '../../../lib/activity';
-import { roleLabels } from '../../../lib/access';
+import { STUDIO_ROLE_META, roleLabels, studioRoleOf } from '../../../lib/access';
 import { eventHref, eventTitle, formatEventTime, type StudioEvent } from '../../../lib/events';
 import type { TeamMember } from '../../../lib/ledger';
 import { availabilityOf, workingHours } from '../../../lib/presence';
@@ -11,7 +11,6 @@ import { personInitial } from '../../../lib/profile';
 import { logoHrefs } from '../../../lib/projectHub';
 import { mentionHandle } from '../../../lib/taskCollab';
 import { priorityLabel, sortTaskQueue, type ProjectTask } from '../../../lib/tasks';
-import { SUPER_ADMIN_EMAIL } from '../../../lib/supabase';
 
 // A teammate's page: presence, activity heatmap, projects, open work, recent actions.
 const supabase = Astro.locals.supabase;
@@ -50,7 +49,7 @@ const overdue = tasks.filter((t) => t.due_on && t.due_on < today).length;
 const events = (eventRows ?? []) as StudioEvent[];
 const marks = await logoHrefs(supabase, projects);
 const limited = !studio.superAdmin;
-const badge = email === SUPER_ADMIN_EMAIL || member.role === 'super_admin' ? 'Super admin' : 'Team member';
+const badge = STUDIO_ROLE_META[studioRoleOf(member.role, email)].label;
 const joined = member.created_at ? new Date(member.created_at).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) : '';
 ---
 

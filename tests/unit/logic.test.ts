@@ -222,3 +222,18 @@ describe('status and working hours', () => {
     expect(statusUntil('none', 'Asia/Bangkok', mon10)).toBeNull();
   });
 });
+
+describe('calendar month grid', () => {
+  it('starts weeks on Sunday', async () => {
+    const { monthGrid } = await import('../../src/lib/calendar');
+    // November 2026 begins on a Sunday: no padding before the 1st.
+    const nov = monthGrid(new Date(2026, 10, 1), [], '2026-11-16');
+    expect(nov[0]).toMatchObject({ day: 1, inMonth: true });
+    expect(nov.length % 7).toBe(0);
+    // December 2026 begins on a Tuesday: Sun 29 and Mon 30 Nov come first.
+    const dec = monthGrid(new Date(2026, 11, 1), [], '2026-11-16');
+    expect(dec.slice(0, 3).map((c) => [c.day, c.inMonth])).toEqual([[29, false], [30, false], [1, true]]);
+    // Every row's first cell is a Sunday.
+    for (let i = 0; i < dec.length; i += 7) expect(new Date(`${dec[i].iso}T12:00:00`).getDay()).toBe(0);
+  });
+});

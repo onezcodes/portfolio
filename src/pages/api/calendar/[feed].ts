@@ -1,5 +1,6 @@
 import type { APIRoute } from 'astro';
 import { createPublicSupabase, siteUrl } from '../../../lib/supabase';
+import { meetingIcsEvents, normalizeSlots, type ProjectMeeting } from '../../../lib/meetings';
 
 // Private calendar feed (subscribe in Google/Apple Calendar): your open task due dates
 // and stage dates on your projects. The token in the URL is the only credential.
@@ -28,7 +29,10 @@ export const GET: APIRoute = async ({ params, request }) => {
   const token = String(params.feed ?? '').replace(/\.ics$/, '');
   const supabase = createPublicSupabase();
   if (!supabase || !/^[a-f0-9]{24,80}$/.test(token)) return new Response('Not found', { status: 404 });
-  const { data, error } = await supabase.rpc('calendar_feed', { feed_token: token });
+  const [{ data, error }, { data: meetingRows }] = await Promise.all([
+    supabase.rpc('calendar_feed', { feed_token: token }),
+    supabase.rpc('calendar_meetings', { feed_token: token }),
+  ]);
   if (error) {
     console.error('calendar feed failed', error.message);
     return new Response('Not found', { status: 404 });
@@ -62,6 +66,13 @@ export const GET: APIRoute = async ({ params, request }) => {
       'TRANSP:TRANSPARENT',
       'END:VEVENT',
     );
+  }
+  // Recurring project meetings (weekly, with a 15-minute alarm).
+  for (const row of (meetingRows ?? []) as (ProjectMeeting & { project: string })[]) {
+    const meeting = { ...row, slots: normalizeSlots(row.slots), skip_dates: row.skip_dates ?? [] };
+    for (const line of meetingIcsEvents(meeting, { stamp, href: `${base}/team/projects/${row.project_id}?tab=schedule#meetings` })) {
+      lines.push(fold(line));
+    }
   }
   lines.push('END:VCALENDAR');
   return new Response(`${lines.join('\r\n')}\r\n`, {

@@ -1,6 +1,6 @@
 import { defineMiddleware } from 'astro:middleware';
 import { loadStudioAccess } from './lib/access';
-import { createTeamSupabase, emailOf, isSuperAdmin, sessionUser, supabaseConfigured } from './lib/supabase';
+import { createTeamSupabase, emailOf, sessionUser, supabaseConfigured } from './lib/supabase';
 import { activeViewAs, previewUser, stopViewAs, withParam } from './lib/viewAs';
 
 const READ_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
@@ -34,12 +34,18 @@ export const onRequest = defineMiddleware(async (context, next) => {
     return context.redirect('/team/login');
   }
 
-  // "View as": only the super admin can have a preview. The database already answers as the
-  // teammate for this session; here we load the teammate's capabilities and make it read-only.
-  const viewAs = isSuperAdmin(user) ? await activeViewAs(supabase, emailOf(user)) : null;
+  // "View as": only owners can have a preview (the database only accepts preview rows from
+  // owners). The database already answers as the teammate for this session; here we load the
+  // teammate's capabilities and make it read-only. Both lookups run in parallel.
+  const [realStudio, previewRow] = await Promise.all([
+    loadStudioAccess(supabase, user),
+    activeViewAs(supabase, emailOf(user)),
+  ]);
+  const viewAs = previewRow && realStudio.owner ? previewRow : null;
   const effective = viewAs ? previewUser(user, viewAs.email) : user;
 
-  const studio = await loadStudioAccess(supabase, effective, { preview: Boolean(viewAs) });
+  const studio = viewAs ? await loadStudioAccess(supabase, effective, { preview: true }) : realStudio;
+  context.locals.realStudio = realStudio.ok ? realStudio : null;
   if (!studio.ok) {
     if (viewAs) {
       // The teammate is no longer on the team: end the preview instead of signing out.

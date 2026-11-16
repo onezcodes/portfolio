@@ -4,7 +4,7 @@ import TeamFlash from '../../components/TeamFlash.astro';
 import { logEvent, formatEventTime } from '../../lib/events';
 import type { TeamMember } from '../../lib/ledger';
 import { oauthAvatar, oauthName } from '../../lib/profile';
-import { roleLabels } from '../../lib/access';
+import { STUDIO_ROLE_META, roleLabels } from '../../lib/access';
 import { logoHrefs } from '../../lib/projectHub';
 import ProjectMark from '../../components/ProjectMark.astro';
 import PresenceList from '../../components/PresenceList.astro';
@@ -136,7 +136,7 @@ const joined = row?.created_at
   : '';
 const lastSignIn = user?.last_sign_in_at ? formatEventTime(user.last_sign_in_at) : '';
 const providerLabel = provider === 'google' ? 'Google' : provider === 'github' ? 'GitHub' : provider;
-const roleBadge = studio?.superAdmin ? 'Super admin' : myProjects.some((p) => roleByProject.get(p.id)?.includes('lead')) ? 'Project lead' : 'Team member';
+const roleBadge = studio ? STUDIO_ROLE_META[studio.role].label : 'Member';
 const initial = (name || email).slice(0, 1).toUpperCase();
 ---
 

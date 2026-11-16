@@ -50,7 +50,7 @@ const moneyOnCal = showMoney || events.some((event) => event.kind === 'contribut
 const caption =
   lede ??
   (showMoney ? 'Stages, tasks, funding, and ledger dates for this project.' : 'Stages, tasks, and start date for this project.');
-const weekdays = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+const weekdays = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 const prev = shiftMonth(cursor, -1);
 const next = shiftMonth(cursor, 1);
 

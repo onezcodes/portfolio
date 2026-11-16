@@ -33,9 +33,29 @@ export type ProjectCaps = {
   roleLabels: string[];
 };
 
+export const STUDIO_ROLES = ['owner', 'admin', 'member'] as const;
+export type StudioRole = (typeof STUDIO_ROLES)[number];
+export const STUDIO_ROLE_META: Record<StudioRole, { label: string; hint: string }> = {
+  owner: { label: 'Owner', hint: 'Everything, including roles and removing admins' },
+  admin: { label: 'Admin', hint: 'All projects, create and delete projects, invite members, careers, vault, studio ledger' },
+  member: { label: 'Member', hint: 'Only projects they are assigned to' },
+};
+
+export function studioRoleOf(raw: unknown, email = ''): StudioRole {
+  if (email === 'onezcodes@gmail.com') return 'owner';
+  if (raw === 'owner' || raw === 'super_admin') return 'owner';
+  if (raw === 'admin') return 'admin';
+  return 'member';
+}
+
 export type StudioAccess = {
   ok: boolean;
   email: string;
+  /** Studio role: owner, admin, or member. */
+  role: StudioRole;
+  /** Owner. Changes roles, removes admins, uses View as. */
+  owner: boolean;
+  /** Studio admin (owner or admin): all projects, create/delete projects, team, careers, vault. */
   superAdmin: boolean;
   canLedger: boolean;
   canVault: boolean;
@@ -63,7 +83,7 @@ export function rolesFromForm(form: FormData) {
   return parseRoles(form.getAll('roles').map(String));
 }
 
-export function capsFromRoles(roles: ProjectRole[], superAdmin = false): ProjectCaps {
+export function capsFromRoles(roles: ProjectRole[], superAdmin = false, roleLabel = 'Admin'): ProjectCaps {
   const set = new Set(roles);
   const lead = superAdmin || set.has('lead');
   const canPlan = lead || set.has('manager');
@@ -95,15 +115,18 @@ export function capsFromRoles(roles: ProjectRole[], superAdmin = false): Project
     canDetails,
     canEditDetails,
     canPeople: lead,
-    canDelete: lead,
+    // Deleting a project (and its ledger) is for studio admins only, not project leads.
+    canDelete: superAdmin,
     tabs,
     defaultTab: tabs[0]?.id ?? 'schedule',
-    roleLabels: superAdmin ? ['Super admin'] : ROLE_META.filter((item) => set.has(item.id)).map((item) => item.label),
+    roleLabels: superAdmin ? [roleLabel] : ROLE_META.filter((item) => set.has(item.id)).map((item) => item.label),
   };
 }
 
 export function capsFor(studio: StudioAccess, projectId: string) {
-  if (studio.superAdmin) return capsFromRoles(['lead', 'manager', 'collaborator', 'developer', 'qa'], true);
+  if (studio.superAdmin) {
+    return capsFromRoles(['lead', 'manager', 'collaborator', 'developer', 'qa'], true, STUDIO_ROLE_META[studio.role].label);
+  }
   return capsFromRoles(studio.byProject.get(projectId) ?? []);
 }
 
@@ -130,6 +153,7 @@ export function tabForIntent(intent: string): ProjectTab {
     return 'tasks';
   }
   if (intent.startsWith('share-') || intent === 'update-chat') return 'details';
+  if (intent.endsWith('-meeting')) return 'schedule';
   if (intent === 'save-template') return 'schedule';
   if (intent.includes('milestone') || intent.includes('checkin')) return 'schedule';
   if (intent.includes('funding') || intent.includes('contribution')) return 'funding';
@@ -161,6 +185,8 @@ export function allowedIntent(intent: string, caps: ProjectCaps) {
   if (intent === 'start-timer' || intent === 'stop-timer' || intent === 'log-time' || intent === 'delete-time') return caps.canProgress;
   if (intent === 'report-bug' || intent === 'apply-checklist') return caps.canProgress;
   if (intent === 'save-template') return caps.canPlan;
+  // Meetings: leads, managers, and studio admins set them up for the project.
+  if (intent.endsWith('-meeting')) return caps.canPlan;
   if (intent === 'update-chat') return caps.canEditDetails;
   if (intent.startsWith('share-')) return caps.lead;
   if (intent === 'add-checkin') return caps.canProgress;
@@ -179,12 +205,14 @@ export async function loadStudioAccess(
   options: { preview?: boolean } = {},
 ): Promise<StudioAccess> {
   const email = emailOf(user);
-  const superAdmin = isSuperAdmin(user);
   const byProject = new Map<string, ProjectRole[]>();
-  const empty = {
+  const permanentOwner = isSuperAdmin(user);
+  const empty: StudioAccess = {
     ok: false,
     email,
-    superAdmin,
+    role: permanentOwner ? 'owner' : 'member',
+    owner: permanentOwner,
+    superAdmin: permanentOwner,
     canLedger: false,
     canVault: false,
     displayName: oauthName(user) || email,
@@ -195,13 +223,9 @@ export async function loadStudioAccess(
   if (!email) return empty;
 
   const [memberRows, profile, grants] = await Promise.all([
-    superAdmin
-      ? Promise.resolve({ data: [] as { project_id: string; roles: unknown }[], error: null })
-      : supabase.from('project_members').select('project_id, roles').eq('email', email),
-    supabase.from('team_members').select('display_name, job_title, avatar_url, last_seen_at').eq('email', email).maybeSingle(),
-    superAdmin
-      ? Promise.resolve({ count: 1, error: null })
-      : supabase.from('studio_credential_access').select('credential_id', { count: 'exact', head: true }).eq('email', email),
+    supabase.from('project_members').select('project_id, roles').eq('email', email),
+    supabase.from('team_members').select('role, display_name, job_title, avatar_url, last_seen_at').eq('email', email).maybeSingle(),
+    supabase.from('studio_credential_access').select('credential_id', { count: 'exact', head: true }).eq('email', email),
   ]);
 
   if (memberRows.error) console.error('project_members lookup failed', memberRows.error.message);
@@ -211,8 +235,10 @@ export async function loadStudioAccess(
     byProject.set(row.project_id as string, parseRoles(row.roles));
   }
 
-  const ok = superAdmin || Boolean(profile.data);
+  const ok = permanentOwner || Boolean(profile.data);
   if (!ok) return empty;
+  const role = studioRoleOf(profile.data?.role, email);
+  const superAdmin = role === 'owner' || role === 'admin';
 
   let displayName = oauthName(user);
   if (profile.data?.display_name?.trim()) displayName = profile.data.display_name.trim();
@@ -233,6 +259,8 @@ export async function loadStudioAccess(
   return {
     ok,
     email,
+    role,
+    owner: role === 'owner',
     superAdmin,
     canLedger: superAdmin || [...byProject.values()].some((roles) => roles.includes('lead') || roles.includes('collaborator')),
     canVault: superAdmin || (grants.count ?? 0) > 0,

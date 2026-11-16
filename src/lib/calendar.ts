@@ -170,7 +170,8 @@ export function monthGrid(cursor: Date, events: CalEvent[], todayIso: string): C
   const year = cursor.getFullYear();
   const month = cursor.getMonth();
   const first = new Date(year, month, 1);
-  const pad = (first.getDay() + 6) % 7;
+  // Weeks start on Sunday.
+  const pad = first.getDay();
   const daysInMonth = new Date(year, month + 1, 0).getDate();
   const byDate = new Map<string, CalEvent[]>();
   for (const event of events) {

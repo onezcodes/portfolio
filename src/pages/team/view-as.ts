@@ -1,10 +1,9 @@
 import type { APIRoute } from 'astro';
 import { logEvent } from '../../lib/events';
-import { isSuperAdmin } from '../../lib/supabase';
 import { safeBack, startViewAs, stopViewAs, withParam } from '../../lib/viewAs';
 
-// Start or stop a "view as" preview. Only the signed-in super admin may start one;
-// the database checks the real login again before it accepts the row.
+// Start or stop a "view as" preview. Only studio owners may start one; the database
+// checks the real login again before it accepts the row.
 export const POST: APIRoute = async ({ request, locals, redirect }) => {
   const form = await request.formData();
   const intent = String(form.get('intent') ?? '');
@@ -13,12 +12,13 @@ export const POST: APIRoute = async ({ request, locals, redirect }) => {
   const realEmail = realUser?.email?.trim().toLowerCase() ?? '';
   const supabase = locals.supabase;
 
-  if (!realUser || !isSuperAdmin(realUser)) return redirect(withParam(back, 'error', 'forbidden'));
-
-  if (intent === 'stop') {
+  // Anyone may end their own preview (the row is scoped to their session).
+  if (intent === 'stop' && realUser) {
     await stopViewAs(supabase, realEmail);
     return redirect(withParam(back, 'notice', 'view-as-off'));
   }
+
+  if (!realUser || !locals.realStudio?.owner) return redirect(withParam(back, 'error', 'forbidden'));
 
   if (intent === 'start') {
     const target = String(form.get('email') ?? '').trim().toLowerCase();

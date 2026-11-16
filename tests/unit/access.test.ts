@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { allowedIntent, capsFromRoles, parseRoles, tabForIntent, wouldDropLastLead } from '../../src/lib/access';
+import { allowedIntent, capsFromRoles, parseRoles, studioRoleOf, tabForIntent, wouldDropLastLead } from '../../src/lib/access';
 
 describe('project roles → capabilities', () => {
   it('developer sees the schedule but not money or people', () => {
@@ -19,9 +19,16 @@ describe('project roles → capabilities', () => {
     expect(caps.tabs.map((t) => t.id)).toEqual(['funding', 'ledger']);
   });
 
-  it('lead can do everything on the project', () => {
+  it('lead runs the project but cannot delete it', () => {
     const caps = capsFromRoles(['lead']);
-    expect([caps.canPlan, caps.canFinance, caps.canPeople, caps.canDelete, caps.canEditDetails]).toEqual([true, true, true, true, true]);
+    expect([caps.canPlan, caps.canFinance, caps.canPeople, caps.canEditDetails]).toEqual([true, true, true, true]);
+    expect(caps.canDelete).toBe(false);
+  });
+
+  it('studio admins (owner or admin) get everything on every project, including delete', () => {
+    const caps = capsFromRoles([], true, 'Admin');
+    expect([caps.assigned, caps.canPlan, caps.canFinance, caps.canPeople, caps.canDelete]).toEqual([true, true, true, true, true]);
+    expect(caps.roleLabels).toEqual(['Admin']);
   });
 
   it('no roles means no access', () => {
@@ -104,5 +111,22 @@ describe('keeping a lead on every project', () => {
   });
   it('allows it when another lead remains', () => {
     expect(wouldDropLastLead([...rows, { email: 'c@x.com', roles: ['lead'] }], 'a@x.com', null)).toBe(false);
+  });
+});
+
+describe('studio roles', () => {
+  it('reads owner, admin, member (old super_admin becomes owner)', () => {
+    expect(studioRoleOf('owner')).toBe('owner');
+    expect(studioRoleOf('super_admin')).toBe('owner');
+    expect(studioRoleOf('admin')).toBe('admin');
+    expect(studioRoleOf('member')).toBe('member');
+    expect(studioRoleOf('anything')).toBe('member');
+  });
+  it('the permanent owner is always owner', () => {
+    expect(studioRoleOf('member', 'onezcodes@gmail.com')).toBe('owner');
+  });
+  it('project deletion follows the studio role, not the project role', () => {
+    expect(allowedIntent('delete', capsFromRoles(['lead']))).toBe(false);
+    expect(allowedIntent('delete', capsFromRoles([], true))).toBe(true);
   });
 });

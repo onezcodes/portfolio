@@ -15,12 +15,12 @@ import {
   statusLabel,
   type JobOpportunity,
 } from '../../../lib/jobs';
-import { emailOf, isSuperAdmin } from '../../../lib/supabase';
+import { emailOf } from '../../../lib/supabase';
 import { site } from '../../../data/site';
 
 const supabase = Astro.locals.supabase;
 const studio = Astro.locals.studio;
-const admin = isSuperAdmin(Astro.locals.user);
+const admin = Boolean(studio?.superAdmin);
 const { id } = Astro.params;
 
 if (!id) return Astro.redirect('/team/careers');

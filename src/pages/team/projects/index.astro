@@ -19,8 +19,11 @@ import { assignedPeople, facesByProject, personInitial, personLabel } from '../.
 const supabase = Astro.locals.supabase;
 const user = Astro.locals.user;
 const studio = Astro.locals.studio;
+// Only studio admins (owner or admin) create projects; the database enforces it too.
+const canCreate = Boolean(studio?.superAdmin);
 
 if (Astro.request.method === 'POST') {
+  if (!canCreate) return Astro.redirect('/team/projects?error=forbidden');
   const form = await Astro.request.formData();
   const payload = projectFromForm(form);
   if (!payload) {
@@ -146,7 +149,7 @@ function filterHref(status: string, member: string) {
   const query = params.toString();
   return `/team/projects${query ? `?${query}` : ''}`;
 }
-const creating = Astro.url.searchParams.has('new') || Astro.url.searchParams.get('error') === 'invalid';
+const creating = canCreate && (Astro.url.searchParams.has('new') || Astro.url.searchParams.get('error') === 'invalid');
 const marks = await logoHrefs(supabase, visible);
 ---
 
@@ -165,8 +168,8 @@ const marks = await logoHrefs(supabase, visible);
           <li><strong>{statusCounts.done}</strong> done</li>
         </ul>
         <nav class="quick-actions" aria-label="Quick actions">
-          <a class="btn" href="/team/projects?new=1"><span aria-hidden="true">+</span> New project</a>
-          {studio?.canLedger && <a class="btn btn-ghost" href="/team/ledger">Studio ledger</a>}
+          {canCreate && <a class="btn" href="/team/projects?new=1"><span aria-hidden="true">+</span> New project</a>}
+          {studio?.canLedger && <a class="btn btn-ghost" href="/team/ledger">{canCreate ? 'Studio ledger' : 'Ledger'}</a>}
         </nav>
       </div>
     </header>
@@ -269,13 +272,15 @@ const marks = await logoHrefs(supabase, visible);
           <div class="pj-empty">
             <p>
               {projects.length === 0
-                ? 'No projects yet. Create the first one to start planning.'
+                ? canCreate
+                  ? 'No projects yet. Create the first one to start planning.'
+                  : 'You are not on any projects yet. An owner or admin will add you to one.'
                 : memberFilter
                   ? `No ${statusFilter || 'matching'} projects assigned to ${personLabel(memberFilter, people)}.`
                   : 'No projects match that filter.'}
             </p>
             {projects.length === 0 ? (
-              <a class="btn" href="/team/projects?new=1">New project</a>
+              canCreate && <a class="btn" href="/team/projects?new=1">New project</a>
             ) : (
               <a class="btn btn-ghost" href="/team/projects">Clear filters</a>
             )}
@@ -347,7 +352,7 @@ const marks = await logoHrefs(supabase, visible);
                 </li>
               );
             })}
-            {!creating && (
+            {canCreate && !creating && (
               <li class="pj-new-tile">
                 <a href="/team/projects?new=1">
                   <span aria-hidden="true">+</span>

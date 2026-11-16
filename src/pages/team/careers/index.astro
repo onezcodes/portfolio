@@ -13,11 +13,12 @@ import {
   statusLabel,
   type JobOpportunity,
 } from '../../../lib/jobs';
-import { emailOf, isSuperAdmin } from '../../../lib/supabase';
+import { emailOf } from '../../../lib/supabase';
 
 const supabase = Astro.locals.supabase;
 const studio = Astro.locals.studio;
-const admin = isSuperAdmin(Astro.locals.user);
+// Careers is for studio admins (owner or admin).
+const admin = Boolean(studio?.superAdmin);
 
 if (!admin) return Astro.redirect('/team?error=forbidden');
 
