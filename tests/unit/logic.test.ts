@@ -133,3 +133,15 @@ describe('redirect safety', () => {
     expect(withParam('/team/projects/1?tab=tasks', 'notice', 'saved')).toBe('/team/projects/1?tab=tasks&notice=saved');
   });
 });
+
+describe('view-as session id', () => {
+  const token = (payload: object) =>
+    `x.${Buffer.from(JSON.stringify(payload)).toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')}.y`;
+  it('reads session_id from the access token', async () => {
+    const { sessionIdFromToken } = await import('../../src/lib/viewAs');
+    expect(sessionIdFromToken(token({ email: 'a@x.com', session_id: 'abc-123' }))).toBe('abc-123');
+    expect(sessionIdFromToken(token({ email: 'a@x.com' }))).toBe('');
+    expect(sessionIdFromToken('not-a-jwt')).toBe('');
+    expect(sessionIdFromToken(null)).toBe('');
+  });
+});

@@ -44,9 +44,32 @@ export function previewUser(real: User, email: string): User {
   };
 }
 
+/** The `session_id` claim of a Supabase access token (JWT), or '' if absent. */
+export function sessionIdFromToken(token: string | null | undefined) {
+  const payload = token?.split('.')[1];
+  if (!payload) return '';
+  try {
+    const json = JSON.parse(Buffer.from(payload.replace(/-/g, '+').replace(/_/g, '/'), 'base64').toString('utf8'));
+    return typeof json.session_id === 'string' ? json.session_id : '';
+  } catch {
+    return '';
+  }
+}
+
 export async function startViewAs(supabase: TeamSupabase, realEmail: string, target: string) {
+  // The preview is keyed by this login session; the database checks it matches the token.
+  const {
+    data: { session },
+  } = await supabase.auth.getSession();
+  const sessionId = sessionIdFromToken(session?.access_token);
+  if (!sessionId) {
+    console.error('view-as start failed: no session id in token');
+    return false;
+  }
   await supabase.from('studio_view_as').delete().eq('admin_email', realEmail);
-  const { error } = await supabase.from('studio_view_as').insert({ target_email: target, admin_email: realEmail });
+  const { error } = await supabase
+    .from('studio_view_as')
+    .insert({ session_id: sessionId, target_email: target, admin_email: realEmail });
   if (error) console.error('view-as start failed', error.message);
   return !error;
 }
