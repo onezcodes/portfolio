@@ -10431,3 +10431,71 @@ kbd {
   outline: 3px solid var(--gold);
   outline-offset: 2px;
 }
+
+/* Overview activity: compact two-column feed in the main column */
+.ov-act {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.15rem 1.25rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.ov-act a {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  grid-template-areas: 'dot what' '. meta';
+  gap: 0.05rem 0.6rem;
+  padding: 0.5rem 0.55rem;
+  border-radius: var(--radius-sm);
+  color: inherit;
+  text-decoration: none;
+}
+
+.ov-act a:hover {
+  background: var(--surface-2);
+}
+
+.ov-act i {
+  grid-area: dot;
+  width: 0.45rem;
+  height: 0.45rem;
+  margin-top: 0.42rem;
+  border-radius: 50%;
+  background: var(--gold);
+}
+
+.ov-act-what {
+  grid-area: what;
+  display: flex;
+  gap: 0.4rem;
+  min-width: 0;
+  font-size: 0.9rem;
+  white-space: nowrap;
+}
+
+.ov-act-what strong {
+  font-weight: 600;
+}
+
+.ov-act-what span {
+  overflow: hidden;
+  color: var(--muted);
+  text-overflow: ellipsis;
+}
+
+.ov-act-meta {
+  grid-area: meta;
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 0.78rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+@media (max-width: 40rem) {
+  .ov-act {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}

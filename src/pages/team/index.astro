@@ -65,6 +65,16 @@ const overdue = ((milestoneRows ?? []) as Milestone[]).filter(
   (row) => row.estimated_on && row.estimated_on < today && row.status !== 'done' && row.status !== 'skipped',
 );
 const activity = (eventRows ?? []) as StudioEvent[];
+/** "08:17" today, "Yesterday", or "14 Nov". */
+function shortWhen(iso: string) {
+  const zone = 'Asia/Bangkok';
+  const day = (d: Date) => d.toLocaleDateString('en-CA', { timeZone: zone });
+  const at = new Date(iso);
+  const now = new Date();
+  if (day(at) === day(now)) return at.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', timeZone: zone });
+  if (day(at) === day(new Date(now.getTime() - 86_400_000))) return 'Yesterday';
+  return at.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', timeZone: zone });
+}
 const staleVault = ((creds.data ?? []) as Pick<CredentialRecord, 'id' | 'title' | 'updated_at'>[]).filter((item) =>
   isStaleCredential(item.updated_at),
 );
@@ -293,6 +303,32 @@ const offTrack = orderedProjects.filter((project) => healthOf(project).level ===
             />
           )
         }
+        {
+          activity.length > 0 && (
+            <section class="team-card ov-activity">
+              <div class="ov-card-head">
+                <h2>Activity</h2>
+                <a href="/team/activity">All activity →</a>
+              </div>
+              <ol class="ov-act">
+                {activity.map((row) => (
+                  <li>
+                    <a href={eventHref(row)} title={`${eventTitle(row)}${row.detail ? ` · ${row.detail}` : ''} · ${formatEventTime(row.created_at)}`}>
+                      <i aria-hidden="true" />
+                      <span class="ov-act-what">
+                        <strong>{eventTitle(row)}</strong>
+                        {row.detail && <span>{row.detail}</span>}
+                      </span>
+                      <span class="ov-act-meta">
+                        {personLabel(row.actor_email, people)} · {shortWhen(row.created_at)}
+                      </span>
+                    </a>
+                  </li>
+                ))}
+              </ol>
+            </section>
+          )
+        }
       </div>
 
       <aside class="ov-side">
@@ -458,29 +494,6 @@ const offTrack = orderedProjects.filter((project) => healthOf(project).level ===
           )
         }
 
-        {
-          activity.length > 0 && (
-            <section class="team-card">
-              <div class="ov-card-head">
-                <h2>Activity</h2>
-                <a href="/team/activity">All →</a>
-              </div>
-              <ol class="ov-feed">
-                {activity.map((row) => (
-                  <li>
-                    <a href={eventHref(row)}>
-                      <strong>{eventTitle(row)}</strong>
-                      <span>
-                        {formatEventTime(row.created_at)} · {personLabel(row.actor_email, people)}
-                        {row.detail ? ` · ${row.detail}` : ''}
-                      </span>
-                    </a>
-                  </li>
-                ))}
-              </ol>
-            </section>
-          )
-        }
       </aside>
     </div>
 
