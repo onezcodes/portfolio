@@ -106,11 +106,14 @@ const jsonLd = jsonLdGraph({ path, title: pageTitle, description, crumb });
     )}
   </head>
   <body class:list={[home && 'is-home']}>
+    {/* Cloudflare's Email Address Obfuscation rewrites emails to "[email protected]"; opt the page out. */}
+    <Fragment set:html="<!--email_off-->" />
     <a class="skip-link" href="#main">Skip to content</a>
     <Nav />
     <main id="main">
       <slot />
     </main>
     <Footer />
+    <Fragment set:html="<!--/email_off-->" />
   </body>
 </html>

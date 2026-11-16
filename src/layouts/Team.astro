@@ -50,6 +50,8 @@ function current(href: string) {
     <NavChrome />
   </head>
   <body class="team-body">
+    {/* Cloudflare's Email Address Obfuscation rewrites emails to "[email protected]"; opt the page out. */}
+    <Fragment set:html="<!--email_off-->" />
     <a class="skip-link" href="#main">Skip to content</a>
     <header class="site-header">
       <div class="wrap header-inner team-header">
@@ -261,5 +263,6 @@ function current(href: string) {
         });
       })();
     </script>
+    <Fragment set:html="<!--/email_off-->" />
   </body>
 </html>
