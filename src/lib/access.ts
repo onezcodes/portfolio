@@ -1,6 +1,7 @@
 import type { User } from '@supabase/supabase-js';
 import { oauthAvatar, oauthName } from './profile';
 import { emailOf, isSuperAdmin, type TeamSupabase } from './supabase';
+import { PRESENCE_WRITE_MS } from './presence';
 
 export const PROJECT_ROLES = ['lead', 'manager', 'collaborator', 'developer', 'qa'] as const;
 export type ProjectRole = (typeof PROJECT_ROLES)[number];
@@ -217,7 +218,8 @@ export async function loadStudioAccess(
   if (profile.data?.display_name?.trim()) displayName = profile.data.display_name.trim();
   const avatarUrl = oauthAvatar(user) || String(profile.data?.avatar_url ?? '').trim();
   const seenAt = String(profile.data?.last_seen_at ?? '');
-  const seenStale = !seenAt || Date.now() - Date.parse(seenAt) > 6 * 60 * 60 * 1000;
+  // Presence: refresh at most every couple of minutes so "Online" stays accurate.
+  const seenStale = !seenAt || Date.now() - Date.parse(seenAt) > PRESENCE_WRITE_MS;
   const patch: { avatar_url?: string; last_seen_at: string } = { last_seen_at: new Date().toISOString() };
   if (avatarUrl && avatarUrl !== String(profile.data?.avatar_url ?? '').trim()) {
     patch.avatar_url = avatarUrl;

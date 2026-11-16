@@ -312,7 +312,16 @@ function current(href: string) {
         });
       });
 
-      // Running timers: refresh "12m" style labels every 30 seconds.
+      // Presence heartbeat: while this tab is visible, tell the server once a minute.
+      (function () {
+        const ping = () => {
+          if (document.visibilityState === 'visible') fetch('/team/presence', { cache: 'no-store', credentials: 'same-origin' }).catch(() => {});
+        };
+        setInterval(ping, 60000);
+        document.addEventListener('visibilitychange', ping);
+      })();
+
+            // Running timers: refresh "12m" style labels every 30 seconds.
       setInterval(() => {
         document.querySelectorAll('.team-timer [data-live-since]').forEach((el) => {
           const minutes = Math.max(0, Math.round((Date.now() - Date.parse(el.getAttribute('data-live-since') || '')) / 60000));

@@ -1,0 +1,45 @@
+---
+/** Team members with a presence dot: online first, then most recently active. */
+import { personInitial } from '../lib/profile';
+import { byPresence, presenceOf } from '../lib/presence';
+import { mentionHandle } from '../lib/taskCollab';
+
+interface Props {
+  members: { email: string; display_name?: string | null; avatar_url?: string | null; job_title?: string | null; last_seen_at?: string | null }[];
+  limit?: number;
+  me?: string;
+}
+
+const { members, limit = 12, me = '' } = Astro.props;
+const now = Date.now();
+const rows = byPresence(members, now).slice(0, limit);
+---
+
+<ul class="presence-list">
+  {rows.map((member) => {
+    const name = member.display_name?.trim() || member.email.split('@')[0];
+    const presence = presenceOf(member.last_seen_at, now);
+    return (
+      <li>
+        <span class="presence-face">
+          {member.avatar_url?.trim() ? (
+            <img class="face" src={member.avatar_url} alt="" referrerpolicy="no-referrer" width="34" height="34" />
+          ) : (
+            <span class="face" aria-hidden="true">{personInitial(name, member.email)}</span>
+          )}
+          <i class:list={['presence-dot', presence.online && 'is-online']} aria-hidden="true" />
+        </span>
+        <span class="presence-copy">
+          <strong>
+            <a href={member.email === me ? '/team/profile' : `/team/people/${mentionHandle(member.email)}`}>{name}</a>
+            {member.email === me && <span class="presence-you">you</span>}
+          </strong>
+          <span>{member.job_title?.trim() || member.email}</span>
+        </span>
+        <span class:list={['presence-label', presence.online && 'is-online']} title={member.last_seen_at ? new Date(member.last_seen_at).toLocaleString('en-GB') : 'Never signed in'}>
+          {presence.label}
+        </span>
+      </li>
+    );
+  })}
+</ul>

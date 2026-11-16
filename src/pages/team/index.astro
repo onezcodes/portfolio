@@ -3,6 +3,8 @@ import Team from '../../layouts/Team.astro';
 import TeamFlash from '../../components/TeamFlash.astro';
 import { fundingByCurrency, remainingLabel, type Contribution } from '../../lib/funding';
 import { projectHealth } from '../../lib/health';
+import { byPresence, presenceOf } from '../../lib/presence';
+import { personInitial } from '../../lib/profile';
 import IncomeExpenseChart from '../../components/IncomeExpenseChart.astro';
 import { money, todayIso, totalsByCurrency, type LedgerEntry, type Project, type TeamMember } from '../../lib/ledger';
 import { stagesByProject, type Milestone } from '../../lib/milestones';
@@ -45,7 +47,7 @@ const [[{ data: projects }, marks], { data: entries }, { data: contribs }, { dat
       ? supabase.from('studio_credentials').select('id, title, updated_at')
       : Promise.resolve({ data: [] }),
     supabase.from('project_members').select('project_id, email'),
-    supabase.from('team_members').select('email, display_name, avatar_url').order('email'),
+    supabase.from('team_members').select('email, display_name, avatar_url, last_seen_at').order('email'),
   ]);
 
 const projectRows = (projects ?? []) as Project[];
@@ -109,6 +111,12 @@ const orderedProjects = visibleProjects
   .filter((project) => project.status === 'active')
   .concat(visibleProjects.filter((project) => project.status !== 'active'));
 const ATTENTION_CAP = 4;
+const nowMs = Date.now();
+const teamByPresence = byPresence((memberRows ?? []) as { email: string; display_name: string; avatar_url: string; last_seen_at: string | null }[], nowMs);
+const onlineNow = teamByPresence.filter((m) => m.email !== studio?.email && presenceOf(m.last_seen_at, nowMs).online);
+const recentlyActive = teamByPresence
+  .filter((m) => m.email !== studio?.email && !presenceOf(m.last_seen_at, nowMs).online && m.last_seen_at)
+  .slice(0, 3);
 const latestCheckinAt = new Map<string, string>();
 for (const row of (checkinRows ?? []) as ProjectCheckin[]) {
   if (!latestCheckinAt.has(row.project_id)) latestCheckinAt.set(row.project_id, row.created_at);
@@ -282,6 +290,41 @@ const offTrack = orderedProjects.filter((project) => healthOf(project).level ===
       </div>
 
       <aside class="ov-side">
+        <section class="team-card ov-online">
+          <div class="ov-card-head">
+            <h2>Online now</h2>
+            <span class:list={['presence-count', onlineNow.length > 0 && 'is-online']}><i aria-hidden="true" />{onlineNow.length}</span>
+          </div>
+          {onlineNow.length > 0 ? (
+            <ul class="ov-online-faces">
+              {onlineNow.map((member) => {
+                const label = member.display_name?.trim() || member.email.split('@')[0];
+                return (
+                  <li title={`${label} · online`}>
+                    <span class="presence-face">
+                      {member.avatar_url?.trim() ? (
+                        <img class="face" src={member.avatar_url} alt="" referrerpolicy="no-referrer" width="34" height="34" />
+                      ) : (
+                        <span class="face" aria-hidden="true">{personInitial(label, member.email)}</span>
+                      )}
+                      <i class="presence-dot is-online" aria-hidden="true" />
+                    </span>
+                    <span>{label.split(' ')[0]}</span>
+                  </li>
+                );
+              })}
+            </ul>
+          ) : (
+            <p class="muted">Just you right now.</p>
+          )}
+          {recentlyActive.length > 0 && (
+            <p class="ov-recent">
+              {recentlyActive.map((member) => (
+                <span>{member.display_name?.trim() || member.email.split('@')[0]} · {presenceOf(member.last_seen_at, nowMs).label.replace(/^Active /, '')}</span>
+              ))}
+            </p>
+          )}
+        </section>
         <section class="team-card" id="attention">
           <div class="ov-card-head">
             <h2>Needs attention</h2>

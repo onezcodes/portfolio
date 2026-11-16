@@ -4,6 +4,14 @@ import TeamFlash from '../../components/TeamFlash.astro';
 import { logEvent, formatEventTime } from '../../lib/events';
 import type { TeamMember } from '../../lib/ledger';
 import { oauthAvatar, oauthName } from '../../lib/profile';
+import { roleLabels } from '../../lib/access';
+import { logoHrefs } from '../../lib/projectHub';
+import ProjectMark from '../../components/ProjectMark.astro';
+import PresenceList from '../../components/PresenceList.astro';
+import ActivityHeatmap from '../../components/ActivityHeatmap.astro';
+import { activityByDay } from '../../lib/activity';
+import { presenceOf } from '../../lib/presence';
+import { formatMinutes } from '../../lib/timeTracking';
 import { emailOf, siteUrl } from '../../lib/supabase';
 
 const supabase = Astro.locals.supabase;
@@ -45,10 +53,30 @@ if (Astro.request.method === 'POST') {
   return Astro.redirect('/team/profile?notice=saved');
 }
 
-const [{ data }, { data: feed }] = await Promise.all([
-  supabase.from('team_members').select('*').eq('email', email).maybeSingle(),
-  supabase.from('calendar_feed_tokens').select('token').eq('email', email).maybeSingle(),
-]);
+const todayIso = new Date().toISOString().slice(0, 10);
+const weekAgo = new Date(Date.now() - 7 * 86_400_000).toISOString();
+const [{ data }, { data: feed }, { data: openRows }, { count: doneWeek }, { data: timeRows }, { data: memberships }, { data: projectRows }, { count: unread }, { data: teamRows }] =
+  await Promise.all([
+    supabase.from('team_members').select('*').eq('email', email).maybeSingle(),
+    supabase.from('calendar_feed_tokens').select('token').eq('email', email).maybeSingle(),
+    supabase.from('project_tasks').select('id, due_on').eq('assignee_email', email).neq('status', 'done'),
+    supabase.from('project_tasks').select('id', { count: 'exact', head: true }).eq('assignee_email', email).eq('status', 'done').gte('completed_at', weekAgo),
+    supabase.from('task_time_entries').select('minutes').eq('email', email).gte('started_at', weekAgo),
+    supabase.from('project_members').select('project_id, roles').eq('email', email),
+    supabase.from('projects').select('id, name, status, logo_url'),
+    supabase.from('team_notifications').select('id', { count: 'exact', head: true }).is('read_at', null),
+    supabase.from('team_members').select('email, display_name, avatar_url, job_title, last_seen_at'),
+  ]);
+const openTasks = (openRows ?? []) as { id: string; due_on: string | null }[];
+const overdue = openTasks.filter((t) => t.due_on && t.due_on < todayIso).length;
+const weekMinutes = ((timeRows ?? []) as { minutes: number }[]).reduce((sum, r) => sum + (r.minutes || 0), 0);
+const roleByProject = new Map(((memberships ?? []) as { project_id: string; roles: string[] }[]).map((m) => [m.project_id, m.roles]));
+const myProjects = ((projectRows ?? []) as { id: string; name: string; status: string; logo_url: string }[])
+  .filter((p) => roleByProject.has(p.id))
+  .sort((a, b) => (a.status === 'active' ? 0 : 1) - (b.status === 'active' ? 0 : 1) || a.name.localeCompare(b.name));
+const [marks, activity] = await Promise.all([logoHrefs(supabase, myProjects), activityByDay(supabase, email)]);
+const team = (teamRows ?? []) as { email: string; display_name: string; avatar_url: string; job_title: string; last_seen_at: string | null }[];
+const onlineCount = team.filter((m) => presenceOf(m.last_seen_at).online).length;
 const feedUrl = feed?.token ? `${siteUrl(Astro.request)}/api/calendar/${feed.token}.ics` : '';
 const webcalUrl = feedUrl.replace(/^https?:/, 'webcal:');
 const row = data as TeamMember | null;
@@ -59,108 +87,201 @@ const joined = row?.created_at
   ? new Date(row.created_at).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })
   : '';
 const lastSignIn = user?.last_sign_in_at ? formatEventTime(user.last_sign_in_at) : '';
+const providerLabel = provider === 'google' ? 'Google' : provider === 'github' ? 'GitHub' : provider;
+const roleBadge = studio?.superAdmin ? 'Super admin' : myProjects.some((p) => roleByProject.get(p.id)?.includes('lead')) ? 'Project lead' : 'Team member';
+const initial = (name || email).slice(0, 1).toUpperCase();
 ---
 
 <Team title="Profile">
-  <div class="wrap team-page">
-    <header class="team-intro">
-      <p class="kicker">You</p>
-      <h1>Profile</h1>
-      <p class="lede">Your name shows across the team app. Sign-in email stays the same.</p>
-    </header>
+  <div class="wrap team-page pf">
+    <section class="pf-hero" aria-labelledby="pf-name">
+      <div class="pf-cover" aria-hidden="true"></div>
+      <div class="pf-id">
+        {avatar ? (
+          <img class="pf-photo" src={avatar} alt="" referrerpolicy="no-referrer" width="96" height="96" />
+        ) : (
+          <span class="pf-photo pf-photo-fallback" aria-hidden="true">{initial}</span>
+        )}
+        <div class="pf-who">
+          <h1 id="pf-name" data-preview="display_name" data-fallback={email}>{name || email}</h1>
+          <p class="pf-title" data-preview="job_title" data-fallback="Add your title">{row?.job_title?.trim() || 'Add your title'}</p>
+          <p class="pf-meta">
+            <span class="pf-badge">{roleBadge}</span>
+            <span>{email}</span>
+            {joined && <span>Joined {joined}</span>}
+          </p>
+        </div>
+        <div class="pf-signin">
+          <span class:list={['pf-provider', provider]}>{providerLabel}</span>
+          {lastSignIn && <span class="muted">Last sign-in {lastSignIn}</span>}
+        </div>
+      </div>
+    </section>
     <TeamFlash />
 
-    <section class="team-card">
-      <div class="profile-id">
-        {
-          avatar ? (
-            <img class="profile-photo" src={avatar} alt="" referrerpolicy="no-referrer" width="72" height="72" />
-          ) : (
-            <span class="profile-photo profile-photo-fallback" aria-hidden="true">
-              {(name || email).slice(0, 1).toUpperCase()}
-            </span>
-          )
-        }
-        <div>
-          <strong>{name || email}</strong>
-          <p class="muted">{email}</p>
-        </div>
-      </div>
-
-      <dl class="profile-facts">
-        <div>
-          <dt>Email</dt>
-          <dd>{email}</dd>
-        </div>
-        <div>
-          <dt>Joined</dt>
-          <dd>{joined || '—'}</dd>
-        </div>
-        <div>
-          <dt>Sign-in</dt>
-          <dd>{provider}</dd>
-        </div>
-        {
-          lastSignIn && (
-            <div>
-              <dt>Last sign-in</dt>
-              <dd>{lastSignIn}</dd>
-            </div>
-          )
-        }
-      </dl>
-
-      <form class="form team-form" method="post">
-        <p class="field">
-          <label for="display_name">Name</label>
-          <input id="display_name" name="display_name" value={name} maxlength="80" placeholder="How the team should see you" />
-        </p>
-        <div class="team-form-row">
-          <p class="field">
-            <label for="job_title">Title</label>
-            <input id="job_title" name="job_title" value={row?.job_title ?? ''} maxlength="80" placeholder="Producer, engineer…" />
-          </p>
-          <p class="field">
-            <label for="phone">Phone</label>
-            <input id="phone" name="phone" value={row?.phone ?? ''} maxlength="40" inputmode="tel" autocomplete="tel" />
-          </p>
-        </div>
-        <button class="btn" type="submit">Save profile</button>
-      </form>
+    <section class="ov-stats pf-stats" aria-label="Your week">
+      <a class="ov-stat" href="/team/tasks"><span class="ov-stat-label">Open tasks</span><strong>{openTasks.length}</strong><span class="ov-stat-note">assigned to you</span></a>
+      <a class:list={['ov-stat', overdue > 0 && 'is-alert']} href="/team/tasks"><span class="ov-stat-label">Overdue</span><strong>{overdue}</strong><span class="ov-stat-note">{overdue === 0 ? 'Nothing late' : 'Past their due date'}</span></a>
+      <a class="ov-stat" href="/team/reports"><span class="ov-stat-label">Done this week</span><strong>{doneWeek ?? 0}</strong><span class="ov-stat-note">last 7 days</span></a>
+      <a class="ov-stat is-money" href="/team/reports"><span class="ov-stat-label">Time logged</span><strong>{formatMinutes(weekMinutes)}</strong><span class="ov-stat-note">last 7 days</span></a>
     </section>
 
-    <section class="team-card" id="calendar">
-      <div class="card-head">
-        <div class="pay-head">
-          <h2>Calendar feed</h2>
-          <p class="muted">Subscribe in Google Calendar, Apple Calendar, or Outlook to see your task due dates and stage dates. Keep the link private: anyone with it can see those items.</p>
+    <ActivityHeatmap activity={activity} owner="Your" />
+
+    <div class="pf-grid">
+      <div class="pf-main">
+      <section class="team-card pf-edit">
+        <div class="ov-card-head">
+          <h2>Edit profile</h2>
+          <span class="pf-dirty" data-dirty hidden>Unsaved changes</span>
         </div>
-      </div>
-      {feedUrl ? (
-        <div class="share-box">
-          <div class="secret-row">
-            <input class="share-url" id="feed-url" value={feedUrl} readonly aria-label="Calendar feed URL" />
-            <button class="btn" type="button" data-copy="feed-url">Copy</button>
+        <form class="form team-form" method="post" data-profile-form>
+          <p class="field">
+            <label for="display_name">Display name</label>
+            <input id="display_name" name="display_name" value={name} maxlength="80" placeholder="How the team should see you" autocomplete="name" />
+            <span class="pf-hint">Shown on tasks, comments, and the team list.</span>
+          </p>
+          <div class="team-form-row">
+            <p class="field">
+              <label for="job_title">Title</label>
+              <input id="job_title" name="job_title" value={row?.job_title ?? ''} maxlength="80" placeholder="Producer, engineer…" autocomplete="organization-title" />
+            </p>
+            <p class="field">
+              <label for="phone">Phone</label>
+              <input id="phone" name="phone" value={row?.phone ?? ''} maxlength="40" inputmode="tel" autocomplete="tel" placeholder="+66 …" />
+            </p>
           </div>
-          <div class="share-actions">
-            <a class="btn btn-ghost" href={webcalUrl}>Open in calendar app</a>
-            <a class="btn btn-ghost" href={`https://calendar.google.com/calendar/r?cid=${encodeURIComponent(webcalUrl)}`} target="_blank" rel="noopener noreferrer">Add to Google Calendar ↗</a>
-            <form method="post" data-confirm="Make a new link? Calendars using the old one stop updating." data-confirm-action="Reset">
-              <input type="hidden" name="intent" value="calendar-reset" />
-              <button class="btn-text" type="submit">Reset link</button>
-            </form>
-            <form method="post" data-confirm="Turn off your calendar feed?" data-confirm-action="Turn off">
-              <input type="hidden" name="intent" value="calendar-delete" />
-              <button class="btn-text td-delete" type="submit">Turn off</button>
-            </form>
+          <p class="field">
+            <label for="pf_email">Sign-in email</label>
+            <input id="pf_email" value={email} readonly disabled />
+            <span class="pf-hint">Set by your {providerLabel} account. Ask the super admin to change it.</span>
+          </p>
+          <div class="pf-actions">
+            <button class="btn btn-ghost" type="reset" data-reset disabled>Discard</button>
+            <button class="btn" type="submit" data-save disabled>Save profile</button>
           </div>
-        </div>
-      ) : (
-        <form method="post">
-          <input type="hidden" name="intent" value="calendar-create" />
-          <button class="btn" type="submit">Create my calendar link</button>
         </form>
-      )}
-    </section>
+      </section>
+        <section class="team-card pf-calendar" id="calendar">
+          <div class="ov-card-head">
+            <h2>Calendar feed</h2>
+            {feedUrl && <span class="pf-on">On</span>}
+          </div>
+          <p class="muted pf-copy">Your due dates and stage dates in Google, Apple, or Outlook. Keep the link private.</p>
+          {feedUrl ? (
+            <div class="share-box">
+              <div class="secret-row">
+                <input class="share-url" id="feed-url" value={feedUrl} readonly aria-label="Calendar feed URL" />
+                <button class="btn" type="button" data-copy="feed-url">Copy</button>
+              </div>
+              <div class="share-actions">
+                <a class="btn btn-ghost" href={`https://calendar.google.com/calendar/r?cid=${encodeURIComponent(webcalUrl)}`} target="_blank" rel="noopener noreferrer">Google Calendar ↗</a>
+                <a class="btn btn-ghost" href={webcalUrl}>Apple / Outlook</a>
+              </div>
+              <div class="share-actions pf-quiet">
+                <form method="post" data-confirm="Make a new link? Calendars using the old one stop updating." data-confirm-action="Reset">
+                  <input type="hidden" name="intent" value="calendar-reset" />
+                  <button class="btn-text" type="submit">Reset link</button>
+                </form>
+                <form method="post" data-confirm="Turn off your calendar feed?" data-confirm-action="Turn off">
+                  <input type="hidden" name="intent" value="calendar-delete" />
+                  <button class="btn-text td-delete" type="submit">Turn off</button>
+                </form>
+              </div>
+            </div>
+          ) : (
+            <form method="post">
+              <input type="hidden" name="intent" value="calendar-create" />
+              <button class="btn" type="submit">Create my calendar link</button>
+            </form>
+          )}
+        </section>
+        <section class="team-card pf-links">
+          <a href="/team/inbox">
+            <span>Inbox</span>
+            {(unread ?? 0) > 0 ? <span class="pf-unread">{unread} unread</span> : <span class="muted">All caught up</span>}
+          </a>
+          <a href="#" data-show-shortcuts>
+            <span>Keyboard shortcuts</span>
+            <kbd>?</kbd>
+          </a>
+          <form method="post" action="/auth/logout" data-astro-reload>
+            <button type="submit"><span>Sign out</span><span class="muted">{providerLabel}</span></button>
+          </form>
+        </section>
+      </div>
+
+      <div class="pf-side">
+        <section class="team-card">
+          <div class="ov-card-head">
+            <h2>Your projects</h2>
+            <span class="ov-count">{studio?.superAdmin ? 'All' : myProjects.length}</span>
+          </div>
+          {myProjects.length === 0 ? (
+            <p class="muted">You are not on a project yet. A project lead can add you.</p>
+          ) : (
+            <ul class="pf-projects">
+              {myProjects.map((project) => (
+                <li>
+                  <a href={`/team/projects/${project.id}`}>
+                    <ProjectMark name={project.name} src={marks.get(project.logo_url)} />
+                    <span>
+                      <strong>{project.name}</strong>
+                      <span class="role-chips">
+                        {roleLabels(roleByProject.get(project.id) ?? []).map((label) => <span class="role-chip">{label}</span>)}
+                        {project.status !== 'active' && <span class="pf-status">{project.status}</span>}
+                      </span>
+                    </span>
+                  </a>
+                </li>
+              ))}
+            </ul>
+          )}
+        </section>
+
+
+        <section class="team-card">
+          <div class="ov-card-head">
+            <h2>Team</h2>
+            <span class:list={['presence-count', onlineCount > 0 && 'is-online']}>
+              <i aria-hidden="true" />{onlineCount} online
+            </span>
+          </div>
+          <PresenceList members={team} me={email} limit={20} />
+        </section>
+
+      </div>
+    </div>
   </div>
 </Team>
+
+<script>
+  function bindProfile() {
+    const form = document.querySelector<HTMLFormElement>('[data-profile-form]');
+    if (!form || form.dataset.bound) return;
+    form.dataset.bound = '1';
+    const fields = [...form.querySelectorAll<HTMLInputElement>('input:not([disabled])')];
+    const save = form.querySelector<HTMLButtonElement>('[data-save]');
+    const reset = form.querySelector<HTMLButtonElement>('[data-reset]');
+    const badge = document.querySelector<HTMLElement>('[data-dirty]');
+    const sync = () => {
+      const dirty = fields.some((f) => f.value !== f.defaultValue);
+      if (save) save.disabled = !dirty;
+      if (reset) reset.disabled = !dirty;
+      if (badge) badge.hidden = !dirty;
+      // Live preview in the header.
+      for (const f of fields) {
+        const target = document.querySelector<HTMLElement>(`[data-preview="${f.name}"]`);
+        if (target) target.textContent = f.value.trim() || target.dataset.fallback || '';
+      }
+    };
+    fields.forEach((f) => f.addEventListener('input', sync));
+    form.addEventListener('reset', () => setTimeout(sync));
+    document.querySelector('[data-show-shortcuts]')?.addEventListener('click', (event) => {
+      event.preventDefault();
+      (document.getElementById('modal-shortcuts') as HTMLDialogElement | null)?.showModal();
+    });
+  }
+  bindProfile();
+  document.addEventListener('astro:page-load', bindProfile);
+</script>

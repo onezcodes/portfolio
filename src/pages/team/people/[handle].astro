@@ -1,0 +1,170 @@
+---
+import Team from '../../../layouts/Team.astro';
+import ActivityHeatmap from '../../../components/ActivityHeatmap.astro';
+import ProjectMark from '../../../components/ProjectMark.astro';
+import { activityByDay, studioDay } from '../../../lib/activity';
+import { roleLabels } from '../../../lib/access';
+import { eventHref, eventTitle, formatEventTime, type StudioEvent } from '../../../lib/events';
+import type { TeamMember } from '../../../lib/ledger';
+import { presenceOf } from '../../../lib/presence';
+import { personInitial } from '../../../lib/profile';
+import { logoHrefs } from '../../../lib/projectHub';
+import { mentionHandle } from '../../../lib/taskCollab';
+import { priorityLabel, sortTaskQueue, type ProjectTask } from '../../../lib/tasks';
+import { SUPER_ADMIN_EMAIL } from '../../../lib/supabase';
+
+// A teammate's page: presence, activity heatmap, projects, open work, recent actions.
+const supabase = Astro.locals.supabase;
+const studio = Astro.locals.studio;
+if (!studio) return Astro.redirect('/team/login');
+
+const handle = String(Astro.params.handle ?? '').toLowerCase();
+const { data: memberRows } = await supabase.from('team_members').select('*');
+const members = (memberRows ?? []) as TeamMember[];
+const member = members.find((m) => mentionHandle(m.email) === handle);
+if (!member) return Astro.redirect('/team/members?error=not-found');
+if (member.email === studio.email) return Astro.redirect('/team/profile');
+
+const email = member.email;
+const [activity, { data: taskRows }, { data: memberships }, { data: projectRows }, { data: eventRows }] = await Promise.all([
+  activityByDay(supabase, email),
+  supabase.from('project_tasks').select('id, project_id, title, status, due_on, priority, kind, sort_order').eq('assignee_email', email).neq('status', 'done'),
+  supabase.from('project_members').select('project_id, roles').eq('email', email),
+  supabase.from('projects').select('id, name, status, logo_url'),
+  supabase.from('studio_events').select('*').eq('actor_email', email).order('created_at', { ascending: false }).limit(8),
+]);
+
+const name = member.display_name?.trim() || email.split('@')[0];
+const presence = presenceOf(member.last_seen_at);
+const roles = new Map(((memberships ?? []) as { project_id: string; roles: string[] }[]).map((m) => [m.project_id, m.roles]));
+const projects = ((projectRows ?? []) as { id: string; name: string; status: string; logo_url: string }[]).filter((p) => roles.has(p.id));
+const projectName = new Map(((projectRows ?? []) as { id: string; name: string }[]).map((p) => [p.id, p.name]));
+const tasks = sortTaskQueue((taskRows ?? []) as ProjectTask[]);
+const today = studioDay(new Date());
+const overdue = tasks.filter((t) => t.due_on && t.due_on < today).length;
+const events = (eventRows ?? []) as StudioEvent[];
+const marks = await logoHrefs(supabase, projects);
+const limited = !studio.superAdmin;
+const badge = email === SUPER_ADMIN_EMAIL || member.role === 'super_admin' ? 'Super admin' : 'Team member';
+const joined = member.created_at ? new Date(member.created_at).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) : '';
+---
+
+<Team title={name}>
+  <div class="wrap team-page pf">
+    <section class="pf-hero" aria-labelledby="pf-name">
+      <div class="pf-cover" aria-hidden="true"></div>
+      <div class="pf-id">
+        <span class="presence-face pf-photo-wrap">
+          {member.avatar_url?.trim() ? (
+            <img class="pf-photo" src={member.avatar_url} alt="" referrerpolicy="no-referrer" width="96" height="96" />
+          ) : (
+            <span class="pf-photo pf-photo-fallback" aria-hidden="true">{personInitial(name, email)}</span>
+          )}
+          <i class:list={['presence-dot', 'pf-presence', presence.online && 'is-online']} aria-hidden="true" />
+        </span>
+        <div class="pf-who">
+          <p class="kicker"><a href="/team/members">Team</a></p>
+          <h1 id="pf-name">{name}</h1>
+          <p class="pf-title">{member.job_title?.trim() || 'Team member'}</p>
+          <p class="pf-meta">
+            <span class="pf-badge">{badge}</span>
+            <span>{email}</span>
+            {joined && <span>Joined {joined}</span>}
+          </p>
+        </div>
+        <div class="pf-signin">
+          <span class:list={['presence-label', presence.online && 'is-online']}>{presence.label}</span>
+          {member.phone?.trim() && <a class="btn btn-ghost" href={`tel:${member.phone.replace(/[^+\d]/g, '')}`}>Call</a>}
+        </div>
+      </div>
+    </section>
+
+    <ActivityHeatmap activity={activity} owner={`${name}'s`} limited={limited} />
+
+    <div class="pf-grid">
+      <div class="pf-main">
+        <section class="team-card">
+          <div class="ov-card-head">
+            <h2>Open work</h2>
+            <span class:list={['ov-count', overdue > 0 && 'is-alert']}>{tasks.length}{overdue > 0 ? ` · ${overdue} late` : ''}</span>
+          </div>
+          {tasks.length === 0 ? (
+            <p class="muted">Nothing open{limited ? ' on projects you share' : ''}.</p>
+          ) : (
+            <ul class="tw-rows">
+              {tasks.slice(0, 12).map((t) => (
+                <li class:list={['tw-row', 'tw-mini-row', t.due_on && t.due_on < today && 'is-late']}>
+                  <a class="tw-title" href={`/team/projects/${t.project_id}?tab=tasks&task=${t.id}`}>
+                    {t.kind === 'bug' && <em class="tw-bug">Bug</em>}
+                    <span>{t.title}</span>
+                  </a>
+                  <span class="tw-meta">
+                    {t.priority && <span class:list={['tw-flag', t.priority]}>{priorityLabel(t.priority)}</span>}
+                    <span>{projectName.get(t.project_id)}</span>
+                    <span class:list={['tw-due', t.due_on && t.due_on < today && 'late']}>
+                      {t.due_on ? new Date(`${t.due_on}T12:00:00`).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' }) : ''}
+                    </span>
+                  </span>
+                </li>
+              ))}
+            </ul>
+          )}
+        </section>
+
+        <section class="team-card">
+          <div class="ov-card-head">
+            <h2>Recent activity</h2>
+            <a href="/team/activity">All →</a>
+          </div>
+          {events.length === 0 ? (
+            <p class="muted">No recent activity{limited ? ' you can see' : ''}.</p>
+          ) : (
+            <ol class="ov-feed">
+              {events.map((row) => (
+                <li>
+                  <a href={eventHref(row)}>
+                    <strong>{eventTitle(row)}</strong>
+                    <span>
+                      {formatEventTime(row.created_at)}
+                      {row.project_id && projectName.get(row.project_id) ? ` · ${projectName.get(row.project_id)}` : ''}
+                      {row.detail ? ` · ${row.detail}` : ''}
+                    </span>
+                  </a>
+                </li>
+              ))}
+            </ol>
+          )}
+        </section>
+      </div>
+
+      <div class="pf-side">
+        <section class="team-card">
+          <div class="ov-card-head">
+            <h2>Projects</h2>
+            <span class="ov-count">{projects.length}</span>
+          </div>
+          {projects.length === 0 ? (
+            <p class="muted">No shared projects.</p>
+          ) : (
+            <ul class="pf-projects">
+              {projects.map((project) => (
+                <li>
+                  <a href={`/team/projects/${project.id}`}>
+                    <ProjectMark name={project.name} src={marks.get(project.logo_url)} />
+                    <span>
+                      <strong>{project.name}</strong>
+                      <span class="role-chips">
+                        {roleLabels(roles.get(project.id) ?? []).map((label) => <span class="role-chip">{label}</span>)}
+                        {project.status !== 'active' && <span class="pf-status">{project.status}</span>}
+                      </span>
+                    </span>
+                  </a>
+                </li>
+              ))}
+            </ul>
+          )}
+        </section>
+      </div>
+    </div>
+  </div>
+</Team>

@@ -1,0 +1,110 @@
+---
+/** GitHub-style activity heatmap for one person (last 53 weeks). */
+import { activityStats, dayScore, heatLevel, heatmapGrid, studioDay, type DayActivity } from '../lib/activity';
+import { formatMinutes } from '../lib/timeTracking';
+
+interface Props {
+  activity: Map<string, DayActivity>;
+  /** Shown in the subtitle, e.g. "Your" or "Zeno's". */
+  owner?: string;
+  limited?: boolean;
+}
+
+const { activity, owner = 'Your', limited = false } = Astro.props;
+const today = studioDay(new Date());
+const grid = heatmapGrid(today);
+const stats = activityStats(activity, today);
+const CELL = 11;
+const GAP = 3;
+const LEFT = 26;
+const TOP = 16;
+const width = LEFT + grid.length * (CELL + GAP);
+const height = TOP + 7 * (CELL + GAP);
+
+// Month labels at the first week that starts in a new month.
+const months: { x: number; label: string }[] = [];
+grid.forEach((week, i) => {
+  const first = week[0].day;
+  const prev = i > 0 ? grid[i - 1][0].day : '';
+  if (i === 0 || first.slice(5, 7) !== prev.slice(5, 7)) {
+    const label = new Date(`${first}T12:00:00Z`).toLocaleDateString('en-GB', { month: 'short', timeZone: 'UTC' });
+    if (i < grid.length - 1) months.push({ x: LEFT + i * (CELL + GAP), label });
+  }
+});
+if (months.length > 1 && months[1].x - months[0].x < 3 * (CELL + GAP)) months.shift();
+
+const pretty = (day: string) =>
+  new Date(`${day}T12:00:00Z`).toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric', timeZone: 'UTC' });
+function tip(day: string) {
+  const row = activity.get(day);
+  if (!row || dayScore(row) === 0) return `No activity · ${pretty(day)}`;
+  const parts = [];
+  if (row.actions) parts.push(`${row.actions} ${row.actions === 1 ? 'action' : 'actions'}`);
+  if (row.minutes) parts.push(`${formatMinutes(row.minutes)} logged`);
+  return `${parts.join(' · ')} · ${pretty(day)}`;
+}
+---
+
+<section class="team-card heat">
+  <div class="ov-card-head">
+    <div>
+      <h2>Activity</h2>
+      <p class="muted heat-sub">
+        {stats.actions} {stats.actions === 1 ? 'action' : 'actions'}{stats.minutes ? ` and ${formatMinutes(stats.minutes)} logged` : ''} in the last year
+        {limited && ' · only projects you share'}
+      </p>
+    </div>
+  </div>
+
+  <div class="heat-scroll" data-heat-scroll>
+    <svg class="heat-svg" viewBox={`0 0 ${width} ${height}`} width={width} height={height} role="img" aria-label={`${owner} activity over the last year: ${stats.activeDays} active days`}>
+      {months.map((m) => (
+        <text class="heat-month" x={m.x} y={10}>{m.label}</text>
+      ))}
+      {['Mon', 'Wed', 'Fri'].map((label, i) => (
+        <text class="heat-weekday" x={0} y={TOP + (i * 2) * (CELL + GAP) + CELL - 2}>{label}</text>
+      ))}
+      {grid.map((week, w) =>
+        week.map((cell, d) =>
+          cell.future ? null : (
+            <rect
+              class:list={['heat-cell', `l${heatLevel(dayScore(activity.get(cell.day)))}`, cell.day === today && 'is-today']}
+              x={LEFT + w * (CELL + GAP)}
+              y={TOP + d * (CELL + GAP)}
+              width={CELL}
+              height={CELL}
+              rx="2.5"
+            >
+              <title>{tip(cell.day)}</title>
+            </rect>
+          ),
+        ),
+      )}
+    </svg>
+  </div>
+
+  <div class="heat-foot">
+    <dl class="heat-stats">
+      <div><dt>Active days</dt><dd>{stats.activeDays}</dd></div>
+      <div><dt>Current streak</dt><dd>{stats.current} {stats.current === 1 ? 'day' : 'days'}</dd></div>
+      <div><dt>Longest streak</dt><dd>{stats.longest} {stats.longest === 1 ? 'day' : 'days'}</dd></div>
+      {stats.busiest && <div><dt>Most active on</dt><dd>{stats.busiest}</dd></div>}
+    </dl>
+    <p class="heat-legend" aria-hidden="true">
+      Less
+      {[0, 1, 2, 3, 4].map((level) => <span class:list={['heat-key', `l${level}`]} />)}
+      More
+    </p>
+  </div>
+</section>
+
+<script>
+  // Start scrolled to the most recent weeks on narrow screens.
+  function scrollHeat() {
+    document.querySelectorAll<HTMLElement>('[data-heat-scroll]').forEach((el) => {
+      el.scrollLeft = el.scrollWidth;
+    });
+  }
+  scrollHeat();
+  document.addEventListener('astro:page-load', scrollHeat);
+</script>

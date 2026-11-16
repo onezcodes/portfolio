@@ -145,3 +145,49 @@ describe('view-as session id', () => {
     expect(sessionIdFromToken(null)).toBe('');
   });
 });
+
+describe('presence', () => {
+  it('labels online and last-seen times', async () => {
+    const { presenceOf, byPresence } = await import('../../src/lib/presence');
+    const now = Date.parse('2026-11-16T10:00:00Z');
+    const ago = (ms: number) => new Date(now - ms).toISOString();
+    expect(presenceOf(ago(60_000), now)).toMatchObject({ online: true, label: 'Online' });
+    expect(presenceOf(ago(12 * 60_000), now).label).toBe('Active 12m ago');
+    expect(presenceOf(ago(3 * 3_600_000), now).label).toBe('Active 3h ago');
+    expect(presenceOf(ago(30 * 3_600_000), now).label).toBe('Active yesterday');
+    expect(presenceOf(ago(4 * 86_400_000), now).label).toBe('Active 4d ago');
+    expect(presenceOf(ago(20 * 86_400_000), now).label).toMatch(/^Last seen /);
+    expect(presenceOf(null, now)).toMatchObject({ online: false, label: 'Not seen yet' });
+    const order = byPresence([{ id: 'never', last_seen_at: null }, { id: 'old', last_seen_at: ago(86_400_000) }, { id: 'now', last_seen_at: ago(1000) }], now);
+    expect(order.map((r) => r.id)).toEqual(['now', 'old', 'never']);
+  });
+});
+
+describe('activity heatmap', () => {
+  it('builds 53 Monday-first weeks ending this week', async () => {
+    const { heatmapGrid } = await import('../../src/lib/activity');
+    const grid = heatmapGrid('2026-11-18'); // a Wednesday
+    expect(grid).toHaveLength(53);
+    expect(grid.at(-1)?.[0].day).toBe('2026-11-16'); // Monday of this week
+    expect(grid.at(-1)?.[2]).toEqual({ day: '2026-11-18', future: false });
+    expect(grid.at(-1)?.[3].future).toBe(true);
+  });
+  it('counts streaks, active days, and the busiest weekday', async () => {
+    const { activityStats } = await import('../../src/lib/activity');
+    const map = new Map([
+      ['2026-11-16', { actions: 3, minutes: 0 }], // Mon
+      ['2026-11-15', { actions: 0, minutes: 60 }], // Sun (time only counts)
+      ['2026-11-14', { actions: 1, minutes: 0 }],
+      ['2026-11-10', { actions: 9, minutes: 0 }], // Tue, separate run
+    ]);
+    const stats = activityStats(map, '2026-11-16');
+    expect(stats).toMatchObject({ actions: 13, minutes: 60, activeDays: 4, current: 3, longest: 3, busiest: 'Tuesdays' });
+    // Today without activity yet: the streak counts back from yesterday.
+    expect(activityStats(map, '2026-11-17').current).toBe(3);
+  });
+  it('maps scores to five shades', async () => {
+    const { heatLevel, dayScore } = await import('../../src/lib/activity');
+    expect([0, 1, 4, 8, 20].map(heatLevel)).toEqual([0, 1, 2, 3, 4]);
+    expect(dayScore({ actions: 2, minutes: 90 })).toBe(5);
+  });
+});
