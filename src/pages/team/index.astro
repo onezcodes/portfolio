@@ -19,11 +19,16 @@ import { latestByProject, type ProjectCheckin } from '../../lib/checkins';
 
 const supabase = Astro.locals.supabase;
 const studio = Astro.locals.studio;
-const ledgerSelect = 'kind, amount, currency, project_id, occurred_on, category';
+const ledgerSelect = 'kind, amount, currency, project_id, occurred_on, category, notes';
 
-const [{ data: projects }, { data: entries }, { data: contribs }, { data: milestoneRows }, { data: taskRows }, { data: checkinRows }, { data: eventRows }, creds, { data: crewRows }, { data: memberRows }] =
+const [[{ data: projects }, marks], { data: entries }, { data: contribs }, { data: milestoneRows }, { data: taskRows }, { data: checkinRows }, { data: eventRows }, creds, { data: crewRows }, { data: memberRows }] =
   await Promise.all([
-    supabase.from('projects').select('id, name, client, status, logo_url, started_on').order('updated_at', { ascending: false }),
+    // Sign logo URLs as soon as projects arrive, overlapping the other queries instead of waiting on all of them.
+    supabase
+      .from('projects')
+      .select('id, name, client, status, logo_url, started_on')
+      .order('updated_at', { ascending: false })
+      .then(async (res) => [res, await logoHrefs(supabase, (res.data ?? []) as Project[])] as const),
     studio?.canLedger
       ? supabase.from('ledger_entries').select(ledgerSelect).order('occurred_on', { ascending: false })
       : Promise.resolve({ data: [] }),
@@ -31,7 +36,8 @@ const [{ data: projects }, { data: entries }, { data: contribs }, { data: milest
       ? supabase.from('project_contributions').select('project_id, amount, currency, occurred_on, member_email, notes')
       : Promise.resolve({ data: [] }),
     supabase.from('project_milestones').select('project_id, title, status, estimated_on, sort_order'),
-    supabase.from('project_tasks').select('id, project_id, title, status, assignee_email, due_on, milestone_id, notes, sort_order, created_at, updated_at'),
+    // Done tasks never appear on the overview (calendar, My work, Needs attention all skip them).
+    supabase.from('project_tasks').select('id, project_id, title, status, assignee_email, due_on, sort_order').neq('status', 'done'),
     supabase.from('project_checkins').select('id, project_id, author_email, body, created_at').order('created_at', { ascending: false }).limit(40),
     supabase.from('studio_events').select('id, action, entity_type, entity_id, project_id, actor_email, detail, created_at').order('created_at', { ascending: false }).limit(8),
     studio?.canVault
@@ -59,7 +65,6 @@ const activity = (eventRows ?? []) as StudioEvent[];
 const staleVault = ((creds.data ?? []) as Pick<CredentialRecord, 'id' | 'title' | 'updated_at'>[]).filter((item) =>
   isStaleCredential(item.updated_at),
 );
-const marks = await logoHrefs(supabase, projectRows);
 const crewFaces = facesByProject(
   (crewRows ?? []) as { project_id: string; email: string }[],
   (memberRows ?? []) as Pick<TeamMember, 'email' | 'display_name' | 'avatar_url'>[],
