@@ -30,9 +30,12 @@ Astro.response.headers.set('X-Robots-Tag', 'noindex, nofollow');
 if (!data) Astro.response.status = 404;
 
 const stages = data?.stages ?? [];
+const skipped = stages.filter((s) => s.status === 'skipped').length;
 const done = stages.filter((s) => s.status === 'done').length;
-const pct = stages.length ? Math.round((done / stages.length) * 100) : 0;
-const current = stages.find((s) => s.status === 'current') ?? stages.find((s) => s.status !== 'done');
+const counted = stages.length - skipped;
+const allDone = stages.length > 0 && done === counted;
+const pct = allDone ? 100 : counted ? Math.round((done / counted) * 100) : 0;
+const current = stages.find((s) => s.status === 'current') ?? stages.find((s) => s.status !== 'done' && s.status !== 'skipped');
 const today = new Date().toISOString().slice(0, 10);
 const fmt = (iso: string | null) =>
   iso ? new Date(`${iso.slice(0, 10)}T12:00:00`).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) : '';
@@ -76,14 +79,14 @@ const taskTotal = (data?.tasks_open ?? 0) + (data?.tasks_done ?? 0);
                 <div class="pd-stat">
                   <dt>Current stage</dt>
                   <dd>
-                    <strong>{done === stages.length && stages.length ? 'All stages done' : current?.title ?? '—'}</strong>
+                    <strong>{allDone ? 'All stages done' : current?.title ?? '—'}</strong>
                     <span>{current?.estimated_on ? `Planned for ${fmt(current.estimated_on)}` : ''}</span>
                   </dd>
                 </div>
                 <div class="pd-stat">
                   <dt>Stages</dt>
                   <dd>
-                    <strong>{done} of {stages.length}</strong>
+                    <strong>{done} of {counted}</strong>
                     <span class="pj-progress" role="img" aria-label={`${pct}% complete`}><span style={`width:${pct}%`} /></span>
                   </dd>
                 </div>
@@ -110,11 +113,11 @@ const taskTotal = (data?.tasks_open ?? 0) + (data?.tasks_done ?? 0);
               <h2>Timeline</h2>
               <ol class="client-stages">
                 {stages.map((s) => (
-                  <li class:list={[`is-${s.status}`, s.status !== 'done' && s.estimated_on && s.estimated_on < today && 'is-late']}>
+                  <li class:list={[`is-${s.status}`, s.status !== 'done' && s.status !== 'skipped' && s.estimated_on && s.estimated_on < today && 'is-late']}>
                     <span class="client-dot" aria-hidden="true" />
                     <span class="client-stage-title">{s.title}</span>
                     <span class="client-stage-meta">
-                      {s.status === 'done' ? 'Done' : s.status === 'current' ? 'In progress' : 'Upcoming'}
+                      {s.status === 'done' ? 'Done' : s.status === 'skipped' ? 'Skipped' : s.status === 'current' ? 'In progress' : 'Upcoming'}
                       {s.estimated_on && <> · {fmt(s.estimated_on)}</>}
                     </span>
                   </li>

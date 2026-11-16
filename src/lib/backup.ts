@@ -38,6 +38,8 @@ export const BACKUP_TABLES = [
   'studio_events',
   'studio_templates',
   'project_share_links',
+  'project_meetings',
+  'project_personal_items',
   'calendar_feed_tokens',
   'team_notifications',
   'job_opportunities',

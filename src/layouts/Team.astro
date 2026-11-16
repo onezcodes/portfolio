@@ -245,6 +245,9 @@ function current(href: string) {
           <dl class="kbd-list">
             <div><dt><kbd>Q</kbd></dt><dd>Add a task (on a project)</dd></div>
             <div><dt><kbd>B</kbd></dt><dd>Report a bug (on a project)</dd></div>
+            <div><dt><kbd>T</kbd></dt><dd>Add a private to-do (on a project)</dd></div>
+            <div><dt><kbd>N</kbd></dt><dd>Add a private note (on a project)</dd></div>
+            <div><dt><kbd>M</kbd></dt><dd>Open My notes (on a project)</dd></div>
             <div><dt><kbd>/</kbd></dt><dd>Search</dd></div>
             <div><dt><kbd>J</kbd> <kbd>K</kbd></dt><dd>Next / previous task, then <kbd>Enter</kbd> to open</dd></div>
             <div><dt><kbd>G</kbd> <kbd>H</kbd></dt><dd>Go to Overview</dd></div>
@@ -325,6 +328,16 @@ function current(href: string) {
           }
           if (key === 'q' && open('task')) return event.preventDefault();
           if (key === 'b' && open('bug')) return event.preventDefault();
+          // Private notes on a project: N = note, T = to-do, M = open the panel.
+          if (key === 'n' || key === 't' || key === 'm') {
+            const kind = key === 'n' ? 'note' : 'todo';
+            const opener = key === 'm' ? document.querySelector('[data-modal-open="mine"]') : document.querySelector('[data-mine-open="' + kind + '"]');
+            if (opener instanceof HTMLElement) {
+              event.preventDefault();
+              opener.click();
+            }
+            return;
+          }
           if (key === 'j' || key === 'k') {
             const items = [...document.querySelectorAll('.tw-title, .tw-card > a, .pj-card')].filter((el) => el.offsetParent !== null);
             if (items.length === 0) return;

@@ -34,7 +34,7 @@ export function projectHealth(input: {
   const reasons: { text: string; weight: 1 | 2 }[] = [];
 
   // Current (or next unfinished) stage past its date
-  const stage = input.stages.find((s) => s.status === 'current') ?? input.stages.find((s) => s.status !== 'done');
+  const stage = input.stages.find((s) => s.status === 'current') ?? input.stages.find((s) => s.status !== 'done' && s.status !== 'skipped');
   if (stage?.estimated_on && stage.estimated_on < input.today) {
     const late = daysBetween(stage.estimated_on, input.today);
     reasons.push({ text: `Stage ${late} ${late === 1 ? 'day' : 'days'} late`, weight: late > 14 ? 2 : 1 });

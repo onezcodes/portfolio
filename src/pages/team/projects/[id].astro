@@ -28,6 +28,7 @@ import {
   seedMilestones,
   setMilestoneStatus,
   currentStage,
+  stageCounts,
   stageLabel,
   updateMilestone,
   sortMilestones,
@@ -60,6 +61,8 @@ import SecretField from '../../../components/SecretField.astro';
 import ProjectMark from '../../../components/ProjectMark.astro';
 import FacePile from '../../../components/FacePile.astro';
 import Modal from '../../../components/Modal.astro';
+import PersonalPanel from '../../../components/PersonalPanel.astro';
+import { clearDonePersonal, handlePersonal, personalItems } from '../../../lib/personal';
 import TaskWorkspace from '../../../components/TaskWorkspace.astro';
 import TaskPanel from '../../../components/TaskPanel.astro';
 import {
@@ -87,7 +90,11 @@ import { applyChecklist, listTemplates, saveProjectAsTemplate } from '../../../l
 import { projectHealth } from '../../../lib/health';
 import { availabilityOf, TIME_ZONES } from '../../../lib/presence';
 import {
+  addDays,
   DAY_NAMES,
+  DEFAULT_RUN_DAYS,
+  daysLeft,
+  zonedDate,
   meetingFromForm,
   meetingHref,
   nextOccurrence,
@@ -201,6 +208,11 @@ if (Astro.request.method === 'POST') {
     return bounce({ error: 'forbidden' });
   }
 
+  if (intent.startsWith('mine-')) {
+    const ok = intent === 'mine-clear' ? await clearDonePersonal(supabase, id) : await handlePersonal(supabase, intent, form, id);
+    return Astro.redirect(projectHref(id, { tab, action: 'mine', ...(ok ? {} : { error: 'invalid' }) }));
+  }
+
   if (intent === 'reveal') {
     if (String(form.get('field') ?? '') !== 'password') return bounce({ error: 'invalid' });
     revealedLogin = true;
@@ -280,6 +292,25 @@ if (Astro.request.method === 'POST') {
     const result = await updateMilestone(supabase, form, id);
     if (result.error) return bounce({ error: 'invalid' });
     await track('update', '', 'milestone');
+    return bounce({ notice: 'saved' });
+  }
+
+  if (intent === 'milestone-skip') {
+    // Skip a stage that no longer applies; the note (optional) says why.
+    const milestoneId = String(form.get('milestone_id') ?? '');
+    if (!milestoneId) return bounce({ error: 'invalid' });
+    const result = await setMilestoneStatus(supabase, id, milestoneId, 'skipped');
+    if (result.error) return bounce({ error: 'invalid' });
+    const note = String(form.get('skip_note') ?? '').trim().slice(0, 600);
+    const { data: skipped } = await supabase
+      .from('project_milestones')
+      .update({ signoff_note: note, signed_off_by: actor, signed_off_at: new Date().toISOString() })
+      .eq('id', milestoneId)
+      .eq('project_id', id)
+      .select('title')
+      .maybeSingle();
+    await chat(`⏭️ ${who} skipped stage “${skipped?.title ?? 'stage'}”${note ? `: ${note}` : ''}`, `/team/projects/${id}?tab=schedule`);
+    await track('status', 'skipped', 'milestone');
     return bounce({ notice: 'saved' });
   }
 
@@ -564,6 +595,19 @@ if (Astro.request.method === 'POST') {
     const { error: skipError } = await supabase.from('project_meetings').update({ skip_dates: [...dates].sort() }).eq('id', meetingId).eq('project_id', id);
     if (skipError) return bounce({ error: 'invalid' });
     if (intent === 'skip-meeting') await chat(`🚫 ${who} cancelled “${current.title}” on ${date}`);
+    return bounce({ notice: 'saved' });
+  }
+
+  if (intent === 'extend-meeting') {
+    // Run the series another 30 days from its end date (or from today if it already ended).
+    const meetingId = String(form.get('meeting_id') ?? '');
+    const { data: current } = await supabase.from('project_meetings').select('ends_on, time_zone, title').eq('id', meetingId).eq('project_id', id).maybeSingle();
+    if (!current) return bounce({ error: 'not-found' });
+    const today = zonedDate(String(current.time_zone || 'Asia/Bangkok'), Date.now()).date;
+    const base = current.ends_on && current.ends_on > today ? String(current.ends_on) : today;
+    const { error: extendError } = await supabase.from('project_meetings').update({ ends_on: addDays(base, DEFAULT_RUN_DAYS) }).eq('id', meetingId).eq('project_id', id);
+    if (extendError) return bounce({ error: 'invalid' });
+    await track('update', `meeting extended: ${current.title}`);
     return bounce({ notice: 'saved' });
   }
 
@@ -855,6 +899,7 @@ const [
   { data: shareLink },
   { data: projectTime },
   meetings,
+  mine,
 ] = await Promise.all([
   supabase.from('projects').select('*').eq('id', id).maybeSingle(),
   supabase.from('project_milestones').select('*').eq('project_id', id).order('sort_order'),
@@ -883,6 +928,8 @@ const [
     : Promise.resolve({ data: null }),
   supabase.from('task_time_entries').select('minutes, started_at, ended_at').eq('project_id', id),
   projectMeetings(supabase, [id]),
+  // Private notes: never loaded during "View as" (they belong to the real signed-in person).
+  Astro.locals.viewAs ? Promise.resolve([]) : personalItems(supabase, id, studio.email),
 ]);
 if (error || !project) {
   return Astro.redirect('/team/projects?error=not-found');
@@ -942,10 +989,9 @@ const extraRows =
 const loginPassword = revealedLogin ? decryptSecret(row.login_password_enc) : '';
 const today = todayIso();
 const stage = currentStage(milestones);
-const stagesDone = milestones.filter((item) => item.status === 'done').length;
-const allStagesDone = milestones.length > 0 && stagesDone === milestones.length;
+const mineOpen = mine.filter((item) => item.kind === 'todo' && !item.done).length;
+const { done: stagesDone, total: stagesTotal, allDone: allStagesDone, pct: stagePct } = stageCounts(milestones);
 const stageLate = Boolean(!allStagesDone && stage?.estimated_on && stage.estimated_on < today);
-const stagePct = milestones.length ? Math.round((stagesDone / milestones.length) * 100) : 0;
 const openTasks = tasks.filter((item) => item.status !== 'done');
 const lateTasks = openTasks.filter((item) => item.due_on && item.due_on < today);
 const crewFaces = crew.map((person) => personFace(person.email, members));
@@ -964,6 +1010,7 @@ const timeRows = (projectTime ?? []) as { minutes: number; started_at: string; e
 const loggedMinutes = timeRows.reduce((sum, entry) => sum + (entry.minutes || 0), 0);
 const weekMinutes = timeRows.filter((entry) => entry.started_at >= weekAgoIso).reduce((sum, entry) => sum + (entry.minutes || 0), 0);
 const nowMs = Date.now();
+const todayLocal = zonedDate('Asia/Bangkok', nowMs).date;
 const meetingRows = meetings as ProjectMeeting[];
 const meetingNext = meetingRows
   .map((meeting) => nextOccurrence(meeting, nowMs))
@@ -1073,7 +1120,7 @@ function shortDate(iso: string) {
         <div class="pd-stat">
           <dt>Progress</dt>
           <dd>
-            <strong>{stagesDone} of {milestones.length}</strong>
+            <strong>{stagesDone} of {stagesTotal}</strong>
             <span class="pj-progress" role="img" aria-label={`${stagePct}% of stages done`}>
               <span style={`width:${stagePct}%`} />
             </span>
@@ -1152,6 +1199,16 @@ function shortDate(iso: string) {
             </>
           )
         }
+        {
+          !Astro.locals.viewAs && (
+            <span class="pd-mine" role="group" aria-label="My private notes">
+              <a class="btn btn-ghost" href={projectHref(row.id, { tab, action: 'mine' })} data-modal-open="mine" data-mine-open="todo" title="Private to-do, only you see it (T)" aria-keyshortcuts="T">
+                ☐ To-do<span class="pd-mine-badge" data-mine-badge>{mineOpen || ''}</span>
+              </a>
+              <a class="btn btn-ghost" href={projectHref(row.id, { tab, action: 'mine' })} data-modal-open="mine" data-mine-open="note" title="Private note, only you see it (N)" aria-keyshortcuts="N">✎ Note</a>
+            </span>
+          )
+        }
         <details class="pd-more">
           <summary class="btn btn-ghost" aria-label="More actions">More</summary>
           <div class="pd-menu">
@@ -1195,6 +1252,23 @@ function shortDate(iso: string) {
                         <div class="mt-main">
                           <strong>{meeting.title}</strong>
                           <span class="muted">{scheduleLabel(meeting)} · {meeting.duration_minutes} min{meeting.time_zone !== 'Asia/Bangkok' ? ` · ${meeting.time_zone}` : ''}</span>
+                          {(() => {
+                            const left = daysLeft(meeting, nowMs);
+                            if (left === null) return null;
+                            const until = new Date(`${meeting.ends_on}T12:00:00Z`).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'UTC' });
+                            return (
+                              <span class:list={['mt-until', left === 0 ? 'is-ended' : left <= 7 && 'is-ending']}>
+                                {left === 0 ? `Ended ${until}` : `Until ${until}${left <= 7 ? ` · ${left} ${left === 1 ? 'day' : 'days'} left` : ''}`}
+                                {left <= 7 && caps.canPlan && !Astro.locals.viewAs && (
+                                  <form method="post">
+                                    <input type="hidden" name="intent" value="extend-meeting" />
+                                    <input type="hidden" name="meeting_id" value={meeting.id} />
+                                    <button type="submit" class="ms-text">Extend 30 days</button>
+                                  </form>
+                                )}
+                              </span>
+                            );
+                          })()}
                           {next && (
                             <span class="mt-next" data-meeting-start={next.start} data-meeting-end={next.end}>
                               Next: {whenLabel(next, meeting.time_zone, nowMs)} · <span data-meeting-rel>{relativeLabel(next.start, next.end, nowMs)}</span>
@@ -1229,6 +1303,11 @@ function shortDate(iso: string) {
                               <summary class="btn btn-ghost" aria-label="Meeting options">•••</summary>
                               <div class="pd-menu">
                                 <a href={projectHref(row.id, { tab: 'schedule' })} data-modal-open={`meeting-${meeting.id}`}>Edit</a>
+                                <form method="post">
+                                  <input type="hidden" name="intent" value="extend-meeting" />
+                                  <input type="hidden" name="meeting_id" value={meeting.id} />
+                                  <button type="submit">Extend 30 days</button>
+                                </form>
                                 {next && (
                                   <form method="post" data-confirm={`Cancel the session on ${whenLabel(next, meeting.time_zone, nowMs)}?`} data-confirm-action="Cancel session">
                                     <input type="hidden" name="intent" value="skip-meeting" />
@@ -1303,6 +1382,7 @@ function shortDate(iso: string) {
               tasks={tasks}
               contributions={contributions}
               entries={entries}
+              meetings={meetingRows}
               monthHref={(month) => projectHref(row.id, { tab: 'schedule', month })}
               showMoney={caps.canFinance}
             />
@@ -2023,6 +2103,17 @@ function shortDate(iso: string) {
                   </p>
                 </div>
                 <p class="field">
+                  <label for={`mt_end_${meeting?.id ?? 'new'}`}>Repeats until</label>
+                  <input
+                    id={`mt_end_${meeting?.id ?? 'new'}`}
+                    name="ends_on"
+                    type="date"
+                    min={todayLocal}
+                    value={meeting?.ends_on ?? addDays(todayLocal, DEFAULT_RUN_DAYS)}
+                  />
+                  <span class="field-hint">Defaults to 30 days from today. You can extend it any time.</span>
+                </p>
+                <p class="field">
                   <label for={`mt_url_${meeting?.id ?? 'new'}`}>Meeting link</label>
                   <input id={`mt_url_${meeting?.id ?? 'new'}`} name="meeting_url" type="url" required placeholder="https://meet.google.com/…" value={meeting?.meeting_url ?? (row.meeting_url ? websiteHref(row.meeting_url) : '')} />
                 </p>
@@ -2352,6 +2443,26 @@ function shortDate(iso: string) {
     }
     {
       caps.canPlan && (
+        <Modal id="skipstage" title="Skip stage" lede="Close a stage that no longer applies. It stays on the schedule as skipped and leaves the progress count.">
+          <form class="form team-form" method="post">
+            <input type="hidden" name="intent" value="milestone-skip" />
+            <input type="hidden" name="tab" value="schedule" />
+            <input type="hidden" name="milestone_id" value="" data-skip-id />
+            <p class="signoff-stage" data-skip-title></p>
+            <p class="field">
+              <label for="skip_note">Why skip it? (optional)</label>
+              <textarea id="skip_note" name="skip_note" rows="3" maxlength="600" placeholder="Client dropped the Play Store release for now."></textarea>
+            </p>
+            <div class="modal-actions">
+              <button class="btn btn-ghost" type="button" data-modal-close>Cancel</button>
+              <button class="btn" type="submit">Skip stage</button>
+            </div>
+          </form>
+        </Modal>
+      )
+    }
+    {
+      caps.canPlan && (
         <Modal id="template" title="Save as template" lede="Reuse this project's stages and tasks for the next job. Dates are kept relative to the start date." open={action === 'template'}>
           <form class="form team-form" method="post">
             <input type="hidden" name="intent" value="save-template" />
@@ -2369,7 +2480,16 @@ function shortDate(iso: string) {
         </Modal>
       )
     }
+    {!Astro.locals.viewAs && <PersonalPanel items={mine} tab={tab} open={action === 'mine'} />}
   </div>
+  {
+    !Astro.locals.viewAs && (
+      <button class="mine-fab" type="button" data-modal-open="mine" aria-label="My private notes and to-dos" aria-keyshortcuts="M" title="My notes, private (M)">
+        <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path d="M5 4h10l4 4v12H5z M14 4v5h5 M8 13h8 M8 17h5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" stroke-linecap="round" /></svg>
+        <span class="pd-mine-badge" data-mine-badge>{mineOpen || ''}</span>
+      </button>
+    )
+  }
 </Team>
 
 <script>
@@ -2399,6 +2519,16 @@ function shortDate(iso: string) {
     dialog?.querySelector<HTMLInputElement>('[data-signoff-id]')?.setAttribute('value', button.dataset.signoffFor ?? '');
     const title = dialog?.querySelector<HTMLElement>('[data-signoff-title]');
     if (title) title.textContent = button.dataset.signoffTitle ?? '';
+  }, true);
+
+  // "Skip" on a stage opens the skip pop-up for that stage.
+  document.addEventListener('click', (event) => {
+    const button = (event.target as Element | null)?.closest<HTMLElement>('[data-skip-for]');
+    if (!button) return;
+    const dialog = document.getElementById('modal-skipstage');
+    dialog?.querySelector<HTMLInputElement>('[data-skip-id]')?.setAttribute('value', button.dataset.skipFor ?? '');
+    const title = dialog?.querySelector<HTMLElement>('[data-skip-title]');
+    if (title) title.textContent = button.dataset.skipTitle ?? '';
   }, true);
 
   // Close the "More" menu on outside click or Escape.

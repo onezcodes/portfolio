@@ -62,7 +62,7 @@ const stages = stagesByProject((milestoneRows ?? []) as Milestone[]);
 const byProject = new Map(projectRows.map((project) => [project.id, project.name]));
 const today = todayIso();
 const overdue = ((milestoneRows ?? []) as Milestone[]).filter(
-  (row) => row.estimated_on && row.estimated_on < today && row.status !== 'done',
+  (row) => row.estimated_on && row.estimated_on < today && row.status !== 'done' && row.status !== 'skipped',
 );
 const activity = (eventRows ?? []) as StudioEvent[];
 const staleVault = ((creds.data ?? []) as Pick<CredentialRecord, 'id' | 'title' | 'updated_at'>[]).filter((item) =>
@@ -280,6 +280,8 @@ const offTrack = orderedProjects.filter((project) => healthOf(project).level ===
               cursor={calCursor}
               today={today}
               events={calendarEvents}
+              meetings={meetingRows}
+              meetingsWithProject
               monthHref={(month) => `/team?month=${month}`}
               agendaCollapsed
               showMoney={calendarHasMoney}

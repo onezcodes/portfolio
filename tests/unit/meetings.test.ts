@@ -115,3 +115,58 @@ describe('calendar feed', () => {
     expect(text).toContain('TRIGGER:-PT15M');
   });
 });
+
+import { daysLeft, meetingCalendarEvents, meetingEnded, sessionsBetween } from '../../src/lib/meetings';
+
+describe('meeting end date', () => {
+  const base = {
+    id: 'm1',
+    project_id: 'p1',
+    title: 'Sync',
+    slots: [{ day: 2, time: '21:00' }, { day: 5, time: '21:00' }],
+    time_zone: 'Asia/Bangkok',
+    duration_minutes: 60,
+    meeting_url: 'https://meet.example/x',
+    backup_url: '',
+    notes: '',
+    skip_dates: [],
+  };
+  // Monday 16 Nov 2026, 10:00 Bangkok.
+  const now = Date.parse('2026-11-16T03:00:00Z');
+
+  it('defaults to 30 days from today', () => {
+    const form = new FormData();
+    form.append('slot_day', '2');
+    form.append('slot_time', '21:00');
+    form.set('meeting_url', 'https://meet.example/x');
+    expect(meetingFromForm(form, now)?.ends_on).toBe('2026-12-16');
+    form.set('ends_on', '2026-12-01');
+    expect(meetingFromForm(form, now)?.ends_on).toBe('2026-12-01');
+  });
+  it('stops sessions after the end date', () => {
+    const rows = sessionsBetween({ ...base, ends_on: '2026-11-24' }, '2026-11-16', '2026-12-31');
+    expect(rows.map((o) => o.localDate)).toEqual(['2026-11-17', '2026-11-20', '2026-11-24']);
+  });
+  it('knows days left and when it has ended', () => {
+    expect(daysLeft({ ...base, ends_on: '2026-11-18' }, now)).toBe(3);
+    expect(meetingEnded({ ...base, ends_on: '2026-11-15' }, now)).toBe(true);
+    expect(daysLeft({ ...base, ends_on: '2026-11-15' }, now)).toBe(0);
+  });
+  it('draws one calendar chip per session', () => {
+    const chips = meetingCalendarEvents([{ ...base, ends_on: '2026-11-30' }], '2026-11-01', '2026-12-05');
+    expect(chips.map((c) => c.date)).toEqual(['2026-11-03', '2026-11-06', '2026-11-10', '2026-11-13', '2026-11-17', '2026-11-20', '2026-11-24', '2026-11-27']);
+    expect(chips[0].kind).toBe('meeting');
+    expect(chips[0].chip).toBe('9:00 PM Sync');
+  });
+});
+
+describe('meeting start', () => {
+  it('has no sessions before the series was set up', () => {
+    const meeting = {
+      id: 'm', project_id: 'p', title: 'Sync', slots: [{ day: 1, time: '21:00' }], time_zone: 'Asia/Bangkok',
+      duration_minutes: 60, meeting_url: 'https://x', backup_url: '', notes: '', skip_dates: [],
+      created_at: '2026-11-10T05:00:00Z', ends_on: '2026-11-30',
+    };
+    expect(sessionsBetween(meeting, '2026-11-01', '2026-11-30').map((o) => o.localDate)).toEqual(['2026-11-16', '2026-11-23', '2026-11-30']);
+  });
+});

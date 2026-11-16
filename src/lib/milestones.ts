@@ -1,6 +1,6 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 
-export type MilestoneStatus = 'pending' | 'current' | 'done';
+export type MilestoneStatus = 'pending' | 'current' | 'done' | 'skipped';
 
 export type Milestone = {
   id: string;
@@ -13,12 +13,27 @@ export type Milestone = {
   created_at: string;
 };
 
-const statuses = new Set<MilestoneStatus>(['pending', 'current', 'done']);
+const statuses = new Set<MilestoneStatus>(['pending', 'current', 'done', 'skipped']);
+
+/** Done or skipped: nothing left to do on the stage. */
+export function isClosedStage(status: string) {
+  return status === 'done' || status === 'skipped';
+}
+
+/** Done / total, where skipped stages don't count toward the total. */
+export function stageCounts(rows: { status: string }[]) {
+  const skipped = rows.filter((row) => row.status === 'skipped').length;
+  const done = rows.filter((row) => row.status === 'done').length;
+  const total = rows.length - skipped;
+  const allDone = rows.length > 0 && rows.every((row) => isClosedStage(row.status));
+  const pct = allDone ? 100 : total ? Math.round((done / total) * 100) : 0;
+  return { done, skipped, total, allDone, pct };
+}
 
 export function currentStage(milestones: Milestone[]) {
   return (
     milestones.find((row) => row.status === 'current') ??
-    milestones.find((row) => row.status !== 'done') ??
+    milestones.find((row) => !isClosedStage(row.status)) ??
     milestones.at(-1) ??
     null
   );
@@ -27,14 +42,13 @@ export function currentStage(milestones: Milestone[]) {
 export function stageLabel(milestones: Milestone[]) {
   const stage = currentStage(milestones);
   if (!stage) return 'No stages yet';
-  if (milestones.every((row) => row.status === 'done')) return `Done · ${stage.title}`;
+  if (milestones.every((row) => isClosedStage(row.status))) return `Done · ${stage.title}`;
   const due = stage.estimated_on ? ` · est. ${stage.estimated_on}` : '';
   return `${stage.title}${due}`;
 }
 
 export function milestoneProgress(milestones: Milestone[]) {
-  if (milestones.length === 0) return 0;
-  return Math.round((milestones.filter((row) => row.status === 'done').length / milestones.length) * 100);
+  return stageCounts(milestones).pct;
 }
 
 export function sortMilestones<T extends { estimated_on: string | null; sort_order: number; title?: string }>(rows: T[]) {
@@ -144,9 +158,9 @@ export async function setMilestoneStatus(
 
   if (status === 'current') {
     const updates = list.map((row, i) => {
-      if (i < index) return { ...row, status: 'done' as const };
+      if (i < index) return { ...row, status: row.status === 'skipped' ? ('skipped' as const) : ('done' as const) };
       if (row.id === target.id) return { ...row, status: 'current' as const };
-      return { ...row, status: row.status === 'done' ? ('done' as const) : ('pending' as const) };
+      return { ...row, status: isClosedStage(row.status) ? row.status : ('pending' as const) };
     });
     for (const row of updates) {
       const { error } = await supabase
@@ -159,15 +173,15 @@ export async function setMilestoneStatus(
     return { error: null };
   }
 
-  if (status === 'done') {
+  if (status === 'done' || status === 'skipped') {
     const { error } = await supabase
       .from('project_milestones')
-      .update({ status: 'done' })
+      .update({ status })
       .eq('id', milestoneId)
       .eq('project_id', projectId);
     if (error) return { error: 'invalid' as const };
     if (target.status === 'current') {
-      const next = list.find((row, i) => i > index && row.status !== 'done');
+      const next = list.find((row, i) => i > index && !isClosedStage(row.status));
       if (next) {
         await supabase.from('project_milestones').update({ status: 'current' }).eq('id', next.id).eq('project_id', projectId);
       }
@@ -220,7 +234,7 @@ export async function removeMilestone(supabase: SupabaseClient, milestoneId: str
   if (error) return { error: 'invalid' as const };
   if (data?.status === 'current') {
     const ordered = await syncSortOrder(supabase, projectId);
-    const next = ordered.find((row) => row.status !== 'done');
+    const next = ordered.find((row) => !isClosedStage(row.status));
     if (next?.id) {
       await supabase.from('project_milestones').update({ status: 'current' }).eq('id', next.id).eq('project_id', projectId);
     }

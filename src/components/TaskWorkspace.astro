@@ -124,7 +124,7 @@ const groups = [
   ...milestones.map((stage) => ({
     id: stage.id,
     title: stage.title,
-    hint: stage.status === 'current' ? 'Current stage' : stage.status === 'done' ? 'Stage done' : '',
+    hint: stage.status === 'current' ? 'Current stage' : stage.status === 'done' ? 'Stage done' : stage.status === 'skipped' ? 'Stage skipped' : '',
     rows: filtered.filter((row) => row.milestone_id === stage.id),
   })),
   {

@@ -19,7 +19,10 @@ export type ProjectMeeting = {
   backup_url: string;
   notes: string;
   skip_dates: string[];
+  /** Last day of the series (local date, inclusive). */
+  ends_on?: string | null;
   created_by?: string;
+  created_at?: string;
   updated_at?: string;
   projects?: { name: string } | null;
 };
@@ -36,6 +39,8 @@ export const DAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday'
 export const DAY_SHORT = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 /** Show a site-wide banner from this long before a meeting until it ends. */
 export const BANNER_LEAD_MS = 30 * 60 * 1000;
+/** A new series runs this many days unless an end date is picked. */
+export const DEFAULT_RUN_DAYS = 30;
 
 function zoneOr(zone: string | null | undefined) {
   try {
@@ -80,7 +85,7 @@ export function zonedDate(zone: string, at: number) {
   return { date, weekday };
 }
 
-const addDays = (date: string, n: number) => {
+export const addDays = (date: string, n: number) => {
   const d = new Date(`${date}T12:00:00Z`);
   d.setUTCDate(d.getUTCDate() + n);
   return d.toISOString().slice(0, 10);
@@ -94,24 +99,62 @@ export function normalizeSlots(raw: unknown): MeetingSlot[] {
     .sort((a, b) => a.day - b.day || a.time.localeCompare(b.time));
 }
 
-/** Occurrences that have not ended yet, from now through `days` ahead. */
-export function occurrences(meeting: ProjectMeeting, now = Date.now(), days = 14): Occurrence[] {
+/** Every session from `from` to `to` (local dates, inclusive), skipping cancelled ones and stopping at the end date. */
+export function sessionsBetween(meeting: ProjectMeeting, from: string, to: string): Occurrence[] {
   const zone = zoneOr(meeting.time_zone);
   const slots = normalizeSlots(meeting.slots);
   const skip = new Set(meeting.skip_dates ?? []);
-  const today = zonedDate(zone, now).date;
+  const last = meeting.ends_on && meeting.ends_on < to ? meeting.ends_on : to;
+  // No sessions before the series was set up.
+  const first = meeting.created_at ? zonedDate(zone, Date.parse(meeting.created_at)).date : from;
   const out: Occurrence[] = [];
-  for (let i = -1; i <= days; i++) {
-    const date = addDays(today, i);
+  for (let date = first > from ? first : from, guard = 0; date <= last && guard < 800; date = addDays(date, 1), guard++) {
     const weekday = new Date(`${date}T12:00:00Z`).getUTCDay();
     for (const slot of slots) {
       if (slot.day !== weekday || skip.has(date)) continue;
       const start = zonedToUtc(date, slot.time, zone);
-      const end = start + meeting.duration_minutes * 60_000;
-      if (end > now) out.push({ meeting, start, end, localDate: date });
+      out.push({ meeting, start, end: start + meeting.duration_minutes * 60_000, localDate: date });
     }
   }
   return out.sort((a, b) => a.start - b.start);
+}
+
+/** Occurrences that have not ended yet, from now through `days` ahead. */
+export function occurrences(meeting: ProjectMeeting, now = Date.now(), days = 14): Occurrence[] {
+  const today = zonedDate(zoneOr(meeting.time_zone), now).date;
+  return sessionsBetween(meeting, addDays(today, -1), addDays(today, days)).filter((o) => o.end > now);
+}
+
+/** Has the series run out (its end date is before today)? */
+export function meetingEnded(meeting: Pick<ProjectMeeting, 'ends_on' | 'time_zone'>, now = Date.now()) {
+  return Boolean(meeting.ends_on && meeting.ends_on < zonedDate(zoneOr(meeting.time_zone), now).date);
+}
+
+/** Days left in the series, counting today (0 once it has ended); null when open-ended. */
+export function daysLeft(meeting: Pick<ProjectMeeting, 'ends_on' | 'time_zone'>, now = Date.now()) {
+  if (!meeting.ends_on) return null;
+  const today = zonedDate(zoneOr(meeting.time_zone), now).date;
+  const diff = Math.round((Date.parse(`${meeting.ends_on}T12:00:00Z`) - Date.parse(`${today}T12:00:00Z`)) / 86_400_000);
+  return Math.max(0, diff + 1);
+}
+
+/** Calendar chips for a month grid: one per session between two local dates. */
+export function meetingCalendarEvents(meetings: ProjectMeeting[], from: string, to: string, opts: { withProject?: boolean } = {}) {
+  return meetings.flatMap((meeting) =>
+    sessionsBetween(meeting, from, to).map((o) => {
+      const time = new Date(o.start).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', timeZone: zoneOr(meeting.time_zone) });
+      const project = meeting.projects?.name ?? '';
+      return {
+        date: o.localDate,
+        kind: 'meeting' as const,
+        title: `${opts.withProject && project ? `${project} · ` : ''}${meeting.title} ${time}`,
+        chip: `${time} ${meeting.title}`,
+        detail: `${meeting.duration_minutes} min${meeting.backup_url ? ' · backup link' : ''}`,
+        href: `/team/projects/${meeting.project_id}?tab=schedule#meetings`,
+        project: project || undefined,
+      };
+    }),
+  );
 }
 
 export function nextOccurrence(meeting: ProjectMeeting, now = Date.now()) {
@@ -176,7 +219,7 @@ function parseLink(raw: string): string | null {
   }
 }
 
-export function meetingFromForm(form: FormData) {
+export function meetingFromForm(form: FormData, now = Date.now()) {
   const days = form.getAll('slot_day').map(Number);
   const times = form.getAll('slot_time').map(String);
   const slots = normalizeSlots(days.map((day, i) => ({ day, time: times[i] ?? '' })));
@@ -186,6 +229,11 @@ export function meetingFromForm(form: FormData) {
   const duration = Number(form.get('duration_minutes') ?? 60);
   const title = String(form.get('title') ?? '').trim().slice(0, 80) || 'Team meeting';
   const time_zone = zoneOr(String(form.get('time_zone') ?? 'Asia/Bangkok'));
+  // End date: as picked, or 30 days from today when left blank. At most two years out.
+  const today = zonedDate(time_zone, now).date;
+  const rawEnd = String(form.get('ends_on') ?? '').trim();
+  const ends_on = /^\d{4}-\d{2}-\d{2}$/.test(rawEnd) ? rawEnd : addDays(today, DEFAULT_RUN_DAYS);
+  if (ends_on > addDays(today, 730)) return null;
   if (unique.length === 0 || meeting_url === null || backup_url === null || !meeting_url) return null;
   if (!Number.isFinite(duration) || duration < 5 || duration > 480) return null;
   return {
@@ -196,6 +244,7 @@ export function meetingFromForm(form: FormData) {
     meeting_url,
     backup_url,
     notes: String(form.get('notes') ?? '').trim().slice(0, 500),
+    ends_on,
   };
 }
 
@@ -216,6 +265,7 @@ export async function projectMeetings(supabase: SupabaseClient, projectIds?: str
 // ---------- Calendar (ICS) ----------
 
 const ICS_DAYS = ['SU', 'MO', 'TU', 'WE', 'TH', 'FR', 'SA'];
+const icsUtc = (ms: number) => new Date(ms).toISOString().replace(/[-:]/g, '').replace(/\.\d{3}/, '');
 
 /** One weekly VEVENT per slot, in the meeting's time zone. */
 export function meetingIcsEvents(meeting: ProjectMeeting & { project?: string }, opts: { stamp: string; href: string; now?: number }) {
@@ -224,6 +274,7 @@ export function meetingIcsEvents(meeting: ProjectMeeting & { project?: string },
   const today = zonedDate(zone, now).date;
   const esc = (t: string) => t.replace(/\\/g, '\\\\').replace(/;/g, '\\;').replace(/,/g, '\\,').replace(/\r?\n/g, '\\n');
   const lines: string[] = [];
+  if (meeting.ends_on && meeting.ends_on < today) return lines;
   for (const slot of normalizeSlots(meeting.slots)) {
     // First occurrence on or after today.
     let date = today;
@@ -234,6 +285,7 @@ export function meetingIcsEvents(meeting: ProjectMeeting & { project?: string },
         break;
       }
     }
+    if (meeting.ends_on && date > meeting.ends_on) continue;
     const [h, m] = slot.time.split(':').map(Number);
     const endMinutes = h * 60 + m + meeting.duration_minutes;
     const endDate = addDays(date, Math.floor(endMinutes / 1440));
@@ -253,7 +305,7 @@ export function meetingIcsEvents(meeting: ProjectMeeting & { project?: string },
       `DTSTAMP:${opts.stamp}`,
       `DTSTART;TZID=${zone}:${startStamp}`,
       `DTEND;TZID=${zone}:${endDate.replace(/-/g, '')}T${endTime}`,
-      `RRULE:FREQ=WEEKLY;BYDAY=${ICS_DAYS[slot.day]}`,
+      `RRULE:FREQ=WEEKLY;BYDAY=${ICS_DAYS[slot.day]}${meeting.ends_on ? `;UNTIL=${icsUtc(zonedToUtc(meeting.ends_on, '23:59', zone))}` : ''}`,
       ...(meeting.skip_dates ?? [])
         .filter((d) => new Date(`${d}T12:00:00Z`).getUTCDay() === slot.day)
         .map((d) => `EXDATE;TZID=${zone}:${d.replace(/-/g, '')}T${slot.time.replace(':', '')}00`),

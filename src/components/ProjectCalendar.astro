@@ -1,5 +1,7 @@
 ---
+import { meetingCalendarEvents, type ProjectMeeting } from '../lib/meetings';
 import {
+  gridRange,
   monthGrid,
   monthKey,
   projectEvents,
@@ -22,6 +24,9 @@ interface Props {
   monthHref: (month: string) => string;
   showMoney?: boolean;
   events?: CalEvent[];
+  /** Weekly meetings, drawn as one chip per session. */
+  meetings?: ProjectMeeting[];
+  meetingsWithProject?: boolean;
   lede?: string;
   /** Start the dated list collapsed (the grid already shows the same events). */
   agendaCollapsed?: boolean;
@@ -38,10 +43,16 @@ const {
   monthHref,
   showMoney = true,
   events: givenEvents,
+  meetings = [],
+  meetingsWithProject = false,
   lede,
   agendaCollapsed = false,
 } = Astro.props;
-const events = givenEvents ?? projectEvents(startedOn, milestones, contributions, entries, showMoney, tasks);
+const range = gridRange(cursor);
+const events = [
+  ...(givenEvents ?? projectEvents(startedOn, milestones, contributions, entries, showMoney, tasks)),
+  ...meetingCalendarEvents(meetings, range.from, range.to, { withProject: meetingsWithProject }),
+].sort((a, b) => a.date.localeCompare(b.date) || (a.kind === 'meeting' ? -1 : b.kind === 'meeting' ? 1 : 0));
 const cells = monthGrid(cursor, events, today);
 const key = monthKey(cursor);
 const heading = cursor.toLocaleDateString('en-GB', { month: 'long', year: 'numeric' });
@@ -49,7 +60,9 @@ const monthEvents = events.filter((event) => event.date.startsWith(key));
 const moneyOnCal = showMoney || events.some((event) => event.kind === 'contribution' || event.kind === 'income' || event.kind === 'expense');
 const caption =
   lede ??
-  (showMoney ? 'Stages, tasks, funding, and ledger dates for this project.' : 'Stages, tasks, and start date for this project.');
+  (showMoney
+    ? `Stages, tasks,${meetings.length ? ' meetings,' : ''} funding, and ledger dates for this project.`
+    : `Stages, tasks,${meetings.length ? ' meetings,' : ''} and start date for this project.`);
 const weekdays = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 const prev = shiftMonth(cursor, -1);
 const next = shiftMonth(cursor, 1);
@@ -66,6 +79,7 @@ function pretty(iso: string) {
 function kindLabel(kind: CalEvent['kind']) {
   if (kind === 'milestone') return 'Stage';
   if (kind === 'task') return 'Task';
+  if (kind === 'meeting') return 'Meeting';
   if (kind === 'contribution') return 'Funding';
   if (kind === 'income') return 'Income';
   if (kind === 'expense') return 'Expense';
@@ -120,6 +134,7 @@ function kindLabel(kind: CalEvent['kind']) {
   <p class="cal-legend">
     <span><i class="cal-event milestone"></i> Stage</span>
     <span><i class="cal-event task"></i> Task</span>
+    {events.some((event) => event.kind === 'meeting') && <span><i class="cal-event meeting"></i> Meeting</span>}
     {moneyOnCal && <span><i class="cal-event contribution"></i> Funding</span>}
     {moneyOnCal && <span><i class="cal-event income"></i> Income</span>}
     {moneyOnCal && <span><i class="cal-event expense"></i> Expense</span>}

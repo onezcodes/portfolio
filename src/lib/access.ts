@@ -163,11 +163,14 @@ export function tabForIntent(intent: string): ProjectTab {
 
 export function allowedIntent(intent: string, caps: ProjectCaps) {
   if (intent.includes('member')) return caps.canPeople;
+  // Private notes and to-dos: anyone on the project (RLS keeps them to the author).
+  if (intent.startsWith('mine-')) return caps.assigned;
   if (
     intent === 'add-milestone' ||
     intent === 'seed-milestones' ||
     intent === 'update-milestone' ||
     intent === 'delete-milestone' ||
+    intent === 'milestone-skip' ||
     intent === 'add-task' ||
     intent === 'update-task' ||
     intent === 'delete-task'

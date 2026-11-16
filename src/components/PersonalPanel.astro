@@ -1,0 +1,220 @@
+---
+/**
+ * "Mine": private notes and to-dos for the signed-in person on this project.
+ * Forms post to the project page; the inline script swaps the panel in place (no reload).
+ */
+import Modal from './Modal.astro';
+import { PERSONAL_MAX, splitPersonal, type PersonalItem } from '../lib/personal';
+
+interface Props {
+  items: PersonalItem[];
+  tab: string;
+  open?: boolean;
+}
+
+const { items, tab, open = false } = Astro.props;
+const { open: todos, done, notes } = splitPersonal(items);
+
+function when(iso: string) {
+  return new Date(iso).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', timeZone: 'Asia/Bangkok' });
+}
+---
+
+<Modal id="mine" title="My notes" lede="Private to you. Nobody else on the project can see these." size="drawer" open={open}>
+  <div class="mine" data-mine>
+    <form class="mine-add" method="post" data-mine-form data-mine-add>
+      <input type="hidden" name="intent" value="mine-add" />
+      <input type="hidden" name="tab" value={tab} />
+      <div class="mine-kind" role="radiogroup" aria-label="Type">
+        <label><input type="radio" name="kind" value="todo" checked data-mine-kind="todo" /><span>☐ To-do</span></label>
+        <label><input type="radio" name="kind" value="note" data-mine-kind="note" /><span>✎ Note</span></label>
+      </div>
+      <textarea
+        name="body"
+        rows="2"
+        maxlength={PERSONAL_MAX}
+        required
+        data-autofocus
+        data-mine-body
+        placeholder="Add a to-do…"></textarea>
+      <div class="mine-add-foot">
+        <p class="mine-keys">Enter to save · Shift+Enter new line · Alt+↑↓ switch type</p>
+        <button class="btn" type="submit">Add</button>
+      </div>
+    </form>
+
+    <div data-mine-list>
+      <section class="mine-section" aria-label="To-dos">
+        <h3>To-do <span class="mine-count" data-mine-open-count={todos.length}>{todos.length || ''}</span></h3>
+        {todos.length === 0 && done.length === 0 && <p class="muted mine-empty">Nothing on your list.</p>}
+        {todos.length === 0 && done.length > 0 && <p class="muted mine-empty">All done. 🎉</p>}
+        <ul class="mine-todos">
+          {todos.map((item) => (
+            <li>
+              <form method="post" data-mine-form>
+                <input type="hidden" name="intent" value="mine-toggle" />
+                <input type="hidden" name="tab" value={tab} />
+                <input type="hidden" name="item_id" value={item.id} />
+                <input type="hidden" name="done" value="1" />
+                <button class="mine-check" type="submit" aria-label={`Mark done: ${item.body}`}></button>
+              </form>
+              <span class="mine-text">{item.body}</span>
+              <form method="post" data-mine-form>
+                <input type="hidden" name="intent" value="mine-delete" />
+                <input type="hidden" name="tab" value={tab} />
+                <input type="hidden" name="item_id" value={item.id} />
+                <button class="mine-x" type="submit" aria-label="Delete">×</button>
+              </form>
+            </li>
+          ))}
+        </ul>
+        {done.length > 0 && (
+          <details class="mine-done">
+            <summary>{done.length} done</summary>
+            <ul class="mine-todos">
+              {done.map((item) => (
+                <li class="is-done">
+                  <form method="post" data-mine-form>
+                    <input type="hidden" name="intent" value="mine-toggle" />
+                    <input type="hidden" name="tab" value={tab} />
+                    <input type="hidden" name="item_id" value={item.id} />
+                    <input type="hidden" name="done" value="0" />
+                    <button class="mine-check is-on" type="submit" aria-label={`Mark not done: ${item.body}`}></button>
+                  </form>
+                  <span class="mine-text">{item.body}</span>
+                  <form method="post" data-mine-form>
+                    <input type="hidden" name="intent" value="mine-delete" />
+                    <input type="hidden" name="tab" value={tab} />
+                    <input type="hidden" name="item_id" value={item.id} />
+                    <button class="mine-x" type="submit" aria-label="Delete">×</button>
+                  </form>
+                </li>
+              ))}
+            </ul>
+            <form method="post" data-mine-form class="mine-clear">
+              <input type="hidden" name="intent" value="mine-clear" />
+              <input type="hidden" name="tab" value={tab} />
+              <button class="ms-text" type="submit">Clear done</button>
+            </form>
+          </details>
+        )}
+      </section>
+
+      <section class="mine-section" aria-label="Notes">
+        <h3>Notes <span class="mine-count">{notes.length || ''}</span></h3>
+        {notes.length === 0 && <p class="muted mine-empty">Jot down anything: client quirks, ideas, things to ask.</p>}
+        <ul class="mine-notes">
+          {notes.map((item) => (
+            <li>
+              <details class="mine-note">
+                <summary>
+                  <span class="mine-text">{item.body}</span>
+                  <time datetime={item.updated_at}>{when(item.updated_at)}</time>
+                </summary>
+                <form method="post" data-mine-form class="mine-edit">
+                  <input type="hidden" name="intent" value="mine-edit" />
+                  <input type="hidden" name="tab" value={tab} />
+                  <input type="hidden" name="item_id" value={item.id} />
+                  <textarea name="body" rows="4" maxlength={PERSONAL_MAX} required>{item.body}</textarea>
+                  <div class="mine-edit-actions">
+                    <button class="btn" type="submit">Save</button>
+                    <button class="ms-text" type="submit" name="intent" value="mine-delete" formnovalidate>Delete</button>
+                  </div>
+                </form>
+              </details>
+            </li>
+          ))}
+        </ul>
+      </section>
+    </div>
+  </div>
+</Modal>
+
+<script>
+  // Save without reloading: post the form, then swap the list from the returned page.
+  async function send(form: HTMLFormElement, submitter: HTMLElement | null) {
+    const data = new FormData(form);
+    if (submitter instanceof HTMLButtonElement && submitter.name) data.set(submitter.name, submitter.value);
+    form.classList.add('is-busy');
+    try {
+      const res = await fetch(location.pathname + location.search, { method: 'POST', body: data, credentials: 'same-origin' });
+      const html = await res.text();
+      const doc = new DOMParser().parseFromString(html, 'text/html');
+      const fresh = doc.querySelector('[data-mine-list]');
+      const list = document.querySelector('[data-mine-list]');
+      if (fresh && list) list.replaceWith(fresh);
+      for (const badge of document.querySelectorAll<HTMLElement>('[data-mine-badge]')) {
+        const count = fresh?.querySelector<HTMLElement>('[data-mine-open-count]')?.dataset.mineOpenCount ?? '0';
+        badge.textContent = count === '0' ? '' : count;
+      }
+      if (form.hasAttribute('data-mine-add')) {
+        const body = form.querySelector<HTMLTextAreaElement>('[data-mine-body]');
+        if (body) {
+          body.value = '';
+          body.focus();
+        }
+      }
+    } catch {
+      form.submit();
+    } finally {
+      form.classList.remove('is-busy');
+    }
+  }
+
+  document.addEventListener('submit', (event) => {
+    const form = event.target;
+    if (!(form instanceof HTMLFormElement) || !form.hasAttribute('data-mine-form')) return;
+    event.preventDefault();
+    void send(form, (event as SubmitEvent).submitter);
+  });
+
+  // Enter saves the quick-add box; Shift+Enter adds a line.
+  document.addEventListener('keydown', (event) => {
+    const field = event.target;
+    if (!(field instanceof HTMLTextAreaElement) || !field.hasAttribute('data-mine-body')) return;
+    if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) {
+      event.preventDefault();
+      field.form?.requestSubmit();
+    }
+    // Alt+Up / Alt+Down switches between To-do and Note without leaving the box.
+    if (event.altKey && (event.key === 'ArrowUp' || event.key === 'ArrowDown')) {
+      event.preventDefault();
+      const note = document.querySelector<HTMLInputElement>('[data-mine-kind="note"]');
+      const next = document.querySelector<HTMLInputElement>(`[data-mine-kind="${note?.checked ? 'todo' : 'note'}"]`);
+      if (next) {
+        next.checked = true;
+        next.dispatchEvent(new Event('change', { bubbles: true }));
+      }
+    }
+  });
+
+  // "+ Note" / "+ To-do" buttons pick the type before the panel opens.
+  document.addEventListener(
+    'click',
+    (event) => {
+      const opener = (event.target as Element | null)?.closest<HTMLElement>('[data-mine-open]');
+      if (!opener) return;
+      const kind = opener.dataset.mineOpen === 'note' ? 'note' : 'todo';
+      const radio = document.querySelector<HTMLInputElement>(`[data-mine-kind="${kind}"]`);
+      if (radio) {
+        radio.checked = true;
+        radio.dispatchEvent(new Event('change', { bubbles: true }));
+      }
+    },
+    true,
+  );
+
+  document.addEventListener('change', (event) => {
+    const radio = event.target;
+    if (!(radio instanceof HTMLInputElement) || !radio.hasAttribute('data-mine-kind')) return;
+    const body = document.querySelector<HTMLTextAreaElement>('[data-mine-body]');
+    if (body) {
+      body.placeholder =
+        radio.value === 'note'
+          ? 'Write a note…'
+          : 'Add a to-do…';
+      body.rows = radio.value === 'note' ? 4 : 2;
+      body.focus();
+    }
+  });
+</script>

@@ -8,7 +8,7 @@ import { applyProjectTemplate } from '../../../lib/templates';
 import { projectFromForm } from '../../../lib/forms';
 import { logEvent } from '../../../lib/events';
 import type { LedgerEntry, Project, TeamMember } from '../../../lib/ledger';
-import { currentStage, seedMilestones, sortMilestones, type Milestone } from '../../../lib/milestones';
+import { currentStage, seedMilestones, sortMilestones, stageCounts, type Milestone } from '../../../lib/milestones';
 import { todayIso } from '../../../lib/ledger';
 import { capsFor } from '../../../lib/access';
 import { logoHrefs } from '../../../lib/projectHub';
@@ -91,11 +91,10 @@ for (const row of (taskRows ?? []) as { project_id: string; status: string; due_
 }
 function planOf(projectId: string) {
   const ordered = sortMilestones(milestonesBy.get(projectId) ?? []) as Milestone[];
-  const done = ordered.filter((row) => row.status === 'done').length;
+  const { done, total, allDone } = stageCounts(ordered);
   const stage = currentStage(ordered);
-  const allDone = ordered.length > 0 && done === ordered.length;
   const late = Boolean(!allDone && stage?.estimated_on && stage.estimated_on < today);
-  return { total: ordered.length, done, stage: allDone ? null : stage, allDone, late };
+  return { total, done, stage: allDone ? null : stage, allDone, late };
 }
 const lastCheckin = new Map<string, string>();
 for (const row of (checkinRows ?? []) as { project_id: string; created_at: string }[]) {

@@ -237,3 +237,39 @@ describe('calendar month grid', () => {
     for (let i = 0; i < dec.length; i += 7) expect(new Date(`${dec[i].iso}T12:00:00`).getDay()).toBe(0);
   });
 });
+
+import { currentStage, stageCounts } from '../../src/lib/milestones';
+
+describe('skipped stages', () => {
+  const rows = [
+    { status: 'done' },
+    { status: 'skipped' },
+    { status: 'current' },
+    { status: 'pending' },
+  ];
+  it('leave the progress count', () => {
+    expect(stageCounts(rows)).toEqual({ done: 1, skipped: 1, total: 3, allDone: false, pct: 33 });
+  });
+  it('count as finished when everything else is done', () => {
+    expect(stageCounts([{ status: 'done' }, { status: 'skipped' }]).allDone).toBe(true);
+    expect(stageCounts([{ status: 'skipped' }]).pct).toBe(100);
+  });
+  it('are never picked as the current stage', () => {
+    const stages = [
+      { id: 'a', status: 'done' },
+      { id: 'b', status: 'skipped' },
+      { id: 'c', status: 'pending' },
+    ] as Parameters<typeof currentStage>[0];
+    expect(currentStage(stages)?.id).toBe('c');
+  });
+  it('do not make a project late', () => {
+    const health = projectHealth({
+      status: 'active',
+      today,
+      stages: [{ status: 'skipped', estimated_on: '2026-11-01' }, { status: 'pending', estimated_on: '2026-12-01' }],
+      tasks: [],
+      lastCheckin: '2026-11-15T10:00:00Z',
+    });
+    expect(health.level).toBe('green');
+  });
+});

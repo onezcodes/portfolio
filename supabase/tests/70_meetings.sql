@@ -36,3 +36,20 @@ do $$ declare n int; begin
   raise notice 'ok: calendar feed lists the member''s meetings by token only';
   reset role;
 end $$;
+
+-- Skipped stages.
+do $$ begin
+  perform public.test_as('lead@x.com'); set local role authenticated;
+  update project_milestones set status = 'skipped', signoff_note = 'Not needed' where project_id = '11111111-1111-1111-1111-111111111111';
+  if (select status from project_milestones where project_id = '11111111-1111-1111-1111-111111111111') <> 'skipped' then raise exception 'FAIL: skip'; end if;
+  begin update project_milestones set status = 'bogus'; raise exception 'FAIL: bad stage status accepted';
+  exception when check_violation then raise notice 'ok: stages can be skipped (and only valid statuses saved)'; end;
+  reset role;
+end $$;
+
+-- Series end date defaults to 30 days out.
+do $$ begin
+  if (select ends_on from project_meetings where title = 'Review') <> current_date + 30 then raise exception 'FAIL: default end date'; end if;
+  if (select count(*) from public.calendar_meetings('tok-dev-000000000000000000000000') where ends_on is not null) <> 2 then raise exception 'FAIL: feed end date'; end if;
+  raise notice 'ok: meetings end 30 days out by default, and the feed carries the end date';
+end $$;

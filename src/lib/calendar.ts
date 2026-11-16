@@ -3,7 +3,7 @@ import type { Contribution } from './funding';
 import type { Milestone } from './milestones';
 import { taskStatusLabel, type ProjectTask } from './tasks';
 
-export type CalKind = 'milestone' | 'income' | 'expense' | 'contribution' | 'start' | 'task';
+export type CalKind = 'milestone' | 'income' | 'expense' | 'contribution' | 'start' | 'task' | 'meeting';
 
 export type CalEvent = {
   date: string;
@@ -63,7 +63,7 @@ export function projectEvents(
   }
   for (const row of milestones) {
     if (!row.estimated_on) continue;
-    const state = row.status === 'current' ? 'Current stage' : row.status === 'done' ? 'Done' : 'Estimated';
+    const state = row.status === 'current' ? 'Current stage' : row.status === 'done' ? 'Done' : row.status === 'skipped' ? 'Skipped' : 'Estimated';
     events.push({
       date: row.estimated_on,
       kind: 'milestone',
@@ -164,6 +164,17 @@ export function studioEvents(
   }
 
   return events.sort((a, b) => a.date.localeCompare(b.date) || a.title.localeCompare(b.title));
+}
+
+/** First and last local dates shown on a month grid (with the spill-over days around it). */
+export function gridRange(cursor: Date) {
+  const first = new Date(cursor.getFullYear(), cursor.getMonth(), 1);
+  const last = new Date(cursor.getFullYear(), cursor.getMonth() + 1, 0);
+  const from = new Date(first);
+  from.setDate(first.getDate() - first.getDay());
+  const to = new Date(last);
+  to.setDate(last.getDate() + (6 - last.getDay()));
+  return { from: isoDate(from), to: isoDate(to) };
 }
 
 export function monthGrid(cursor: Date, events: CalEvent[], todayIso: string): CalCell[] {
