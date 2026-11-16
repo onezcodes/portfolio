@@ -1,0 +1,116 @@
+---
+import Team from '../../layouts/Team.astro';
+import TeamFlash from '../../components/TeamFlash.astro';
+import { createChecklistTemplate, listTemplates, type ChecklistTemplateBody, type ProjectTemplateBody } from '../../lib/templates';
+
+const supabase = Astro.locals.supabase;
+const studio = Astro.locals.studio;
+if (!studio) return Astro.redirect('/team/login');
+
+if (Astro.request.method === 'POST') {
+  const form = await Astro.request.formData();
+  const intent = String(form.get('intent') ?? '');
+  if (intent === 'create-checklist') {
+    const result = await createChecklistTemplate(supabase, form, studio.email);
+    return Astro.redirect(`/team/templates?${result.error ? `error=${result.error}` : 'notice=created'}`);
+  }
+  if (intent === 'delete') {
+    const { error, count } = await supabase
+      .from('studio_templates')
+      .delete({ count: 'exact' })
+      .eq('id', String(form.get('template_id') ?? ''));
+    return Astro.redirect(`/team/templates?${error || !count ? 'error=forbidden' : 'notice=deleted'}`);
+  }
+  return Astro.redirect('/team/templates');
+}
+
+const templates = await listTemplates(supabase);
+const plans = templates.filter((t) => t.kind === 'project');
+const checklists = templates.filter((t) => t.kind === 'checklist');
+const canDelete = (createdBy: string) => studio.superAdmin || createdBy === studio.email;
+---
+
+<Team title="Templates">
+  <div class="wrap team-page">
+    <header class="pj-hero">
+      <div class="team-intro">
+        <p class="kicker"><a href="/team/projects">Projects</a></p>
+        <h1>Templates</h1>
+        <p class="lede">Project plans start new jobs with stages and tasks. Checklists add subtasks to a task in one click.</p>
+      </div>
+    </header>
+    <TeamFlash />
+
+    <section class="team-card">
+      <div class="card-head">
+        <div class="pay-head">
+          <h2>Project plans</h2>
+          <p class="muted">Pick one when you create a project. Save any project's plan from its More menu → Save as template.</p>
+        </div>
+      </div>
+      <ul class="tpl-grid">
+        {plans.map((t) => {
+          const body = t.body as ProjectTemplateBody;
+          return (
+            <li class="tpl-card">
+              <strong>{t.name}</strong>
+              <span class="muted">{body.stages?.length ?? 0} stages · {body.tasks?.length ?? 0} tasks{t.created_by ? '' : ' · built in'}</span>
+              <ol class="tpl-stages">
+                {(body.stages ?? []).map((s) => <li>{s.title}<span>day {s.days}</span></li>)}
+              </ol>
+              {canDelete(t.created_by) && t.created_by && (
+                <form method="post" data-confirm={`Delete the template “${t.name}”?`} data-confirm-action="Delete">
+                  <input type="hidden" name="intent" value="delete" />
+                  <input type="hidden" name="template_id" value={t.id} />
+                  <button class="btn-text td-delete" type="submit">Delete</button>
+                </form>
+              )}
+            </li>
+          );
+        })}
+      </ul>
+    </section>
+
+    <div class="team-two">
+      <section class="team-two-main">
+        <h2 class="team-h2">Checklists</h2>
+        <ul class="tpl-grid">
+          {checklists.map((t) => {
+            const items = (t.body as ChecklistTemplateBody).items ?? [];
+            return (
+              <li class="tpl-card">
+                <strong>{t.name}</strong>
+                <span class="muted">{items.length} items</span>
+                <ul class="tpl-items">
+                  {items.map((item) => <li>{item}</li>)}
+                </ul>
+                {canDelete(t.created_by) && t.created_by && (
+                  <form method="post" data-confirm={`Delete the checklist “${t.name}”?`} data-confirm-action="Delete">
+                    <input type="hidden" name="intent" value="delete" />
+                    <input type="hidden" name="template_id" value={t.id} />
+                    <button class="btn-text td-delete" type="submit">Delete</button>
+                  </form>
+                )}
+              </li>
+            );
+          })}
+        </ul>
+      </section>
+      <section class="team-card team-two-aside">
+        <h2>New checklist</h2>
+        <form class="form team-form" method="post">
+          <input type="hidden" name="intent" value="create-checklist" />
+          <p class="field">
+            <label for="tpl_name">Name</label>
+            <input id="tpl_name" name="name" required maxlength="80" placeholder="Design handoff" />
+          </p>
+          <p class="field">
+            <label for="tpl_items">Items, one per line</label>
+            <textarea id="tpl_items" name="items" rows="7" required placeholder={'Export assets\nDocument components\nShare Figma link'}></textarea>
+          </p>
+          <button class="btn" type="submit">Create checklist</button>
+        </form>
+      </section>
+    </div>
+  </div>
+</Team>

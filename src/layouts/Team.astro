@@ -5,6 +5,8 @@ import logo from '../assets/logo.webp';
 import { site } from '../data/site';
 import { emailOf, isSuperAdmin } from '../lib/supabase';
 import NavChrome from '../components/NavChrome.astro';
+import { unreadCount } from '../lib/taskCollab';
+import { formatMinutes, liveMinutes, runningTimer } from '../lib/timeTracking';
 
 interface Props {
   title: string;
@@ -20,19 +22,34 @@ const canVault = studio?.canVault ?? admin;
 const path = Astro.url.pathname.replace(/\/+$/, '') || '/team';
 const pageTitle = `${title} · Team · ${site.name}`;
 const label = studio?.displayName || email;
+const viewAs = Astro.locals.viewAs;
+const [unread, timer] = studio && Astro.locals.supabase
+  ? await Promise.all([unreadCount(Astro.locals.supabase), runningTimer(Astro.locals.supabase, studio.email)])
+  : [0, null];
+const here = `${Astro.url.pathname}${Astro.url.search}`;
+const previewEnds = viewAs
+  ? new Date(viewAs.expiresAt).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })
+  : '';
 
+// Everyday links stay visible; the rest sit under "More" so the header fits on one line.
 const links = [
   { href: '/team', label: 'Overview' },
+  { href: '/team/tasks', label: 'My tasks' },
   { href: '/team/projects', label: 'Projects' },
-  ...(admin ? [{ href: '/team/careers', label: 'Careers' }] : []),
   ...(canLedger ? [{ href: '/team/ledger', label: 'Ledger' }] : []),
+  { href: '/team/workload', label: 'Insights' },
+];
+const moreLinks = [
   ...(canVault ? [{ href: '/team/credentials', label: 'Credentials' }] : []),
   { href: '/team/activity', label: 'Activity' },
+  { href: '/team/templates', label: 'Templates' },
+  ...(admin ? [{ href: '/team/careers', label: 'Careers' }] : []),
   ...(admin ? [{ href: '/team/members', label: 'Team' }] : []),
 ];
 
 function current(href: string) {
   if (href === '/team') return path === '/team';
+  if (href === '/team/workload') return path === '/team/workload' || path === '/team/reports';
   return path === href || path.startsWith(`${href}/`);
 }
 ---
@@ -49,7 +66,7 @@ function current(href: string) {
     <meta name="color-scheme" content="light" />
     <NavChrome />
   </head>
-  <body class="team-body">
+  <body class:list={['team-body', viewAs && 'is-previewing']}>
     {/* Cloudflare's Email Address Obfuscation rewrites emails to "[email protected]"; opt the page out. */}
     <Fragment set:html="<!--email_off-->" />
     <a class="skip-link" href="#main">Skip to content</a>
@@ -84,14 +101,57 @@ function current(href: string) {
                   </li>
                 ))
               }
+              <li class="team-more">
+                <details>
+                  <summary class:list={[moreLinks.some((item) => current(item.href)) && 'is-current']}>More</summary>
+                  <ul>
+                    {moreLinks.map((item) => (
+                      <li>
+                        <a href={item.href} data-astro-prefetch="hover" aria-current={current(item.href) ? 'page' : undefined}>
+                          {item.label}
+                        </a>
+                      </li>
+                    ))}
+                  </ul>
+                </details>
+              </li>
             </ul>
           </nav>
           <div class="team-user">
             {
+              timer && (
+                <form class="team-timer" method="post" action="/team/timer" data-astro-reload>
+                  <input type="hidden" name="intent" value="stop" />
+                  <input type="hidden" name="back" value={`${Astro.url.pathname}${Astro.url.search}`} />
+                  <a href={`/team/projects/${timer.project_id}?tab=tasks&task=${timer.task_id}`} title={timer.project_tasks?.title ?? 'Running timer'}>
+                    <span class="team-timer-dot" aria-hidden="true" />
+                    <span data-live-since={timer.started_at}>{formatMinutes(liveMinutes(timer))}</span>
+                    <span class="team-timer-task">{timer.project_tasks?.title ?? 'Task'}</span>
+                  </a>
+                  <button type="submit" aria-label="Stop timer" title="Stop timer">■</button>
+                </form>
+              )
+            }
+            {
+              studio && (
+                <a
+                  class="team-bell"
+                  href="/team/inbox"
+                  data-astro-prefetch="hover"
+                  aria-current={path === '/team/inbox' ? 'page' : undefined}
+                  aria-label={unread > 0 ? `Inbox, ${unread} unread` : 'Inbox'}
+                  title="Inbox"
+                >
+                  <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path d="M6 16V11a6 6 0 1 1 12 0v5l1.5 2h-15L6 16Z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" /><path d="M10 20a2 2 0 0 0 4 0" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" /></svg>
+                  {unread > 0 && <span class="team-bell-badge">{unread > 99 ? '99+' : unread}</span>}
+                </a>
+              )
+            }
+            {
               email && (
                 <a class="team-profile" href="/team/profile" data-astro-prefetch="hover" aria-current={path === '/team/profile' ? 'page' : undefined}>
                   {studio?.avatarUrl ? (
-                    <img class="team-avatar" src={studio.avatarUrl} alt="" width="32" height="32" />
+                    <img class="team-avatar" src={studio.avatarUrl} alt="" referrerpolicy="no-referrer" width="32" height="32" />
                   ) : (
                     <span class="team-avatar team-avatar-fallback" aria-hidden="true">
                       {label.slice(0, 1).toUpperCase()}
@@ -111,12 +171,58 @@ function current(href: string) {
         </div>
       </div>
     </header>
+    {
+      viewAs && (
+        <div class="view-as-bar" role="status">
+          <div class="wrap view-as-inner">
+            <p>
+              <span class="view-as-dot" aria-hidden="true" />
+              Viewing as <strong>{label}</strong>
+              <span class="view-as-meta">
+                {label !== viewAs.email ? `${viewAs.email} · ` : ''}read-only preview · ends {previewEnds}
+              </span>
+            </p>
+            <form method="post" action="/team/view-as" data-astro-reload>
+              <input type="hidden" name="intent" value="stop" />
+              <input type="hidden" name="back" value={here} />
+              <button class="btn" type="submit">Exit preview</button>
+            </form>
+          </div>
+        </div>
+      )
+    }
     <main id="main" class="team-main">
       <slot />
     </main>
     <footer class="team-foot wrap">
       <a href="/">Public site</a>
+      <span class="team-foot-kbd">Press <kbd>?</kbd> for keyboard shortcuts</span>
     </footer>
+    <dialog class="team-modal" id="modal-shortcuts" aria-labelledby="modal-shortcuts-title">
+      <div class="team-modal-card">
+        <header class="team-modal-head">
+          <div><h2 id="modal-shortcuts-title">Keyboard shortcuts</h2></div>
+          <button class="team-modal-x" type="button" data-modal-close aria-label="Close">
+            <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18" stroke="currentColor" stroke-width="2" stroke-linecap="round" /></svg>
+          </button>
+        </header>
+        <div class="team-modal-body">
+          <dl class="kbd-list">
+            <div><dt><kbd>Q</kbd></dt><dd>Add a task (on a project)</dd></div>
+            <div><dt><kbd>B</kbd></dt><dd>Report a bug (on a project)</dd></div>
+            <div><dt><kbd>/</kbd></dt><dd>Search</dd></div>
+            <div><dt><kbd>J</kbd> <kbd>K</kbd></dt><dd>Next / previous task, then <kbd>Enter</kbd> to open</dd></div>
+            <div><dt><kbd>G</kbd> <kbd>H</kbd></dt><dd>Go to Overview</dd></div>
+            <div><dt><kbd>G</kbd> <kbd>T</kbd></dt><dd>Go to My tasks</dd></div>
+            <div><dt><kbd>G</kbd> <kbd>P</kbd></dt><dd>Go to Projects</dd></div>
+            <div><dt><kbd>G</kbd> <kbd>I</kbd></dt><dd>Go to Inbox</dd></div>
+            <div><dt><kbd>G</kbd> <kbd>W</kbd></dt><dd>Go to Workload</dd></div>
+            <div><dt><kbd>Esc</kbd></dt><dd>Close a pop-up or panel</dd></div>
+            <div><dt><kbd>?</kbd></dt><dd>Show this list</dd></div>
+          </dl>
+        </div>
+      </div>
+    </dialog>
     <dialog class="team-confirm" id="team-confirm" aria-labelledby="team-confirm-copy">
       <form method="dialog" class="team-confirm-card">
         <p id="team-confirm-copy"></p>
@@ -127,6 +233,92 @@ function current(href: string) {
       </form>
     </dialog>
     <script is:inline>
+      // Attach document-level listeners once; in-app navigation keeps the same document.
+      if (!window.__teamUi) {
+      window.__teamUi = true;
+
+      // Keyboard shortcuts (ignored while typing).
+      (function () {
+        let pendingG = 0;
+        const go = (path) => {
+          const link = document.createElement('a');
+          link.href = path;
+          document.body.append(link);
+          link.click();
+          link.remove();
+        };
+        const open = (id) => {
+          const opener = document.querySelector('[data-modal-open="' + id + '"]');
+          if (opener instanceof HTMLElement) {
+            opener.click();
+            return true;
+          }
+          return false;
+        };
+        document.addEventListener('keydown', (event) => {
+          if (event.metaKey || event.ctrlKey || event.altKey || event.defaultPrevented) return;
+          const target = event.target;
+          if (target instanceof HTMLElement && (target.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName))) return;
+          const help = event.key === '?' || (event.key === '/' && event.shiftKey);
+          if (document.querySelector('dialog[open]') && !help) return;
+          const key = event.key.toLowerCase();
+          if (pendingG && Date.now() - pendingG < 1200) {
+            pendingG = 0;
+            const dest = { h: '/team', t: '/team/tasks', p: '/team/projects', i: '/team/inbox', w: '/team/workload', r: '/team/reports' }[key];
+            if (dest) {
+              event.preventDefault();
+              go(dest);
+            }
+            return;
+          }
+          if (key === 'g') {
+            pendingG = Date.now();
+            return;
+          }
+          if (help) {
+            event.preventDefault();
+            const dialog = document.getElementById('modal-shortcuts');
+            if (dialog instanceof HTMLDialogElement && !dialog.open) dialog.showModal();
+            return;
+          }
+          if (key === '/') {
+            const field = document.querySelector('#q, [data-pj-search], .search-form input');
+            event.preventDefault();
+            if (field instanceof HTMLElement) field.focus();
+            else go('/team/search');
+            return;
+          }
+          if (key === 'q' && open('task')) return event.preventDefault();
+          if (key === 'b' && open('bug')) return event.preventDefault();
+          if (key === 'j' || key === 'k') {
+            const items = [...document.querySelectorAll('.tw-title, .tw-card > a, .pj-card')].filter((el) => el.offsetParent !== null);
+            if (items.length === 0) return;
+            event.preventDefault();
+            const index = items.indexOf(document.activeElement);
+            const next = key === 'j' ? Math.min(items.length - 1, index + 1) : Math.max(0, index < 0 ? 0 : index - 1);
+            items[next].focus();
+            items[next].scrollIntoView({ block: 'nearest' });
+          }
+        });
+      })();
+
+      // Header "More" menu: close on outside click and after choosing a link.
+      document.addEventListener('click', (event) => {
+        document.querySelectorAll('.team-more details[open]').forEach((menu) => {
+          const target = event.target;
+          if (!(target instanceof Node) || !menu.contains(target) || (target instanceof Element && target.closest('a'))) {
+            menu.removeAttribute('open');
+          }
+        });
+      });
+
+      // Running timers: refresh "12m" style labels every 30 seconds.
+      setInterval(() => {
+        document.querySelectorAll('.team-timer [data-live-since]').forEach((el) => {
+          const minutes = Math.max(0, Math.round((Date.now() - Date.parse(el.getAttribute('data-live-since') || '')) / 60000));
+          el.textContent = minutes >= 60 ? Math.floor(minutes / 60) + 'h ' + (minutes % 60) + 'm' : minutes + 'm';
+        });
+      }, 30000);
       document.addEventListener('click', async (event) => {
         const target = event.target;
         if (!(target instanceof Element)) return;
@@ -145,10 +337,49 @@ function current(href: string) {
       });
 
       (function () {
-        const dialog = document.getElementById('team-confirm');
-        const copy = document.getElementById('team-confirm-copy');
-        const go = document.getElementById('team-confirm-go');
-        if (!(dialog instanceof HTMLDialogElement) || !copy || !go) return;
+        // Pop-up forms (components/Modal.astro).
+        function openModal(dialog) {
+          if (!(dialog instanceof HTMLDialogElement) || dialog.open) return;
+          document.querySelectorAll('dialog.team-modal[open]').forEach((other) => other.close());
+          dialog.showModal();
+          if (dialog.hasAttribute('data-no-focus')) return;
+          const field =
+            dialog.querySelector('[data-autofocus]') ||
+            dialog.querySelector('input:not([type=hidden]):not([type=checkbox]):not([type=file]), select, textarea');
+          if (field instanceof HTMLElement) setTimeout(() => field.focus(), 30);
+        }
+
+        document.addEventListener('click', (event) => {
+          const target = event.target;
+          if (!(target instanceof Element)) return;
+          const opener = target.closest('[data-modal-open]');
+          if (opener) {
+            const dialog = document.getElementById('modal-' + opener.getAttribute('data-modal-open'));
+            if (dialog instanceof HTMLDialogElement) {
+              event.preventDefault();
+              opener.closest('details[open]')?.removeAttribute('open');
+              openModal(dialog);
+            }
+            return;
+          }
+          if (target.closest('[data-modal-close]')) {
+            target.closest('dialog')?.close();
+            return;
+          }
+          // Click on the backdrop (outside the card) closes the pop-up.
+          if (target instanceof HTMLDialogElement && target.classList.contains('team-modal')) target.close();
+        });
+
+        // Runs on the first load and after every in-app (view transition) navigation.
+        document.addEventListener('astro:page-load', () => {
+          const auto = document.querySelector('dialog.team-modal[data-autoopen]');
+          if (auto) openModal(auto);
+        });
+      })();
+
+      (function () {
+        // Look the dialog up each time: in-app navigation swaps the page, so a reference
+        // captured on first load would point at a removed element.
         const allowed = new WeakSet();
         let pending = null;
 
@@ -157,6 +388,10 @@ function current(href: string) {
           if (!(form instanceof HTMLFormElement)) return;
           const message = form.getAttribute('data-confirm');
           if (!message || allowed.has(form)) return;
+          const dialog = document.getElementById('team-confirm');
+          const copy = document.getElementById('team-confirm-copy');
+          const go = document.getElementById('team-confirm-go');
+          if (!(dialog instanceof HTMLDialogElement) || !copy || !go) return;
           event.preventDefault();
           pending = form;
           copy.textContent = message;
@@ -164,16 +399,24 @@ function current(href: string) {
           dialog.showModal();
         });
 
-        dialog.addEventListener('close', () => {
-          const form = pending;
-          pending = null;
-          if (dialog.returnValue !== 'ok' || !form) return;
-          allowed.add(form);
-          form.requestSubmit();
-        });
+        // 'close' does not bubble, so listen in the capture phase.
+        document.addEventListener(
+          'close',
+          (event) => {
+            const dialog = event.target;
+            if (!(dialog instanceof HTMLDialogElement) || dialog.id !== 'team-confirm') return;
+            const form = pending;
+            pending = null;
+            if (dialog.returnValue !== 'ok' || !form) return;
+            allowed.add(form);
+            form.requestSubmit();
+          },
+          true,
+        );
 
-        dialog.addEventListener('click', (event) => {
-          if (event.target === dialog) dialog.close('cancel');
+        document.addEventListener('click', (event) => {
+          const target = event.target;
+          if (target instanceof HTMLDialogElement && target.id === 'team-confirm') target.close('cancel');
         });
       })();
 
@@ -262,6 +505,7 @@ function current(href: string) {
           previewFile(input);
         });
       })();
+      }
     </script>
     <Fragment set:html="<!--/email_off-->" />
   </body>

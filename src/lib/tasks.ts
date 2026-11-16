@@ -18,8 +18,56 @@ export type ProjectTask = {
   link_url: string;
   due_notice_on: string | null;
   sort_order: number;
+  priority: TaskPriority;
+  created_by_email: string;
+  completed_at: string | null;
+  start_on: string | null;
+  recur: string;
+  recur_next_id: string | null;
+  kind?: 'task' | 'bug';
   created_at: string;
   updated_at: string;
+};
+
+export const TASK_PRIORITIES = ['high', 'medium', 'low'] as const;
+export type TaskPriority = (typeof TASK_PRIORITIES)[number] | '';
+
+export function isTaskPriority(value: string): value is TaskPriority {
+  return value === '' || (TASK_PRIORITIES as readonly string[]).includes(value);
+}
+
+export function priorityLabel(priority: TaskPriority | string | null | undefined) {
+  if (priority === 'high') return 'High';
+  if (priority === 'medium') return 'Medium';
+  if (priority === 'low') return 'Low';
+  return 'No priority';
+}
+
+/** Higher number sorts first. */
+export function priorityRank(priority: TaskPriority | string | null | undefined) {
+  if (priority === 'high') return 3;
+  if (priority === 'medium') return 2;
+  if (priority === 'low') return 1;
+  return 0;
+}
+
+export type TaskSubtask = {
+  id: string;
+  task_id: string;
+  project_id: string;
+  title: string;
+  done: boolean;
+  sort_order: number;
+  created_at: string;
+};
+
+export type TaskComment = {
+  id: string;
+  task_id: string;
+  project_id: string;
+  author_email: string;
+  body: string;
+  created_at: string;
 };
 
 export type TaskWriteResult =
@@ -101,22 +149,45 @@ async function dropStoredImage(supabase: SupabaseClient, path: string) {
   }
 }
 
+// Only fields present in the form are written, so a form that edits a few fields
+// (the task panel, quick add) never clears the others.
 function payloadFromForm(form: FormData) {
   const title = String(form.get('title') ?? '').trim();
   if (!title) return null;
-  const milestoneRaw = String(form.get('milestone_id') ?? '').trim();
-  const assignee = String(form.get('assignee_email') ?? '').trim().toLowerCase();
-  const due = String(form.get('due_on') ?? '').trim();
-  const link = parseHttpUrl(String(form.get('link_url') ?? ''));
-  if ('error' in link) return { error: 'invalid' as const };
-  return {
-    title,
-    notes: String(form.get('notes') ?? '').trim(),
-    milestone_id: milestoneRaw || null,
-    assignee_email: assignee,
-    due_on: due || null,
-    link_url: link.url,
-  };
+  const payload: {
+    title: string;
+    notes?: string;
+    milestone_id?: string | null;
+    assignee_email?: string;
+    due_on?: string | null;
+    link_url?: string;
+    priority?: TaskPriority;
+    start_on?: string | null;
+    recur?: string;
+  } = { title };
+  if (form.has('notes')) payload.notes = String(form.get('notes') ?? '').trim();
+  if (form.has('milestone_id')) payload.milestone_id = String(form.get('milestone_id') ?? '').trim() || null;
+  if (form.has('assignee_email')) payload.assignee_email = String(form.get('assignee_email') ?? '').trim().toLowerCase();
+  if (form.has('due_on')) payload.due_on = String(form.get('due_on') ?? '').trim() || null;
+  if (form.has('link_url')) {
+    const link = parseHttpUrl(String(form.get('link_url') ?? ''));
+    if ('error' in link) return { error: 'invalid' as const };
+    payload.link_url = link.url;
+  }
+  if (form.has('start_on')) payload.start_on = String(form.get('start_on') ?? '').trim() || null;
+  if (form.has('recur')) {
+    const recur = String(form.get('recur') ?? '');
+    if (!['', 'daily', 'weekly', 'monthly'].includes(recur)) return { error: 'invalid' as const };
+    payload.recur = recur;
+  }
+  // A start date after the due date is a typo; keep them in order.
+  if (payload.start_on && payload.due_on && payload.start_on > payload.due_on) payload.start_on = payload.due_on;
+  if (form.has('priority')) {
+    const priority = String(form.get('priority') ?? '');
+    if (!isTaskPriority(priority)) return { error: 'invalid' as const };
+    payload.priority = priority;
+  }
+  return payload;
 }
 
 async function imageFromForm(
@@ -147,6 +218,7 @@ export async function addTask(
   form: FormData,
   projectId: string,
   userId: string | null,
+  actorEmail = '',
 ): Promise<TaskWriteResult> {
   const payload = payloadFromForm(form);
   if (!payload || 'error' in payload) return { error: 'invalid' };
@@ -161,6 +233,7 @@ export async function addTask(
       ...image,
       sort_order,
       status: 'todo',
+      created_by_email: actorEmail,
     })
     .select('id')
     .single();
@@ -172,8 +245,8 @@ export async function addTask(
     error: null,
     id: data.id as string,
     title: payload.title,
-    assignee_email: payload.assignee_email,
-    due_on: payload.due_on,
+    assignee_email: payload.assignee_email ?? '',
+    due_on: payload.due_on ?? null,
   };
 }
 
@@ -188,7 +261,7 @@ export async function updateTask(
   if (!taskId || !payload || 'error' in payload) return { error: 'invalid' };
   const { data: current } = await supabase
     .from('project_tasks')
-    .select('image_url, assignee_email')
+    .select('image_url, assignee_email, due_on')
     .eq('id', taskId)
     .eq('project_id', projectId)
     .maybeSingle();
@@ -207,8 +280,8 @@ export async function updateTask(
     error: null,
     id: taskId,
     title: payload.title,
-    assignee_email: payload.assignee_email,
-    due_on: payload.due_on,
+    assignee_email: payload.assignee_email ?? String(current?.assignee_email ?? '').trim().toLowerCase(),
+    due_on: payload.due_on !== undefined ? payload.due_on : ((current?.due_on as string | null) ?? null),
     previous_assignee: String(current?.assignee_email ?? '').trim().toLowerCase(),
   };
 }
@@ -270,4 +343,143 @@ export async function removeTask(supabase: SupabaseClient, taskId: string, proje
   if (error) return { error: 'invalid' as const };
   await dropStoredImage(supabase, String(current?.image_url ?? ''));
   return { error: null };
+}
+
+// ---------- Subtasks ----------
+
+export async function addSubtask(supabase: SupabaseClient, form: FormData) {
+  const taskId = String(form.get('task_id') ?? '');
+  const title = String(form.get('subtask_title') ?? '').trim().slice(0, 300);
+  if (!taskId || !title) return { error: 'invalid' as const };
+  const { data: last } = await supabase
+    .from('task_subtasks')
+    .select('sort_order')
+    .eq('task_id', taskId)
+    .order('sort_order', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  // project_id is filled from the task by a database trigger.
+  const { error } = await supabase
+    .from('task_subtasks')
+    .insert({ task_id: taskId, title, sort_order: (last?.sort_order ?? -1) + 1 });
+  if (error) {
+    console.error('subtask add failed', error.message);
+    return { error: 'invalid' as const };
+  }
+  return { error: null, title };
+}
+
+export async function toggleSubtask(supabase: SupabaseClient, form: FormData, projectId: string) {
+  const subtaskId = String(form.get('subtask_id') ?? '');
+  if (!subtaskId) return { error: 'invalid' as const };
+  const done = String(form.get('done') ?? '') === '1';
+  const { data, error } = await supabase
+    .from('task_subtasks')
+    .update({ done })
+    .eq('id', subtaskId)
+    .eq('project_id', projectId)
+    .select('task_id, title')
+    .maybeSingle();
+  return error ? { error: 'invalid' as const } : { error: null, done, taskId: String(data?.task_id ?? ''), title: String(data?.title ?? '') };
+}
+
+export async function removeSubtask(supabase: SupabaseClient, form: FormData, projectId: string) {
+  const subtaskId = String(form.get('subtask_id') ?? '');
+  if (!subtaskId) return { error: 'invalid' as const };
+  const { error } = await supabase.from('task_subtasks').delete().eq('id', subtaskId).eq('project_id', projectId);
+  return error ? { error: 'invalid' as const } : { error: null };
+}
+
+// ---------- Comments ----------
+
+export async function addComment(supabase: SupabaseClient, form: FormData, authorEmail: string, mentions: string[] = []) {
+  const taskId = String(form.get('task_id') ?? '');
+  const body = String(form.get('body') ?? '').trim().slice(0, 2000);
+  if (!taskId || !body || !authorEmail) return { error: 'invalid' as const };
+  const row: Record<string, unknown> = { task_id: taskId, author_email: authorEmail, body };
+  if (mentions.length > 0) row.mentions = mentions;
+  const { error } = await supabase.from('task_comments').insert(row);
+  if (error) {
+    console.error('comment add failed', error.message);
+    return { error: 'invalid' as const };
+  }
+  return { error: null, body };
+}
+
+export async function removeComment(supabase: SupabaseClient, form: FormData, projectId: string) {
+  const commentId = String(form.get('comment_id') ?? '');
+  if (!commentId) return { error: 'invalid' as const };
+  // RLS decides: authors remove their own; leads/managers remove any.
+  const { error, count } = await supabase
+    .from('task_comments')
+    .delete({ count: 'exact' })
+    .eq('id', commentId)
+    .eq('project_id', projectId);
+  return error || !count ? { error: 'forbidden' as const } : { error: null };
+}
+
+// ---------- Reads ----------
+
+/** Subtask progress and comment counts for a set of tasks. */
+export async function taskCounts(supabase: SupabaseClient, projectIds: string[]) {
+  const counts = new Map<string, { subtasks: number; subtasksDone: number; comments: number }>();
+  if (projectIds.length === 0) return counts;
+  const [subs, notes] = await Promise.all([
+    supabase.from('task_subtasks').select('task_id, done').in('project_id', projectIds),
+    supabase.from('task_comments').select('task_id').in('project_id', projectIds),
+  ]);
+  const bump = (taskId: string) => {
+    const row = counts.get(taskId) ?? { subtasks: 0, subtasksDone: 0, comments: 0 };
+    counts.set(taskId, row);
+    return row;
+  };
+  for (const row of (subs.data ?? []) as { task_id: string; done: boolean }[]) {
+    const tally = bump(row.task_id);
+    tally.subtasks += 1;
+    if (row.done) tally.subtasksDone += 1;
+  }
+  for (const row of (notes.data ?? []) as { task_id: string }[]) bump(row.task_id).comments += 1;
+  return counts;
+}
+
+export async function taskDetail(supabase: SupabaseClient, projectId: string, taskId: string) {
+  const [task, subtasks, comments, followers, attachments, events, waitsOn, blocks] = await Promise.all([
+    supabase.from('project_tasks').select('*').eq('id', taskId).eq('project_id', projectId).maybeSingle(),
+    supabase.from('task_subtasks').select('*').eq('task_id', taskId).order('sort_order'),
+    supabase.from('task_comments').select('*').eq('task_id', taskId).order('created_at'),
+    supabase.from('task_followers').select('email').eq('task_id', taskId).order('created_at'),
+    supabase.from('task_attachments').select('*').eq('task_id', taskId).order('created_at'),
+    supabase.from('task_events').select('id, task_id, actor_email, action, detail, created_at').eq('task_id', taskId).order('created_at'),
+    supabase.from('task_dependencies').select('depends_on_id').eq('task_id', taskId),
+    supabase.from('task_dependencies').select('task_id').eq('depends_on_id', taskId),
+  ]);
+  if (!task.data) return null;
+  return {
+    task: task.data as ProjectTask,
+    subtasks: (subtasks.data ?? []) as TaskSubtask[],
+    comments: (comments.data ?? []) as TaskComment[],
+    followers: (followers.data ?? []).map((row) => String(row.email)),
+    attachments: (attachments.data ?? []) as import('./taskCollab').TaskAttachment[],
+    events: (events.data ?? []) as import('./taskCollab').TaskEvent[],
+    waitsOn: (waitsOn.data ?? []).map((row) => String(row.depends_on_id)),
+    blocks: (blocks.data ?? []).map((row) => String(row.task_id)),
+  };
+}
+
+/** Sort for task lists: open before done, late and high priority first, then by due date. */
+export function sortTaskQueue<T extends Pick<ProjectTask, 'status' | 'due_on' | 'priority' | 'sort_order' | 'title'>>(
+  rows: T[],
+) {
+  return [...rows].sort((a, b) => {
+    const doneA = a.status === 'done' ? 1 : 0;
+    const doneB = b.status === 'done' ? 1 : 0;
+    if (doneA !== doneB) return doneA - doneB;
+    if (a.due_on && b.due_on && a.due_on !== b.due_on) return a.due_on.localeCompare(b.due_on);
+    if (a.due_on && !b.due_on) return -1;
+    if (!a.due_on && b.due_on) return 1;
+    const pr = priorityRank(b.priority) - priorityRank(a.priority);
+    if (pr) return pr;
+    if (a.sort_order !== b.sort_order) return a.sort_order - b.sort_order;
+    return a.title.localeCompare(b.title);
+  });
 }

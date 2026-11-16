@@ -20,5 +20,8 @@ declare namespace App {
     supabase: import('@supabase/supabase-js').SupabaseClient;
     user: import('@supabase/supabase-js').User | null;
     studio: import('./lib/access').StudioAccess | null;
+    /** The signed-in account, even during a "view as" preview (where `user` is the teammate). */
+    realUser: import('@supabase/supabase-js').User | null;
+    viewAs: import('./lib/viewAs').ViewAs | null;
   }
 }

@@ -71,9 +71,10 @@ const creating =
     </nav>
     <TeamFlash />
 
+    <div class="team-two">
     {
       creating && (
-        <section class="team-card" id="new-role">
+        <section class="team-card team-two-aside" id="new-role">
           <h2>New role</h2>
           <form class="form team-form" method="post">
             <p class="field">
@@ -133,7 +134,7 @@ const creating =
       )
     }
 
-    <section>
+    <section class="team-two-main">
       <h2 class="team-h2">{creating ? 'All roles' : 'Roles'}</h2>
       <nav class="member-filter" aria-label="Filter roles">
         {
@@ -166,5 +167,6 @@ const creating =
         )
       }
     </section>
+    </div>
   </div>
 </Team>

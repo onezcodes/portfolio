@@ -10,6 +10,8 @@ const notices: Record<string, string> = {
   removed: 'Email removed from the team list.',
   granted: 'Access saved. New viewers were emailed.',
   'granted-no-mail': 'Access saved, but some invitation emails did not send.',
+  'view-as-on': 'Preview started. You see exactly what this teammate sees. Nothing can be changed until you exit.',
+  'view-as-off': 'Preview ended. You are back to your own view.',
 };
 
 const errors: Record<string, string> = {
@@ -24,6 +26,13 @@ const errors: Record<string, string> = {
   'mail-setup': 'Invitation email is not set up yet. Add a Resend API key, then try Invite again.',
   'mail-failed': 'The email did not send. Try again in a moment.',
   'vault-setup': 'Credential encryption is not set up yet.',
+  'view-as-readonly': 'Preview is read-only. Exit the preview to make changes.',
+  'too-large-file': 'That file is over 10 MB.',
+  'file-type': 'That file type cannot be attached. Use an image, PDF, text, Office file, or zip.',
+  'dependency-loop': 'Those two tasks already wait on each other.',
+  webhook: 'Use a Slack or Discord incoming webhook URL (https://hooks.slack.com/services/… or https://discord.com/api/webhooks/…).',
+  'template-duplicate': 'A template with that name already exists.',
+  'view-as-gone': 'That teammate is no longer on the team, so the preview ended.',
 };
 
 const notice = Astro.url.searchParams.get('notice');

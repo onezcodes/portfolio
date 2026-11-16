@@ -23,6 +23,8 @@ interface Props {
   showMoney?: boolean;
   events?: CalEvent[];
   lede?: string;
+  /** Start the dated list collapsed (the grid already shows the same events). */
+  agendaCollapsed?: boolean;
 }
 
 const {
@@ -37,6 +39,7 @@ const {
   showMoney = true,
   events: givenEvents,
   lede,
+  agendaCollapsed = false,
 } = Astro.props;
 const events = givenEvents ?? projectEvents(startedOn, milestones, contributions, entries, showMoney, tasks);
 const cells = monthGrid(cursor, events, today);
@@ -127,6 +130,8 @@ function kindLabel(kind: CalEvent['kind']) {
     monthEvents.length === 0 ? (
       <p class="muted">Nothing dated in {heading}.</p>
     ) : (
+      <details class="cal-agenda" open={!agendaCollapsed}>
+        <summary>Agenda · {monthEvents.length} {monthEvents.length === 1 ? 'date' : 'dates'}</summary>
       <ol class="cal-list">
         {monthEvents.map((event) => (
           <li>
@@ -150,6 +155,7 @@ function kindLabel(kind: CalEvent['kind']) {
           </li>
         ))}
       </ol>
+      </details>
     )
   }
 </section>

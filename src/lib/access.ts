@@ -5,7 +5,7 @@ import { emailOf, isSuperAdmin, type TeamSupabase } from './supabase';
 export const PROJECT_ROLES = ['lead', 'manager', 'collaborator', 'developer', 'qa'] as const;
 export type ProjectRole = (typeof PROJECT_ROLES)[number];
 
-export const PROJECT_TABS = ['schedule', 'funding', 'ledger', 'details', 'people'] as const;
+export const PROJECT_TABS = ['schedule', 'tasks', 'funding', 'ledger', 'details', 'people'] as const;
 export type ProjectTab = (typeof PROJECT_TABS)[number];
 
 export const ROLE_META: { id: ProjectRole; label: string; hint: string }[] = [
@@ -73,7 +73,10 @@ export function capsFromRoles(roles: ProjectRole[], superAdmin = false): Project
   const canEditDetails = canPlan;
   const assigned = superAdmin || roles.length > 0;
   const tabs: { id: ProjectTab; label: string }[] = [];
-  if (canSchedule) tabs.push({ id: 'schedule', label: 'Schedule' });
+  if (canSchedule) {
+    tabs.push({ id: 'schedule', label: 'Schedule' });
+    tabs.push({ id: 'tasks', label: 'Tasks' });
+  }
   if (canFinance) {
     tabs.push({ id: 'funding', label: 'Funding' });
     tabs.push({ id: 'ledger', label: 'Ledger' });
@@ -110,7 +113,24 @@ export function pickTab(value: string | null, caps: ProjectCaps): ProjectTab {
 
 export function tabForIntent(intent: string): ProjectTab {
   if (intent.includes('member')) return 'people';
-  if (intent.includes('milestone') || intent.includes('task') || intent.includes('checkin')) return 'schedule';
+  if (
+    intent.includes('task') ||
+    intent.includes('comment') ||
+    intent.includes('follow') ||
+    intent.includes('attachment') ||
+    intent.includes('dependency') ||
+    intent.endsWith('-view') ||
+    intent === 'add-link' ||
+    intent.includes('timer') ||
+    intent.includes('time') ||
+    intent === 'report-bug' ||
+    intent === 'apply-checklist'
+  ) {
+    return 'tasks';
+  }
+  if (intent.startsWith('share-') || intent === 'update-chat') return 'details';
+  if (intent === 'save-template') return 'schedule';
+  if (intent.includes('milestone') || intent.includes('checkin')) return 'schedule';
   if (intent.includes('funding') || intent.includes('contribution')) return 'funding';
   if (intent.includes('entry')) return 'ledger';
   return 'details';
@@ -130,6 +150,18 @@ export function allowedIntent(intent: string, caps: ProjectCaps) {
     return caps.canPlan;
   }
   if (intent.includes('milestone') || intent.startsWith('task-')) return caps.canProgress;
+  // Subtasks and comments: anyone who can move work forward (RLS re-checks authorship on delete).
+  if (intent === 'add-subtask' || intent === 'toggle-subtask' || intent === 'delete-subtask') return caps.canProgress;
+  if (intent === 'add-comment' || intent === 'delete-comment') return caps.canProgress;
+  if (intent === 'follow' || intent === 'unfollow') return caps.canProgress;
+  if (intent === 'add-attachment' || intent === 'add-link' || intent === 'delete-attachment') return caps.canProgress;
+  if (intent === 'add-dependency' || intent === 'delete-dependency') return caps.canPlan;
+  if (intent === 'save-view' || intent === 'delete-view') return caps.canSchedule;
+  if (intent === 'start-timer' || intent === 'stop-timer' || intent === 'log-time' || intent === 'delete-time') return caps.canProgress;
+  if (intent === 'report-bug' || intent === 'apply-checklist') return caps.canProgress;
+  if (intent === 'save-template') return caps.canPlan;
+  if (intent === 'update-chat') return caps.canEditDetails;
+  if (intent.startsWith('share-')) return caps.lead;
   if (intent === 'add-checkin') return caps.canProgress;
   if (intent === 'delete-checkin') return caps.canProgress;
   if (intent.includes('funding') || intent.includes('contribution')) return caps.canFinance;
@@ -140,7 +172,11 @@ export function allowedIntent(intent: string, caps: ProjectCaps) {
   return false;
 }
 
-export async function loadStudioAccess(supabase: TeamSupabase, user: User | null): Promise<StudioAccess> {
+export async function loadStudioAccess(
+  supabase: TeamSupabase,
+  user: User | null,
+  options: { preview?: boolean } = {},
+): Promise<StudioAccess> {
   const email = emailOf(user);
   const superAdmin = isSuperAdmin(user);
   const byProject = new Map<string, ProjectRole[]>();
@@ -186,7 +222,8 @@ export async function loadStudioAccess(supabase: TeamSupabase, user: User | null
   if (avatarUrl && avatarUrl !== String(profile.data?.avatar_url ?? '').trim()) {
     patch.avatar_url = avatarUrl;
   }
-  if (seenStale || patch.avatar_url) {
+  // A "view as" preview is read-only: never record presence for the previewed teammate.
+  if (!options.preview && (seenStale || patch.avatar_url)) {
     const { error } = await supabase.from('team_members').update(patch).eq('email', email);
     if (error) console.error('member presence failed', error.message);
   }

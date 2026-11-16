@@ -1,0 +1,673 @@
+---
+/**
+ * Project Tasks tab: a List view grouped by stage and a Board view (drag cards between
+ * status columns). Clicking a task opens the task panel (?task=<id>).
+ */
+import type { Milestone } from '../lib/milestones';
+import type { TeamMember } from '../lib/ledger';
+import { personFace, personInitial } from '../lib/profile';
+import {
+  TASK_STATUSES,
+  priorityLabel,
+  sortTaskQueue,
+  taskIsLate,
+  taskStatusLabel,
+  priorityRank,
+  type ProjectTask,
+  type TaskStatus,
+} from '../lib/tasks';
+import { viewQuery, type SavedView, type TaskDependency } from '../lib/taskCollab';
+
+interface Props {
+  tasks: ProjectTask[];
+  milestones: Milestone[];
+  people: Pick<TeamMember, 'email' | 'display_name' | 'avatar_url'>[];
+  counts: Map<string, { subtasks: number; subtasksDone: number; comments: number }>;
+  view: 'list' | 'board';
+  who: string;
+  viewerEmail: string;
+  today: string;
+  canPlan: boolean;
+  canProgress: boolean;
+  readOnly: boolean;
+  /** Base URL of the Tasks tab, e.g. /team/projects/<id>?tab=tasks */
+  base: string;
+  dependencies: TaskDependency[];
+  savedViews: SavedView[];
+  params: URLSearchParams;
+  milestoneDates: Milestone[];
+}
+
+const {
+  tasks,
+  milestones,
+  people,
+  counts,
+  view: rawView,
+  who,
+  viewerEmail,
+  today,
+  canPlan,
+  canProgress,
+  readOnly,
+  base,
+  dependencies,
+  savedViews,
+  params,
+} = Astro.props;
+const view: 'list' | 'board' | 'timeline' =
+  params.get('view') === 'timeline' ? 'timeline' : rawView === 'board' ? 'board' : 'list';
+const sort = ['due', 'priority', 'created', 'title'].includes(params.get('sort') ?? '') ? (params.get('sort') as string) : 'due';
+const show = ['open', 'done', 'all'].includes(params.get('show') ?? '') ? (params.get('show') as string) : 'open';
+const pri = ['high', 'medium', 'low', 'none'].includes(params.get('pri') ?? '') ? (params.get('pri') as string) : '';
+const due = ['overdue', 'today', 'week', 'none'].includes(params.get('due') ?? '') ? (params.get('due') as string) : '';
+const kind = params.get('kind') === 'bug' ? 'bug' : params.get('kind') === 'task' ? 'task' : '';
+const currentQuery = viewQuery(params);
+
+const canMove = canProgress && !readOnly;
+const canAdd = canPlan && !readOnly;
+
+function href(params: Record<string, string>) {
+  const url = new URL(base, 'http://x');
+  for (const [key, value] of Object.entries(params)) {
+    if (value) url.searchParams.set(key, value);
+    else url.searchParams.delete(key);
+  }
+  return `${url.pathname}${url.search}`;
+}
+const keep = { view, who, sort: sort === 'due' ? '' : sort, show: show === 'open' ? '' : show, pri, due, kind };
+const taskHref = (taskId: string) => href({ ...keep, task: taskId });
+
+// Filter by person
+const weekEnd = (() => {
+  const d = new Date(`${today}T12:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + 7);
+  return d.toISOString().slice(0, 10);
+})();
+const filtered = tasks.filter((row) => {
+  if (who === 'me' && row.assignee_email !== viewerEmail) return false;
+  if (who === 'none' && row.assignee_email) return false;
+  if (who && who !== 'me' && who !== 'none' && row.assignee_email !== who) return false;
+  if (pri === 'none' ? row.priority : pri && row.priority !== pri) return false;
+  if (due === 'overdue' && !taskIsLate(row, today)) return false;
+  if (due === 'today' && row.due_on !== today) return false;
+  if (due === 'week' && !(row.due_on && row.due_on >= today && row.due_on <= weekEnd)) return false;
+  if (due === 'none' && row.due_on) return false;
+  if (kind && (row.kind ?? 'task') !== kind) return false;
+  return true;
+});
+const sortRows = (rows: ProjectTask[]) => {
+  if (sort === 'priority')
+    return [...rows].sort((a, b) => priorityRank(b.priority) - priorityRank(a.priority) || String(a.due_on ?? '9').localeCompare(String(b.due_on ?? '9')));
+  if (sort === 'created') return [...rows].sort((a, b) => b.created_at.localeCompare(a.created_at));
+  if (sort === 'title') return [...rows].sort((a, b) => a.title.localeCompare(b.title));
+  return sortTaskQueue(rows);
+};
+// Open tasks each task is still waiting on.
+const statusById = new Map(tasks.map((row) => [row.id, row.status]));
+const waitingOn = new Map<string, number>();
+for (const dep of dependencies) {
+  if (statusById.get(dep.depends_on_id) === 'done') continue;
+  waitingOn.set(dep.task_id, (waitingOn.get(dep.task_id) ?? 0) + 1);
+}
+const filterCount = [sort !== 'due', show !== 'open', Boolean(pri), Boolean(due), Boolean(kind)].filter(Boolean).length;
+const openBugs = tasks.filter((row) => row.kind === 'bug' && row.status !== 'done').length;
+const priLabel: Record<string, string> = { high: 'High priority', medium: 'Medium priority', low: 'Low priority', none: 'No priority' };
+const dueLabelFilter: Record<string, string> = { overdue: 'Overdue', today: 'Due today', week: 'Due this week', none: 'No due date' };
+const assigneeEmails = [...new Set(tasks.map((row) => row.assignee_email).filter(Boolean))];
+const openCount = filtered.filter((row) => row.status !== 'done').length;
+const lateCount = filtered.filter((row) => taskIsLate(row, today)).length;
+
+// List groups: one per stage in plan order, then "No stage"
+const stageIds = new Set(milestones.map((stage) => stage.id));
+const groups = [
+  ...milestones.map((stage) => ({
+    id: stage.id,
+    title: stage.title,
+    hint: stage.status === 'current' ? 'Current stage' : stage.status === 'done' ? 'Stage done' : '',
+    rows: filtered.filter((row) => row.milestone_id === stage.id),
+  })),
+  {
+    id: '',
+    title: 'No stage',
+    hint: '',
+    rows: filtered.filter((row) => !row.milestone_id || !stageIds.has(row.milestone_id)),
+  },
+].map((group) => ({
+  ...group,
+  open: show === 'done' ? [] : sortRows(group.rows.filter((row) => row.status !== 'done')),
+  done: show === 'open' || show === 'all' || show === 'done' ? sortRows(group.rows.filter((row) => row.status === 'done')) : [],
+}));
+// Hide empty stage groups that are already finished, to keep the list short.
+const filtering = Boolean(pri || due || who || kind);
+const shownGroups = groups.filter((group) =>
+  show === 'done'
+    ? group.done.length > 0
+    : group.open.length > 0 ||
+      group.done.length > 0 ||
+      (!filtering && (group.id === '' ? milestones.length === 0 : group.hint !== 'Stage done')),
+);
+
+const columns = TASK_STATUSES.map((status) => {
+  const rows = sortRows(filtered.filter((row) => row.status === status));
+  return { status, rows: status === 'done' ? rows.slice(0, 30) : rows, total: rows.length };
+});
+
+// ---------- Timeline ----------
+const DAY = 24 * 60 * 60 * 1000;
+const toDay = (iso: string) => Math.round(Date.parse(`${iso}T00:00:00Z`) / DAY);
+const todayN = toDay(today);
+const dated = filtered.filter((row) => row.due_on && (show === 'all' || (show === 'done') === (row.status === 'done')));
+const undated = filtered.filter((row) => !row.due_on && row.status !== 'done').length;
+const spans = dated.map((row) => {
+  const end = toDay(row.due_on as string);
+  const start = row.start_on ? Math.min(toDay(row.start_on), end) : end;
+  return { row, start, end };
+});
+const stageMarks = milestones.filter((m) => m.estimated_on).map((m) => ({ title: m.title, day: toDay(m.estimated_on as string), status: m.status }));
+const rawStart = Math.min(todayN - 7, ...spans.map((s) => s.start), ...stageMarks.map((m) => m.day));
+const rawEnd = Math.max(todayN + 28, ...spans.map((s) => s.end), ...stageMarks.map((m) => m.day));
+// Start on a Monday; cap at 20 weeks so the grid stays usable.
+const mondayOffset = (new Date(rawStart * DAY).getUTCDay() + 6) % 7;
+const tlStart = rawStart - mondayOffset;
+const tlDays = Math.min(Math.max(rawEnd - tlStart + 7, 42), 140);
+const tlEnd = tlStart + tlDays - 1;
+const weeks = Array.from({ length: Math.ceil(tlDays / 7) }, (_, i) => tlStart + i * 7);
+const tlGroups = [
+  ...milestones.map((stage) => ({ title: stage.title, rows: spans.filter((s) => s.row.milestone_id === stage.id) })),
+  { title: 'No stage', rows: spans.filter((s) => !s.row.milestone_id || !stageIds.has(s.row.milestone_id)) },
+]
+  .map((g) => ({ ...g, rows: g.rows.sort((a, b) => a.start - b.start || a.end - b.end) }))
+  .filter((g) => g.rows.length > 0);
+const clamp = (n: number) => Math.min(Math.max(n, tlStart), tlEnd);
+const showToday = todayN >= tlStart && todayN <= tlEnd;
+const todayCol = `grid-column:${todayN - tlStart + 1};grid-row:1`;
+const weekLabel = (n: number) => new Date(n * DAY).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', timeZone: 'UTC' });
+
+function face(email: string) {
+  return personFace(email, people);
+}
+
+function dueLabel(row: ProjectTask) {
+  if (!row.due_on) return '';
+  if (row.status !== 'done' && row.due_on === today) return 'Today';
+  const date = new Date(`${row.due_on}T12:00:00`);
+  return date.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' });
+}
+
+function statusIntent(status: TaskStatus) {
+  return `task-${status}`;
+}
+---
+
+<section class="tw" data-task-workspace>
+  <div class="tw-toolbar">
+    <nav class="pj-seg" aria-label="View">
+      <a href={href({ ...keep, view: 'list' })} aria-current={view === 'list' ? 'page' : undefined}>List</a>
+      <a href={href({ ...keep, view: 'board' })} aria-current={view === 'board' ? 'page' : undefined}>Board</a>
+      <a href={href({ ...keep, view: 'timeline' })} aria-current={view === 'timeline' ? 'page' : undefined}>Timeline</a>
+    </nav>
+    <nav class="pj-people tw-who" aria-label="Filter by assignee">
+      <a href={href({ ...keep, who: '' })} aria-current={!who ? 'page' : undefined}>Everyone</a>
+      <a href={href({ ...keep, who: 'me' })} aria-current={who === 'me' ? 'page' : undefined}>My tasks</a>
+      {assigneeEmails
+        .filter((email) => email !== viewerEmail)
+        .map((email) => {
+          const person = face(email);
+          return (
+            <a href={href({ ...keep, who: email })} aria-current={who === email ? 'page' : undefined} title={email}>
+              {person.avatarUrl ? (
+                <img class="face" src={person.avatarUrl} alt="" referrerpolicy="no-referrer" width="24" height="24" />
+              ) : (
+                <span class="face" aria-hidden="true">{personInitial(person.name, email)}</span>
+              )}
+              {person.name.split(/\s+|@/)[0]}
+            </a>
+          );
+        })}
+      <a href={href({ ...keep, who: 'none' })} aria-current={who === 'none' ? 'page' : undefined}>Unassigned</a>
+    </nav>
+    <p class="tw-summary">
+      <strong>{openCount}</strong> open{lateCount > 0 && <span class="late"> · {lateCount} late</span>}
+    </p>
+    {canMove && (
+      <a class="btn btn-ghost" href={href({ ...keep, action: 'bug' })} data-modal-open="bug">🐞 Report bug</a>
+    )}
+    {canAdd && (
+      <a class="btn" href={href({ ...keep, action: 'task' })} data-modal-open="task">+ Add task</a>
+    )}
+  </div>
+
+  <div class="tw-toolbar tw-toolbar-2">
+    <details class="tw-filter">
+      <summary class="btn btn-ghost">
+        Sort &amp; filter{filterCount > 0 && <span class="tw-filter-count">{filterCount}</span>}
+      </summary>
+      <form method="get" class="tw-filter-menu">
+        <input type="hidden" name="tab" value="tasks" />
+        <input type="hidden" name="view" value={view} />
+        {who && <input type="hidden" name="who" value={who} />}
+        <label>
+          <span>Sort by</span>
+          <select name="sort">
+            <option value="due" selected={sort === 'due'}>Due date</option>
+            <option value="priority" selected={sort === 'priority'}>Priority</option>
+            <option value="created" selected={sort === 'created'}>Newest first</option>
+            <option value="title" selected={sort === 'title'}>Name</option>
+          </select>
+        </label>
+        <label>
+          <span>Show</span>
+          <select name="show">
+            <option value="open" selected={show === 'open'}>Open tasks</option>
+            <option value="done" selected={show === 'done'}>Completed only</option>
+            <option value="all" selected={show === 'all'}>All tasks</option>
+          </select>
+        </label>
+        <label>
+          <span>Priority</span>
+          <select name="pri">
+            <option value="">Any</option>
+            <option value="high" selected={pri === 'high'}>High</option>
+            <option value="medium" selected={pri === 'medium'}>Medium</option>
+            <option value="low" selected={pri === 'low'}>Low</option>
+            <option value="none" selected={pri === 'none'}>No priority</option>
+          </select>
+        </label>
+        <label>
+          <span>Due</span>
+          <select name="due">
+            <option value="">Any time</option>
+            <option value="overdue" selected={due === 'overdue'}>Overdue</option>
+            <option value="today" selected={due === 'today'}>Today</option>
+            <option value="week" selected={due === 'week'}>Next 7 days</option>
+            <option value="none" selected={due === 'none'}>No due date</option>
+          </select>
+        </label>
+        <label>
+          <span>Type</span>
+          <select name="kind">
+            <option value="">Tasks and bugs</option>
+            <option value="task" selected={kind === 'task'}>Tasks only</option>
+            <option value="bug" selected={kind === 'bug'}>Bugs only</option>
+          </select>
+        </label>
+        <div class="tw-filter-actions">
+          <a class="btn-text" href={href({ view, who, sort: '', show: '', pri: '', due: '', kind: '' })}>Reset</a>
+          <button class="btn" type="submit">Apply</button>
+        </div>
+      </form>
+    </details>
+    {kind && <a class="tw-active-filter" href={href({ ...keep, kind: '' })}>{kind === 'bug' ? 'Bugs only' : 'Tasks only'} <span aria-hidden="true">×</span></a>}
+    {!kind && openBugs > 0 && <a class="tw-bug-link" href={href({ ...keep, kind: 'bug' })}>🐞 {openBugs} open {openBugs === 1 ? 'bug' : 'bugs'}</a>}
+    {pri && <a class="tw-active-filter" href={href({ ...keep, pri: '' })}>{priLabel[pri]} <span aria-hidden="true">×</span></a>}
+    {due && <a class="tw-active-filter" href={href({ ...keep, due: '' })}>{dueLabelFilter[due]} <span aria-hidden="true">×</span></a>}
+    {show !== 'open' && <a class="tw-active-filter" href={href({ ...keep, show: '' })}>{show === 'done' ? 'Completed only' : 'All tasks'} <span aria-hidden="true">×</span></a>}
+    {sort !== 'due' && <a class="tw-active-filter" href={href({ ...keep, sort: '' })}>Sorted by {sort === 'created' ? 'newest' : sort} <span aria-hidden="true">×</span></a>}
+
+    <div class="tw-views">
+      {savedViews.map((saved) => (
+        <span class:list={['tw-view-chip', saved.query === currentQuery && 'is-on']}>
+          <a href={`${base}${saved.query ? `&${saved.query}` : ''}`}>{saved.name}</a>
+          {!readOnly && (
+            <form method="post">
+              <input type="hidden" name="intent" value="delete-view" />
+              <input type="hidden" name="saved_view_id" value={saved.id} />
+              <input type="hidden" name="tab" value="tasks" />
+              <button type="submit" aria-label={`Delete saved view ${saved.name}`}>×</button>
+            </form>
+          )}
+        </span>
+      ))}
+      {!readOnly && currentQuery && !savedViews.some((saved) => saved.query === currentQuery) && (
+        <details class="tw-save-view">
+          <summary class="btn-text">+ Save this view</summary>
+          <form method="post">
+            <input type="hidden" name="intent" value="save-view" />
+            <input type="hidden" name="tab" value="tasks" />
+            <input type="hidden" name="view_query" value={currentQuery} />
+            <input name="view_name" required maxlength="60" placeholder="e.g. My high priority" />
+            <button class="btn" type="submit">Save</button>
+          </form>
+        </details>
+      )}
+    </div>
+  </div>
+
+  {
+    view === 'timeline' ? (
+      <div class="tl">
+        {spans.length === 0 ? (
+          <div class="pj-empty">
+            <p>No tasks with due dates{filtering ? ' match these filters' : ''}. Add due dates (and start dates) to see them on the timeline.</p>
+          </div>
+        ) : (
+          <div class="tl-wrap" style={`--tl-days:${tlDays}`}>
+            <div class="tl-left">
+              <div class="tl-corner">Task</div>
+              {stageMarks.length > 0 && <div class="tl-label tl-label-stages">Stages</div>}
+              {tlGroups.map((group) => (
+                <>
+                  <div class="tl-group">{group.title}</div>
+                  {group.rows.map(({ row }) => (
+                    <a class:list={['tl-label', taskIsLate(row, today) && 'is-late']} href={taskHref(row.id)} title={row.title}>
+                      <span>{row.title}</span>
+                    </a>
+                  ))}
+                </>
+              ))}
+            </div>
+            <div class="tl-scroll">
+              <div class="tl-right">
+                <div class="tl-head">
+                  {weeks.map((w) => (
+                    <span style={`grid-column:${w - tlStart + 1} / span 7;grid-row:1`}>{weekLabel(w)}</span>
+                  ))}
+                  {showToday && <span class="tl-today tl-today-head" style={todayCol} aria-hidden="true"><em>Today</em></span>}
+                </div>
+                {stageMarks.length > 0 && (
+                  <div class="tl-track tl-stages">
+                    {showToday && <span class="tl-today" style={todayCol} aria-hidden="true" />}
+                    {stageMarks
+                      .filter((m) => m.day >= tlStart && m.day <= tlEnd)
+                      .map((m) => (
+                        <span class:list={['tl-stage', m.status]} style={`grid-column:${m.day - tlStart + 1};grid-row:1`} title={`${m.title} · ${weekLabel(m.day)}`}>
+                          <i aria-hidden="true" />
+                          <em>{m.title}</em>
+                        </span>
+                      ))}
+                  </div>
+                )}
+                {tlGroups.map((group) => (
+                  <>
+                    <div class="tl-track tl-group-track">
+                      {showToday && <span class="tl-today" style={todayCol} aria-hidden="true" />}
+                    </div>
+                    {group.rows.map(({ row, start, end }) => {
+                      const late = taskIsLate(row, today);
+                      const person = row.assignee_email ? face(row.assignee_email) : null;
+                      const s = clamp(start);
+                      const e = clamp(end);
+                      return (
+                        <div class="tl-track">
+                          {showToday && <span class="tl-today" style={todayCol} aria-hidden="true" />}
+                          <a
+                            class:list={['tl-bar', `is-${row.status}`, late && 'is-late', row.priority && `p-${row.priority}`, start === end && 'is-point']}
+                            href={taskHref(row.id)}
+                            style={`grid-column:${s - tlStart + 1} / ${e - tlStart + 2};grid-row:1`}
+                            title={`${row.title} · ${row.start_on ? `${weekLabel(start)} → ` : ''}${weekLabel(end)}${person ? ` · ${person.name}` : ''}`}
+                          >
+                            <span>{start === end ? '' : row.title}</span>
+                          </a>
+                        </div>
+                      );
+                    })}
+                  </>
+                ))}
+              </div>
+            </div>
+          </div>
+        )}
+        {undated > 0 && (
+          <p class="muted tl-undated">
+            {undated} open {undated === 1 ? 'task has' : 'tasks have'} no due date and {undated === 1 ? 'is' : 'are'} not shown. Switch to List to schedule {undated === 1 ? 'it' : 'them'}.
+          </p>
+        )}
+        <p class="muted tl-hint">Bars run from a task's start date to its due date. Diamonds are stage dates. The gold line is today.</p>
+      </div>
+    ) : view === 'list' ? (
+      <div class="tw-list">
+        {shownGroups.length === 0 && (
+          <div class="pj-empty">
+            <p>No tasks match these filters.</p>
+            <a class="btn btn-ghost" href={href({ view, who: '', sort: '', show: '', pri: '', due: '' })}>Clear filters</a>
+          </div>
+        )}
+        {shownGroups.map((group) => (
+          <section class="tw-group">
+            <header class="tw-group-head">
+              <h3>{group.title}</h3>
+              {group.hint && <span class="tw-hint">{group.hint}</span>}
+              <span class="tw-count">{group.open.length}</span>
+            </header>
+            {group.open.length === 0 && group.done.length === 0 && !canAdd && <p class="tw-empty">No tasks.</p>}
+            <ul class="tw-rows">
+              {group.open.map((row) => {
+                const late = taskIsLate(row, today);
+                const count = counts.get(row.id);
+                const person = row.assignee_email ? face(row.assignee_email) : null;
+                return (
+                  <li class:list={['tw-row', `is-${row.status}`, late && 'is-late']}>
+                    {canMove ? (
+                      <form method="post" class="tw-check-form">
+                        <input type="hidden" name="intent" value="task-done" />
+                        <input type="hidden" name="task_id" value={row.id} />
+                        <input type="hidden" name="tab" value="tasks" />
+                        <input type="hidden" name="view" value={view} />
+                        <input type="hidden" name="who" value={who} />
+                        <button class="tw-check" type="submit" aria-label={`Mark "${row.title}" complete`} />
+                      </form>
+                    ) : (
+                      <span class="tw-check is-static" aria-hidden="true" />
+                    )}
+                    <a class="tw-title" href={taskHref(row.id)}>
+                      <span>{row.title}</span>
+                      {row.kind === 'bug' && <em class="tw-bug">Bug</em>}
+                      {row.status !== 'todo' && (
+                        <em class:list={['tw-status', row.status]}>{taskStatusLabel(row.status)}</em>
+                      )}
+                    </a>
+                    <span class="tw-meta">
+                      {waitingOn.get(row.id) && (
+                        <span class="tw-chip tw-waiting" title="Waiting on other tasks">⏳ Waiting on {waitingOn.get(row.id)}</span>
+                      )}
+                      {row.recur && <span class="tw-chip" title="Repeats">↻</span>}
+                      {count && count.subtasks > 0 && (
+                        <span class="tw-chip" title="Subtasks done"><svg class="tw-ico" viewBox="0 0 16 16" aria-hidden="true"><rect x="2" y="2" width="12" height="12" rx="3" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="m5 8 2 2 4-4" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>{count.subtasksDone}/{count.subtasks}</span>
+                      )}
+                      {count && count.comments > 0 && (
+                        <span class="tw-chip" title="Comments"><svg class="tw-ico" viewBox="0 0 16 16" aria-hidden="true"><path d="M3 3.5h10a1 1 0 0 1 1 1v6a1 1 0 0 1-1 1H7l-3 2.5V11.5H3a1 1 0 0 1-1-1v-6a1 1 0 0 1 1-1Z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/></svg>{count.comments}</span>
+                      )}
+                      {row.priority && (
+                        <span class:list={['tw-flag', row.priority]} title={`${priorityLabel(row.priority)} priority`}>
+                          {priorityLabel(row.priority)}
+                        </span>
+                      )}
+                      <span class:list={['tw-due', late && 'late']}>{dueLabel(row)}</span>
+                      {person ? (
+                        person.avatarUrl ? (
+                          <img class="face" src={person.avatarUrl} alt={person.name} title={person.name} referrerpolicy="no-referrer" width="26" height="26" />
+                        ) : (
+                          <span class="face" title={person.name}>{personInitial(person.name, person.email)}</span>
+                        )
+                      ) : (
+                        <span class="face tw-nobody" title="Unassigned">?</span>
+                      )}
+                    </span>
+                  </li>
+                );
+              })}
+            </ul>
+            {canAdd && (
+              <form method="post" class="tw-quick">
+                <input type="hidden" name="intent" value="add-task" />
+                <input type="hidden" name="tab" value="tasks" />
+                <input type="hidden" name="view" value={view} />
+                <input type="hidden" name="who" value={who} />
+                <input type="hidden" name="milestone_id" value={group.id} />
+                {who === 'me' && <input type="hidden" name="assignee_email" value={viewerEmail} />}
+                <label class="sr-only" for={`quick_${group.id || 'none'}`}>Add a task to {group.title}</label>
+                <input id={`quick_${group.id || 'none'}`} name="title" placeholder="+ Add task… press Enter" autocomplete="off" maxlength="200" />
+              </form>
+            )}
+            {group.done.length > 0 && (
+              <details class="tw-done">
+                <summary>Completed · {group.done.length}</summary>
+                <ul class="tw-rows">
+                  {group.done.map((row) => (
+                    <li class="tw-row is-done">
+                      {canMove ? (
+                        <form method="post" class="tw-check-form">
+                          <input type="hidden" name="intent" value="task-todo" />
+                          <input type="hidden" name="task_id" value={row.id} />
+                          <input type="hidden" name="tab" value="tasks" />
+                          <input type="hidden" name="view" value={view} />
+                          <input type="hidden" name="who" value={who} />
+                          <button class="tw-check is-on" type="submit" aria-label={`Reopen "${row.title}"`} />
+                        </form>
+                      ) : (
+                        <span class="tw-check is-on is-static" aria-hidden="true" />
+                      )}
+                      <a class="tw-title" href={taskHref(row.id)}>
+                        <span>{row.title}</span>
+                      </a>
+                      <span class="tw-meta">
+                        <span class="tw-due">{row.assignee_email ? face(row.assignee_email).name : ''}</span>
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              </details>
+            )}
+          </section>
+        ))}
+      </div>
+    ) : (
+      <div class="tw-board" data-board={canMove ? '' : undefined}>
+        {columns.map((column) => (
+          <section class:list={['tw-col', `is-${column.status}`]} data-status={column.status}>
+            <header class="tw-col-head">
+              <span class:list={['tw-col-dot', column.status]} aria-hidden="true" />
+              <h3>{taskStatusLabel(column.status)}</h3>
+              <span class="tw-count" data-count>{column.total}</span>
+            </header>
+            <ul class="tw-cards" data-dropzone>
+              {column.rows.map((row) => {
+                const late = taskIsLate(row, today);
+                const count = counts.get(row.id);
+                const person = row.assignee_email ? face(row.assignee_email) : null;
+                return (
+                  <li
+                    class:list={['tw-card', late && 'is-late']}
+                    draggable={canMove ? 'true' : undefined}
+                    data-task-id={row.id}
+                  >
+                    <a href={taskHref(row.id)} draggable="false">
+                      {row.priority && (
+                        <span class:list={['tw-flag', row.priority]}>{priorityLabel(row.priority)}</span>
+                      )}
+                      {row.kind === 'bug' && <em class="tw-bug">Bug</em>}
+                      <strong>{row.title}</strong>
+                      {waitingOn.get(row.id) && <span class="tw-chip tw-waiting">⏳ Waiting on {waitingOn.get(row.id)}</span>}
+                      <span class="tw-card-foot">
+                        <span class:list={['tw-due', late && 'late']}>{dueLabel(row) || 'No date'}</span>
+                        {count && count.subtasks > 0 && <span class="tw-chip"><svg class="tw-ico" viewBox="0 0 16 16" aria-hidden="true"><rect x="2" y="2" width="12" height="12" rx="3" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="m5 8 2 2 4-4" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>{count.subtasksDone}/{count.subtasks}</span>}
+                        {count && count.comments > 0 && <span class="tw-chip"><svg class="tw-ico" viewBox="0 0 16 16" aria-hidden="true"><path d="M3 3.5h10a1 1 0 0 1 1 1v6a1 1 0 0 1-1 1H7l-3 2.5V11.5H3a1 1 0 0 1-1-1v-6a1 1 0 0 1 1-1Z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/></svg>{count.comments}</span>}
+                        {person ? (
+                          person.avatarUrl ? (
+                            <img class="face" src={person.avatarUrl} alt={person.name} title={person.name} referrerpolicy="no-referrer" width="24" height="24" />
+                          ) : (
+                            <span class="face" title={person.name}>{personInitial(person.name, person.email)}</span>
+                          )
+                        ) : (
+                          <span class="face tw-nobody" title="Unassigned">?</span>
+                        )}
+                      </span>
+                    </a>
+                  </li>
+                );
+              })}
+              {column.rows.length === 0 && <li class="tw-col-empty">{canMove ? 'Drop tasks here' : 'Nothing here'}</li>}
+            </ul>
+            {column.status === 'done' && column.total > column.rows.length && (
+              <p class="tw-more">Showing the latest {column.rows.length} of {column.total}</p>
+            )}
+          </section>
+        ))}
+      </div>
+    )
+  }
+</section>
+
+<script>
+  // Board drag & drop: move a card to another column and save its new status.
+  function bindBoard() {
+    const board = document.querySelector<HTMLElement>('[data-board]');
+    if (!board || board.dataset.bound) return;
+    board.dataset.bound = '1';
+    let dragged: HTMLElement | null = null;
+
+    board.addEventListener('dragstart', (event) => {
+      const card = (event.target as Element).closest<HTMLElement>('.tw-card');
+      if (!card) return;
+      dragged = card;
+      card.classList.add('is-dragging');
+      event.dataTransfer?.setData('text/plain', card.dataset.taskId ?? '');
+      if (event.dataTransfer) event.dataTransfer.effectAllowed = 'move';
+    });
+
+    board.addEventListener('dragend', () => {
+      dragged?.classList.remove('is-dragging');
+      board.querySelectorAll('.is-over').forEach((el) => el.classList.remove('is-over'));
+      dragged = null;
+    });
+
+    board.addEventListener('dragover', (event) => {
+      const col = (event.target as Element).closest<HTMLElement>('.tw-col');
+      if (!col || !dragged) return;
+      event.preventDefault();
+      board.querySelectorAll('.is-over').forEach((el) => el !== col && el.classList.remove('is-over'));
+      col.classList.add('is-over');
+    });
+
+    board.addEventListener('drop', async (event) => {
+      const col = (event.target as Element).closest<HTMLElement>('.tw-col');
+      if (!col || !dragged) return;
+      event.preventDefault();
+      col.classList.remove('is-over');
+      const from = dragged.closest<HTMLElement>('.tw-col');
+      const status = col.dataset.status;
+      if (!status || from === col) return;
+      const card = dragged;
+      const list = col.querySelector('[data-dropzone]');
+      list?.querySelector('.tw-col-empty')?.remove();
+      list?.prepend(card);
+      const recount = (c: HTMLElement | null) => {
+        if (!c) return;
+        const n = c.querySelectorAll('.tw-card').length;
+        const badge = c.querySelector('[data-count]');
+        if (badge) badge.textContent = String(n);
+      };
+      recount(col);
+      recount(from);
+      const body = new FormData();
+      body.set('intent', `task-${status}`);
+      body.set('task_id', card.dataset.taskId ?? '');
+      body.set('tab', 'tasks');
+      card.classList.add('is-saving');
+      try {
+        const res = await fetch(location.pathname, { method: 'POST', body, redirect: 'manual' });
+        if (res.type !== 'opaqueredirect' && !res.ok) throw new Error('save failed');
+        card.classList.remove('is-saving');
+      } catch {
+        location.reload();
+      }
+    });
+  }
+  bindBoard();
+  document.addEventListener('astro:page-load', bindBoard);
+
+  // Timeline: start scrolled so today sits near the left, with a week of context.
+  function focusTimeline() {
+    const scroller = document.querySelector<HTMLElement>('.tl-scroll');
+    const today = scroller?.querySelector<HTMLElement>('.tl-today-head');
+    if (!scroller || !today || scroller.dataset.focused) return;
+    scroller.dataset.focused = '1';
+    const left = today.getBoundingClientRect().left - scroller.getBoundingClientRect().left + scroller.scrollLeft;
+    const days = Number(getComputedStyle(scroller).getPropertyValue('--tl-days')) || 1;
+    const week = (scroller.scrollWidth / days) * 7;
+    scroller.scrollLeft = Math.max(0, left - week);
+  }
+  focusTimeline();
+  document.addEventListener('astro:page-load', focusTimeline);
+</script>

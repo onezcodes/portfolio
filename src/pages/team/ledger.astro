@@ -65,12 +65,13 @@ const slips = await voucherHrefs(supabase, entries);
 
     <IncomeExpenseChart entries={entries} />
 
-    <section class="team-card">
+    <div class="team-two">
+    <section class="team-card team-two-aside">
       <h2>New entry</h2>
       <LedgerForm action="/team/ledger" projects={projects} />
     </section>
 
-    <section>
+    <section class="team-two-main">
       <h2 class="team-h2">All entries</h2>
       {
         entries.length === 0 ? (
@@ -121,5 +122,6 @@ const slips = await voucherHrefs(supabase, entries);
         )
       }
     </section>
+    </div>
   </div>
 </Team>

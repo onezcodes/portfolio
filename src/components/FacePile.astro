@@ -18,7 +18,7 @@ const extra = people.length - shown.length;
       {shown.map((person) => (
         <li title={person.name}>
           {person.avatarUrl ? (
-            <img class="face" src={person.avatarUrl} alt="" width="28" height="28" />
+            <img class="face" src={person.avatarUrl} alt="" referrerpolicy="no-referrer" width="28" height="28" />
           ) : (
             <span class="face" aria-hidden="true">
               {personInitial(person.name, person.email)}

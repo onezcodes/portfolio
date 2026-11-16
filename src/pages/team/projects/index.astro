@@ -1,11 +1,15 @@
 ---
 import Team from '../../../layouts/Team.astro';
 import TeamFlash from '../../../components/TeamFlash.astro';
-import { remainingLabel } from '../../../lib/funding';
+import { fundingByCurrency, remainingLabel } from '../../../lib/funding';
+import { projectHealth } from '../../../lib/health';
+import { listTemplates } from '../../../lib/templates';
+import { applyProjectTemplate } from '../../../lib/templates';
 import { projectFromForm } from '../../../lib/forms';
 import { logEvent } from '../../../lib/events';
 import type { LedgerEntry, Project, TeamMember } from '../../../lib/ledger';
-import { seedMilestones, stagesByProject, type Milestone } from '../../../lib/milestones';
+import { currentStage, seedMilestones, sortMilestones, type Milestone } from '../../../lib/milestones';
+import { todayIso } from '../../../lib/ledger';
 import { capsFor } from '../../../lib/access';
 import { logoHrefs } from '../../../lib/projectHub';
 import ProjectMark from '../../../components/ProjectMark.astro';
@@ -41,11 +45,17 @@ if (Astro.request.method === 'POST') {
     projectId: data.id,
     detail: data.name,
   });
-  await seedMilestones(supabase, data.id, payload.started_on);
+  const templateId = String(form.get('template_id') ?? '');
+  if (templateId) {
+    const applied = await applyProjectTemplate(supabase, data.id, templateId, payload.started_on, studio?.email ?? '');
+    if (applied.error) await seedMilestones(supabase, data.id, payload.started_on);
+  } else {
+    await seedMilestones(supabase, data.id, payload.started_on);
+  }
   return Astro.redirect(`/team/projects/${data.id}?notice=created`);
 }
 
-const [{ data }, { data: contribs }, { data: expenses }, { data: milestoneRows }, { data: crewRows }, { data: memberRows }] =
+const [{ data }, { data: contribs }, { data: expenses }, { data: milestoneRows }, { data: crewRows }, { data: memberRows }, { data: taskRows }, { data: checkinRows }, projectTemplates] =
   await Promise.all([
     supabase.from('projects').select('id, name, client, status, logo_url, updated_at').order('updated_at', { ascending: false }),
     studio?.canLedger
@@ -57,47 +67,123 @@ const [{ data }, { data: contribs }, { data: expenses }, { data: milestoneRows }
     supabase.from('project_milestones').select('project_id, title, status, estimated_on, sort_order'),
     supabase.from('project_members').select('project_id, email'),
     supabase.from('team_members').select('email, display_name, avatar_url').order('email'),
+    supabase.from('project_tasks').select('project_id, status, due_on').neq('status', 'done'),
+    supabase.from('project_checkins').select('project_id, created_at').order('created_at', { ascending: false }).limit(300),
+    listTemplates(supabase, 'project'),
   ]);
 const projects = (data ?? []) as Project[];
 const contribRows = contribs ?? [];
 const expenseRows = (expenses ?? []) as Pick<LedgerEntry, 'project_id' | 'amount' | 'currency' | 'kind'>[];
-const stages = stagesByProject((milestoneRows ?? []) as Milestone[]);
+const today = todayIso();
+const milestonesBy = new Map<string, Milestone[]>();
+for (const row of (milestoneRows ?? []) as Milestone[]) {
+  milestonesBy.set(row.project_id, [...(milestonesBy.get(row.project_id) ?? []), row]);
+}
+const tasksBy = new Map<string, { open: number; late: number }>();
+for (const row of (taskRows ?? []) as { project_id: string; status: string; due_on: string | null }[]) {
+  const tally = tasksBy.get(row.project_id) ?? { open: 0, late: 0 };
+  tally.open += 1;
+  if (row.due_on && row.due_on < today) tally.late += 1;
+  tasksBy.set(row.project_id, tally);
+}
+function planOf(projectId: string) {
+  const ordered = sortMilestones(milestonesBy.get(projectId) ?? []) as Milestone[];
+  const done = ordered.filter((row) => row.status === 'done').length;
+  const stage = currentStage(ordered);
+  const allDone = ordered.length > 0 && done === ordered.length;
+  const late = Boolean(!allDone && stage?.estimated_on && stage.estimated_on < today);
+  return { total: ordered.length, done, stage: allDone ? null : stage, allDone, late };
+}
+const lastCheckin = new Map<string, string>();
+for (const row of (checkinRows ?? []) as { project_id: string; created_at: string }[]) {
+  if (!lastCheckin.has(row.project_id)) lastCheckin.set(row.project_id, row.created_at);
+}
+function healthOf(project: Pick<Project, 'id' | 'status'>) {
+  const finance = studio ? capsFor(studio, project.id).canFinance : false;
+  return projectHealth({
+    status: project.status,
+    today,
+    stages: milestonesBy.get(project.id) ?? [],
+    tasks: ((taskRows ?? []) as { project_id: string; status: string; due_on: string | null }[]).filter((t) => t.project_id === project.id),
+    lastCheckin: lastCheckin.get(project.id) ?? null,
+    funding: finance
+      ? fundingByCurrency(
+          contribRows.filter((row) => row.project_id === project.id),
+          expenseRows.filter((row) => row.project_id === project.id && row.kind === 'expense').map((row) => ({ amount: row.amount, currency: row.currency })),
+        )
+      : null,
+  });
+}
+function shortDate(iso: string) {
+  return new Date(`${iso}T12:00:00`).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' });
+}
 const people = (memberRows ?? []) as Pick<TeamMember, 'email' | 'display_name' | 'avatar_url'>[];
 const assignments = (crewRows ?? []) as { project_id: string; email: string }[];
 const crewFaces = facesByProject(assignments, people);
 const assignees = assignedPeople(assignments, people);
 const memberFilter = Astro.url.searchParams.get('member')?.trim().toLowerCase() ?? '';
 const statusFilter = Astro.url.searchParams.get('status')?.trim() ?? '';
-const visible = projects.filter((project) => {
-  if (memberFilter && !(crewFaces.get(project.id) ?? []).some((person) => person.email === memberFilter)) return false;
-  if (statusFilter && project.status !== statusFilter) return false;
-  return true;
-});
+const byMember = projects.filter(
+  (project) => !memberFilter || (crewFaces.get(project.id) ?? []).some((person) => person.email === memberFilter),
+);
+const visible = byMember.filter((project) => !statusFilter || project.status === statusFilter);
+const statusCounts = {
+  '': byMember.length,
+  active: byMember.filter((project) => project.status === 'active').length,
+  paused: byMember.filter((project) => project.status === 'paused').length,
+  done: byMember.filter((project) => project.status === 'done').length,
+};
+const statusTabs = [
+  { id: '', label: 'All' },
+  { id: 'active', label: 'Active' },
+  { id: 'paused', label: 'Paused' },
+  { id: 'done', label: 'Done' },
+] as const;
+function filterHref(status: string, member: string) {
+  const params = new URLSearchParams();
+  if (status) params.set('status', status);
+  if (member) params.set('member', member);
+  const query = params.toString();
+  return `/team/projects${query ? `?${query}` : ''}`;
+}
 const creating = Astro.url.searchParams.has('new') || Astro.url.searchParams.get('error') === 'invalid';
 const marks = await logoHrefs(supabase, visible);
 ---
 
 <Team title="Projects">
-  <div class="wrap team-page">
-    <header class="team-intro">
-      <p class="kicker">Projects</p>
-      <h1>Internal jobs</h1>
-      <p class="lede">Client, status, and notes for the team. These do not appear on /work.</p>
+  <div class="wrap team-page pj">
+    <header class="pj-hero">
+      <div class="team-intro">
+        <p class="kicker">Projects</p>
+        <h1>Internal jobs</h1>
+        <p class="lede">Client, stage, and team for every job. Nothing here appears on /work.</p>
+      </div>
+      <div class="pj-hero-side">
+        <ul class="pj-summary" aria-label="Projects by status">
+          <li><strong>{statusCounts.active}</strong> active</li>
+          <li><strong>{statusCounts.paused}</strong> paused</li>
+          <li><strong>{statusCounts.done}</strong> done</li>
+        </ul>
+        <nav class="quick-actions" aria-label="Quick actions">
+          <a class="btn" href="/team/projects?new=1"><span aria-hidden="true">+</span> New project</a>
+          {studio?.canLedger && <a class="btn btn-ghost" href="/team/ledger">Studio ledger</a>}
+        </nav>
+      </div>
     </header>
-    <nav class="quick-actions" aria-label="Quick actions">
-      <a class="btn" href="/team/projects?new=1">New project</a>
-      {studio?.canLedger && <a class="btn btn-ghost" href="/team/ledger">Studio ledger</a>}
-    </nav>
     <TeamFlash />
 
+    <div class="team-two">
     {
       creating && (
-        <section class="team-card" id="new-project">
-          <h2>New project</h2>
+        <section class="team-card team-two-aside" id="new-project">
+          <div class="ov-card-head">
+            <h2>New project</h2>
+            <a href="/team/projects">Cancel</a>
+          </div>
           <form class="form team-form" method="post">
             <p class="field">
               <label for="name">Name</label>
-              <input id="name" name="name" required />
+              <input id="name" name="name" required autofocus />
             </p>
             <div class="team-form-row">
               <p class="field">
@@ -121,54 +207,58 @@ const marks = await logoHrefs(supabase, visible);
               <label for="notes">Notes</label>
               <textarea id="notes" name="notes" rows="3"></textarea>
             </p>
-            <div class="ms-tools">
-              <button class="btn" type="submit">Create project</button>
-              <a class="ms-text" href="/team/projects">Cancel</a>
-            </div>
+            <p class="field">
+              <label for="template_id">Plan</label>
+              <select id="template_id" name="template_id">
+                <option value="">Standard stages (Brief, Design, Build, Review, Launch)</option>
+                {projectTemplates.map((template) => (
+                  <option value={template.id}>{template.name}</option>
+                ))}
+              </select>
+            </p>
+            <p class="muted pj-hint">Templates add stages and starter tasks, dated from the start date. <a href="/team/templates">Manage templates</a></p>
+            <button class="btn" type="submit">Create project</button>
           </form>
         </section>
       )
     }
 
-    <section>
-      <h2 class="team-h2">{creating ? 'All projects' : 'Projects'}</h2>
-      <nav class="member-filter" aria-label="Filter projects">
-        {
-          [
-            { id: '', label: 'All' },
-            { id: 'active', label: 'Active' },
-            { id: 'paused', label: 'Paused' },
-            { id: 'done', label: 'Done' },
-          ].map((item) => (
-            <a
-              href={item.id ? `/team/projects?status=${item.id}${memberFilter ? `&member=${encodeURIComponent(memberFilter)}` : ''}` : `/team/projects${memberFilter ? `?member=${encodeURIComponent(memberFilter)}` : ''}`}
-              aria-current={statusFilter === item.id ? 'page' : undefined}
-            >
+    <section class="team-two-main pj-main" aria-label="Projects">
+      <div class="pj-toolbar">
+        <nav class="pj-seg" aria-label="Filter by status">
+          {statusTabs.map((item) => (
+            <a href={filterHref(item.id, memberFilter)} aria-current={statusFilter === item.id ? 'page' : undefined}>
               {item.label}
+              <span>{statusCounts[item.id]}</span>
             </a>
-          ))
-        }
-      </nav>
+          ))}
+        </nav>
+        <label class="pj-search">
+          <span class="sr-only">Search projects</span>
+          <svg aria-hidden="true" viewBox="0 0 24 24" width="16" height="16"><circle cx="11" cy="11" r="7" fill="none" stroke="currentColor" stroke-width="2" /><path d="m20 20-3.5-3.5" stroke="currentColor" stroke-width="2" stroke-linecap="round" /></svg>
+          <input type="search" placeholder="Search name or client" data-pj-search autocomplete="off" />
+        </label>
+      </div>
       {
         assignees.length > 0 && (
-          <nav class="member-filter" aria-label="Filter by assigned person">
-            <a href={statusFilter ? `/team/projects?status=${statusFilter}` : '/team/projects'} aria-current={memberFilter ? undefined : 'page'}>
+          <nav class="pj-people" aria-label="Filter by assigned person">
+            <a href={filterHref(statusFilter, '')} aria-current={memberFilter ? undefined : 'page'}>
               Everyone
             </a>
             {assignees.map((person) => (
               <a
-                href={`/team/projects?member=${encodeURIComponent(person.email)}${statusFilter ? `&status=${statusFilter}` : ''}`}
-                title={person.name}
+                href={filterHref(statusFilter, person.email)}
+                title={person.email}
                 aria-current={memberFilter === person.email ? 'page' : undefined}
               >
                 {person.avatarUrl ? (
-                  <img class="face" src={person.avatarUrl} alt="" width="28" height="28" />
+                  <img class="face" src={person.avatarUrl} alt="" referrerpolicy="no-referrer" width="24" height="24" />
                 ) : (
                   <span class="face" aria-hidden="true">
                     {personInitial(person.name, person.email)}
                   </span>
                 )}
-                <span class="sr-only">{person.name}</span>
+                {person.name.split(/\s+|@/)[0]}
               </a>
             ))}
           </nav>
@@ -176,35 +266,123 @@ const marks = await logoHrefs(supabase, visible);
       }
       {
         visible.length === 0 ? (
-          <p class="muted">
-            {projects.length === 0
-              ? 'None yet.'
-              : memberFilter
-                ? `No ${statusFilter || 'matching'} projects assigned to ${personLabel(memberFilter, people)}.`
-                : 'No projects match that filter.'}
-          </p>
+          <div class="pj-empty">
+            <p>
+              {projects.length === 0
+                ? 'No projects yet. Create the first one to start planning.'
+                : memberFilter
+                  ? `No ${statusFilter || 'matching'} projects assigned to ${personLabel(memberFilter, people)}.`
+                  : 'No projects match that filter.'}
+            </p>
+            {projects.length === 0 ? (
+              <a class="btn" href="/team/projects?new=1">New project</a>
+            ) : (
+              <a class="btn btn-ghost" href="/team/projects">Clear filters</a>
+            )}
+          </div>
         ) : (
-          <ul class="team-list">
-            {visible.map((project) => (
-              <li>
-                <a class="project-hit" href={`/team/projects/${project.id}`}>
-                  <ProjectMark name={project.name} src={marks.get(project.logo_url)} />
-                  <span>
-                    <strong>{project.name}</strong>
-                    <span>
-                      {project.client || 'No client'} · {project.status} · {stages.get(project.id) || 'No stages yet'}
-                      {studio && capsFor(studio, project.id).canFinance
-                        ? ` · ${remainingLabel(project.id, contribRows, expenseRows)}`
-                        : ''}
-                    </span>
-                  </span>
-                  <FacePile people={crewFaces.get(project.id) ?? []} label="Assigned" />
+          <ul class="pj-grid">
+            {visible.map((project) => {
+              const plan = planOf(project.id);
+              const tasks = tasksBy.get(project.id) ?? { open: 0, late: 0 };
+              const pct = plan.total ? Math.round((plan.done / plan.total) * 100) : 0;
+              const finance = studio ? capsFor(studio, project.id).canFinance : false;
+              return (
+                <li data-pj-card data-pj-text={`${project.name} ${project.client ?? ''}`.toLowerCase()}>
+                  <a class="pj-card" href={`/team/projects/${project.id}`}>
+                    <div class="pj-card-top">
+                      <ProjectMark name={project.name} src={marks.get(project.logo_url)} />
+                      <div class="pj-title">
+                        <strong>{project.name}</strong>
+                        <span>{project.client || 'No client'}</span>
+                      </div>
+                      {(() => {
+                        const health = healthOf(project);
+                        return health.level === 'idle' ? (
+                          <em class:list={['ov-status', project.status]}>{project.status}</em>
+                        ) : (
+                          <span class:list={['health-badge', health.level]} title={health.reasons.join(' · ') || 'Everything on schedule'}>
+                            <i aria-hidden="true" />
+                            {health.label}
+                          </span>
+                        );
+                      })()}
+                    </div>
+
+                    <div class="pj-stage">
+                      <div class="pj-stage-line">
+                        <span>
+                          {plan.allDone ? 'All stages done' : plan.stage ? plan.stage.title : 'No stages yet'}
+                        </span>
+                        {plan.stage?.estimated_on && (
+                          <span class:list={['pj-date', plan.late && 'late']}>
+                            {plan.late ? 'Late · ' : ''}
+                            {shortDate(plan.stage.estimated_on)}
+                          </span>
+                        )}
+                      </div>
+                      <div
+                        class="pj-progress"
+                        role="img"
+                        aria-label={`${plan.done} of ${plan.total} stages done`}
+                      >
+                        <span style={`width:${pct}%`} />
+                      </div>
+                      <span class="pj-stage-count">
+                        {plan.total ? `${plan.done} of ${plan.total} stages` : 'Add stages from the project'}
+                      </span>
+                    </div>
+
+                    <div class="pj-card-foot">
+                      <span class="pj-facts">
+                        <span class:list={['pj-fact', tasks.late > 0 && 'late']}>
+                          {tasks.open} open {tasks.open === 1 ? 'task' : 'tasks'}
+                          {tasks.late > 0 ? ` · ${tasks.late} late` : ''}
+                        </span>
+                        {finance && <span class="pj-fact">{remainingLabel(project.id, contribRows, expenseRows)}</span>}
+                      </span>
+                      <FacePile people={crewFaces.get(project.id) ?? []} label="Assigned" limit={4} />
+                    </div>
+                  </a>
+                </li>
+              );
+            })}
+            {!creating && (
+              <li class="pj-new-tile">
+                <a href="/team/projects?new=1">
+                  <span aria-hidden="true">+</span>
+                  New project
                 </a>
               </li>
-            ))}
+            )}
           </ul>
         )
       }
+      <p class="muted pj-nomatch" data-pj-nomatch hidden>No projects match your search.</p>
     </section>
+    </div>
   </div>
 </Team>
+
+<script>
+  function bindProjectSearch() {
+    const input = document.querySelector<HTMLInputElement>('[data-pj-search]');
+    if (!input) return;
+    const cards = [...document.querySelectorAll<HTMLElement>('[data-pj-card]')];
+    const empty = document.querySelector<HTMLElement>('[data-pj-nomatch]');
+    const newTile = document.querySelector<HTMLElement>('.pj-new-tile');
+    input.addEventListener('input', () => {
+      const q = input.value.trim().toLowerCase();
+      let shown = 0;
+      for (const card of cards) {
+        const hit = !q || (card.dataset.pjText ?? '').includes(q);
+        card.hidden = !hit;
+        if (hit) shown += 1;
+      }
+      if (newTile) newTile.hidden = Boolean(q);
+      if (empty) empty.hidden = shown > 0 || cards.length === 0;
+    });
+  }
+  bindProjectSearch();
+  document.addEventListener('astro:page-load', bindProjectSearch);
+</script>

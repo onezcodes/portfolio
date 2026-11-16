@@ -1,0 +1,177 @@
+---
+import Team from '../../layouts/Team.astro';
+import TeamFlash from '../../components/TeamFlash.astro';
+import { formatEventTime } from '../../lib/events';
+import type { TeamMember } from '../../lib/ledger';
+import { personFace, personInitial } from '../../lib/profile';
+import { notificationCopy, type TeamNotification } from '../../lib/taskCollab';
+
+const supabase = Astro.locals.supabase;
+const studio = Astro.locals.studio;
+if (!studio) return Astro.redirect('/team/login');
+
+const show = Astro.url.searchParams.get('show') === 'all' ? 'all' : 'unread';
+
+function targetOf(item: Pick<TeamNotification, 'project_id' | 'task_id' | 'kind'>) {
+  if (item.kind === 'digest') return '/team/tasks';
+  if (item.project_id && item.task_id) return `/team/projects/${item.project_id}?tab=tasks&task=${item.task_id}`;
+  if (item.project_id) return `/team/projects/${item.project_id}`;
+  return '/team/inbox';
+}
+
+if (Astro.request.method === 'POST') {
+  const form = await Astro.request.formData();
+  const intent = String(form.get('intent') ?? '');
+  const id = String(form.get('id') ?? '');
+  const now = new Date().toISOString();
+  if (intent === 'open' && id) {
+    const { data: item } = await supabase
+      .from('team_notifications')
+      .update({ read_at: now })
+      .eq('id', id)
+      .select('project_id, task_id, kind')
+      .maybeSingle();
+    return Astro.redirect(item ? targetOf(item as TeamNotification) : '/team/inbox');
+  }
+  if (intent === 'read' && id) {
+    await supabase.from('team_notifications').update({ read_at: now }).eq('id', id);
+  }
+  if (intent === 'unread' && id) {
+    await supabase.from('team_notifications').update({ read_at: null }).eq('id', id);
+  }
+  if (intent === 'read-all') {
+    await supabase.from('team_notifications').update({ read_at: now }).is('read_at', null);
+  }
+  return Astro.redirect(`/team/inbox${show === 'all' ? '?show=all' : ''}`);
+}
+
+let query = supabase
+  .from('team_notifications')
+  .select('*, projects(name), project_tasks(title, status)')
+  .order('created_at', { ascending: false })
+  .limit(100);
+if (show === 'unread') query = query.is('read_at', null);
+
+const [{ data: rows }, { data: memberRows }, { count: unreadTotal }] = await Promise.all([
+  query,
+  supabase.from('team_members').select('email, display_name, avatar_url'),
+  supabase.from('team_notifications').select('id', { count: 'exact', head: true }).is('read_at', null),
+]);
+
+type Row = TeamNotification & {
+  projects: { name: string } | null;
+  project_tasks: { title: string; status: string } | null;
+};
+const items = (rows ?? []) as Row[];
+const people = (memberRows ?? []) as Pick<TeamMember, 'email' | 'display_name' | 'avatar_url'>[];
+
+// Group by day
+const dayKey = (iso: string) => iso.slice(0, 10);
+const todayKey = new Date().toISOString().slice(0, 10);
+const yesterdayKey = new Date(Date.now() - 86_400_000).toISOString().slice(0, 10);
+const dayLabel = (key: string) =>
+  key === todayKey
+    ? 'Today'
+    : key === yesterdayKey
+      ? 'Yesterday'
+      : new Date(`${key}T12:00:00`).toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'short' });
+const days: { key: string; items: Row[] }[] = [];
+for (const item of items) {
+  const key = dayKey(item.created_at);
+  const last = days.at(-1);
+  if (last && last.key === key) last.items.push(item);
+  else days.push({ key, items: [item] });
+}
+---
+
+<Team title="Inbox">
+  <div class="wrap team-page inbox">
+    <header class="pj-hero">
+      <div class="team-intro">
+        <p class="kicker">Inbox</p>
+        <h1>Updates for you</h1>
+        <p class="lede">Assignments, mentions, comments, and completions on tasks you follow.</p>
+      </div>
+      <div class="pj-hero-side">
+        {(unreadTotal ?? 0) > 0 && (
+          <form method="post">
+            <input type="hidden" name="intent" value="read-all" />
+            <button class="btn btn-ghost" type="submit">Mark all as read</button>
+          </form>
+        )}
+      </div>
+    </header>
+    <TeamFlash />
+
+    <nav class="pj-seg" aria-label="Show">
+      <a href="/team/inbox" aria-current={show === 'unread' ? 'page' : undefined}>Unread <span>{unreadTotal ?? 0}</span></a>
+      <a href="/team/inbox?show=all" aria-current={show === 'all' ? 'page' : undefined}>All</a>
+    </nav>
+
+    {
+      items.length === 0 ? (
+        <div class="pj-empty mt-clear">
+          <p class="mt-clear-title">{show === 'unread' ? 'Inbox zero' : 'Nothing here yet'}</p>
+          <p>
+            {show === 'unread'
+              ? 'No unread updates. New assignments, mentions, and comments on tasks you follow land here.'
+              : 'Follow tasks or get assigned work and updates will appear here.'}
+          </p>
+          {show === 'unread' && <a class="btn btn-ghost" href="/team/inbox?show=all">See all updates</a>}
+        </div>
+      ) : (
+        <div class="inbox-days">
+          {days.map((day) => (
+            <section class="inbox-day">
+              <h2>{dayLabel(day.key)}</h2>
+              <ul class="inbox-list">
+                {day.items.map((item) => {
+                  const actor = item.actor_email ? personFace(item.actor_email, people) : null;
+                  const unread = !item.read_at;
+                  return (
+                    <li class:list={['inbox-item', unread && 'is-unread', `k-${item.kind}`]}>
+                      <form method="post" class="inbox-open">
+                        <input type="hidden" name="intent" value="open" />
+                        <input type="hidden" name="id" value={item.id} />
+                        <button type="submit">
+                          {actor ? (
+                            actor.avatarUrl ? (
+                              <img class="face" src={actor.avatarUrl} alt="" referrerpolicy="no-referrer" width="36" height="36" />
+                            ) : (
+                              <span class="face">{personInitial(actor.name, actor.email)}</span>
+                            )
+                          ) : (
+                            <span class="face inbox-bot" aria-hidden="true">⏰</span>
+                          )}
+                          <span class="inbox-copy">
+                            <span class="inbox-line">
+                              <strong>{notificationCopy(item, actor?.name ?? 'Someone')}</strong>
+                              <span class="inbox-task">{item.project_tasks?.title ?? item.title}</span>
+                            </span>
+                            {item.body && <span class="inbox-body">{item.body}</span>}
+                            <span class="inbox-meta">
+                              {item.projects?.name && <>{item.projects.name} · </>}
+                              {formatEventTime(item.created_at)}
+                              {item.project_tasks?.status === 'done' && ' · completed'}
+                            </span>
+                          </span>
+                        </button>
+                      </form>
+                      <form method="post" class="inbox-toggle">
+                        <input type="hidden" name="intent" value={unread ? 'read' : 'unread'} />
+                        <input type="hidden" name="id" value={item.id} />
+                        <button type="submit" title={unread ? 'Mark as read' : 'Mark as unread'} aria-label={unread ? 'Mark as read' : 'Mark as unread'}>
+                          <span class="inbox-dot" />
+                        </button>
+                      </form>
+                    </li>
+                  );
+                })}
+              </ul>
+            </section>
+          ))}
+        </div>
+      )
+    }
+  </div>
+</Team>

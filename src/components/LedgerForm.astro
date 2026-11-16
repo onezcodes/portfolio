@@ -6,19 +6,25 @@ interface Props {
   projectId?: string | null;
   action: string;
   defaultKind?: 'income' | 'expense';
+  /** Prefix for field ids, so the form can sit on a page that has other forms. */
+  idPrefix?: string;
+  submitLabel?: string;
+  /** Pop-up layout: cursor starts on Amount, notes and slip fold away. */
+  compact?: boolean;
 }
 
-const { projects = [], projectId = null, action, defaultKind = 'income' } = Astro.props;
+const { projects = [], projectId = null, action, defaultKind = 'income', idPrefix = '', submitLabel = 'Add entry', compact = false } = Astro.props;
+const fid = (name: string) => `${idPrefix}${name}`;
 const today = new Date().toISOString().slice(0, 10);
 ---
 
-<form id="new-entry" class="form team-form" method="post" action={action} enctype="multipart/form-data">
+<form id={fid('new-entry')} class="form team-form" method="post" action={action} enctype="multipart/form-data">
   <input type="hidden" name="intent" value="create-entry" />
   {
     projects.length > 0 && (
       <p class="field">
-        <label for="project_id">Project</label>
-        <select id="project_id" name="project_id">
+        <label for={fid('project_id')}>Project</label>
+        <select id={fid('project_id')} name="project_id">
           <option value="">Overhead (no project)</option>
           {projects.map((project) => (
             <option value={project.id} selected={project.id === projectId}>
@@ -34,37 +40,56 @@ const today = new Date().toISOString().slice(0, 10);
   }
   <div class="team-form-row">
     <p class="field">
-      <label for="kind">Type</label>
-      <select id="kind" name="kind" required>
+      <label for={fid('kind')}>Type</label>
+      <select id={fid('kind')} name="kind" required>
         <option value="income" selected={defaultKind === 'income'}>Income</option>
         <option value="expense" selected={defaultKind === 'expense'}>Expense</option>
       </select>
     </p>
     <p class="field">
-      <label for="amount">Amount</label>
-      <input id="amount" name="amount" type="number" min="0" step="0.01" required />
+      <label for={fid('amount')}>Amount</label>
+      <input id={fid('amount')} name="amount" type="number" min="0" step="0.01" required inputmode="decimal" data-autofocus={compact ? '' : undefined} />
     </p>
     <p class="field">
-      <label for="currency">Currency</label>
-      <input id="currency" name="currency" value="THB" maxlength="8" required />
+      <label for={fid('currency')}>Currency</label>
+      <input id={fid('currency')} name="currency" value="THB" maxlength="8" required />
     </p>
     <p class="field">
-      <label for="occurred_on">Date</label>
-      <input id="occurred_on" name="occurred_on" type="date" value={today} required />
+      <label for={fid('occurred_on')}>Date</label>
+      <input id={fid('occurred_on')} name="occurred_on" type="date" value={today} required />
     </p>
   </div>
   <p class="field">
-    <label for="category">Category</label>
-    <input id="category" name="category" placeholder="Hosting, milestone, contractor…" />
+    <label for={fid('category')}>Category</label>
+    <input id={fid('category')} name="category" placeholder="Hosting, milestone, contractor…" />
   </p>
-  <p class="field">
-    <label for="notes">Notes</label>
-    <textarea id="notes" name="notes" rows="3"></textarea>
-  </p>
-  <ImagePick id="voucher" name="voucher" label="Voucher slip" />
-  <p class="field">
-    <label for="voucher_url">Or slip URL</label>
-    <input id="voucher_url" name="voucher_url" type="url" placeholder="https://" data-image-url-for="voucher" />
-  </p>
-  <button class="btn" type="submit">Add entry</button>
+  {
+    compact ? (
+      <details class="modal-extra">
+        <summary>Notes and slip</summary>
+      <p class="field">
+        <label for={fid('notes')}>Notes</label>
+        <textarea id={fid('notes')} name="notes" rows="3"></textarea>
+      </p>
+      <ImagePick id={fid('voucher')} name="voucher" label="Voucher slip" />
+      <p class="field">
+        <label for={fid('voucher_url')}>Or slip URL</label>
+        <input id={fid('voucher_url')} name="voucher_url" type="url" placeholder="https://" data-image-url-for={fid('voucher')} />
+      </p>
+      </details>
+    ) : (
+      <>
+      <p class="field">
+        <label for={fid('notes')}>Notes</label>
+        <textarea id={fid('notes')} name="notes" rows="3"></textarea>
+      </p>
+      <ImagePick id={fid('voucher')} name="voucher" label="Voucher slip" />
+      <p class="field">
+        <label for={fid('voucher_url')}>Or slip URL</label>
+        <input id={fid('voucher_url')} name="voucher_url" type="url" placeholder="https://" data-image-url-for={fid('voucher')} />
+      </p>
+      </>
+    )
+  }
+  <button class="btn" type="submit">{submitLabel}</button>
 </form>

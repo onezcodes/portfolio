@@ -1,0 +1,193 @@
+---
+import Team from '../../layouts/Team.astro';
+import { money, todayIso, type LedgerEntry, type Project, type TeamMember } from '../../lib/ledger';
+import { personLabel } from '../../lib/profile';
+import type { ProjectTask } from '../../lib/tasks';
+import { formatMinutes } from '../../lib/timeTracking';
+
+const supabase = Astro.locals.supabase;
+const studio = Astro.locals.studio;
+if (!studio) return Astro.redirect('/team/login');
+
+const WEEKS = 12;
+const DAY = 86_400_000;
+const today = todayIso();
+const todayN = Math.round(Date.parse(`${today}T00:00:00Z`) / DAY);
+const weekStart = todayN - ((new Date(todayN * DAY).getUTCDay() + 6) % 7);
+const firstWeek = weekStart - (WEEKS - 1) * 7;
+const sinceIso = new Date(firstWeek * DAY).toISOString();
+
+const [{ data: taskRows }, { data: projectRows }, { data: memberRows }, { data: timeRows }, { data: incomeRows }] = await Promise.all([
+  supabase
+    .from('project_tasks')
+    .select('id, project_id, assignee_email, status, due_on, created_at, completed_at, kind')
+    .or(`status.neq.done,completed_at.gte."${sinceIso}"`),
+  supabase.from('projects').select('id, name, status'),
+  supabase.from('team_members').select('email, display_name'),
+  supabase.from('task_time_entries').select('email, project_id, minutes, started_at').gte('started_at', sinceIso),
+  studio.canLedger
+    ? supabase.from('ledger_entries').select('project_id, amount, currency, kind, occurred_on').eq('kind', 'income').gte('occurred_on', sinceIso.slice(0, 10))
+    : Promise.resolve({ data: [] }),
+]);
+
+type Row = Pick<ProjectTask, 'id' | 'project_id' | 'assignee_email' | 'status' | 'due_on' | 'created_at' | 'completed_at' | 'kind'>;
+const tasks = (taskRows ?? []) as Row[];
+const projects = ((projectRows ?? []) as Pick<Project, 'id' | 'name' | 'status'>[]).sort((a, b) => a.name.localeCompare(b.name));
+const people = (memberRows ?? []) as Pick<TeamMember, 'email' | 'display_name'>[];
+const time = (timeRows ?? []) as { email: string; project_id: string; minutes: number; started_at: string }[];
+const income = (incomeRows ?? []) as Pick<LedgerEntry, 'project_id' | 'amount' | 'currency'>[];
+
+const weekOf = (iso: string) => Math.floor((Math.round(Date.parse(iso) / DAY) - firstWeek) / 7);
+const completed = tasks.filter((t) => t.status === 'done' && t.completed_at && t.completed_at >= sinceIso);
+const created = tasks.filter((t) => t.created_at >= sinceIso);
+const weeks = Array.from({ length: WEEKS }, (_, i) => ({
+  start: firstWeek + i * 7,
+  done: completed.filter((t) => weekOf(String(t.completed_at)) === i).length,
+  added: created.filter((t) => weekOf(t.created_at) === i).length,
+  minutes: time.filter((e) => weekOf(e.started_at) === i).reduce((s, e) => s + (e.minutes || 0), 0),
+}));
+const peak = Math.max(1, ...weeks.flatMap((w) => [w.done, w.added]));
+const peakMinutes = Math.max(1, ...weeks.map((w) => w.minutes));
+
+const withDue = completed.filter((t) => t.due_on);
+const onTime = withDue.filter((t) => String(t.completed_at).slice(0, 10) <= String(t.due_on));
+const onTimeRate = withDue.length ? Math.round((onTime.length / withDue.length) * 100) : null;
+const cycleDays = completed.map((t) => (Date.parse(String(t.completed_at)) - Date.parse(t.created_at)) / DAY).filter((d) => d >= 0);
+const avgCycle = cycleDays.length ? cycleDays.reduce((a, b) => a + b, 0) / cycleDays.length : null;
+const open = tasks.filter((t) => t.status !== 'done');
+const overdue = open.filter((t) => t.due_on && t.due_on < today);
+const openBugs = open.filter((t) => t.kind === 'bug').length;
+const totalMinutes = time.reduce((s, e) => s + (e.minutes || 0), 0);
+
+function stats(filter: (t: Row) => boolean, minutes: number) {
+  const done = completed.filter(filter);
+  const due = done.filter((t) => t.due_on);
+  const ok = due.filter((t) => String(t.completed_at).slice(0, 10) <= String(t.due_on));
+  return {
+    done: done.length,
+    onTime: due.length ? Math.round((ok.length / due.length) * 100) : null,
+    open: open.filter(filter).length,
+    overdue: overdue.filter(filter).length,
+    minutes,
+  };
+}
+const byPerson = [...new Set([...tasks.map((t) => t.assignee_email), ...time.map((e) => e.email)].filter(Boolean))]
+  .map((email) => ({ email, ...stats((t) => t.assignee_email === email, time.filter((e) => e.email === email).reduce((s, e) => s + e.minutes, 0)) }))
+  .sort((a, b) => b.done - a.done || b.minutes - a.minutes);
+const byProject = projects
+  .map((p) => {
+    const row = stats((t) => t.project_id === p.id, time.filter((e) => e.project_id === p.id).reduce((s, e) => s + e.minutes, 0));
+    const earned = income.filter((i) => i.project_id === p.id);
+    const currency = earned[0]?.currency ?? 'THB';
+    const total = earned.filter((i) => i.currency === currency).reduce((s, i) => s + Number(i.amount || 0), 0);
+    return { project: p, ...row, income: total, currency };
+  })
+  .filter((p) => p.done + p.open + p.minutes > 0);
+const weekText = (n: number) => new Date(n * DAY).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', timeZone: 'UTC' });
+---
+
+<Team title="Reports">
+  <div class="wrap team-page insights">
+    <header class="pj-hero">
+      <div class="team-intro">
+        <p class="kicker">Insights</p>
+        <h1>Reports</h1>
+        <p class="lede">The last {WEEKS} weeks across projects you can see: throughput, on-time delivery, and where time goes.</p>
+      </div>
+      <nav class="pj-seg" aria-label="Insights">
+        <a href="/team/workload">Workload</a>
+        <a href="/team/reports" aria-current="page">Reports</a>
+      </nav>
+    </header>
+
+    <section class="ov-stats" aria-label="Summary">
+      <div class="ov-stat"><span class="ov-stat-label">Completed</span><strong>{completed.length}</strong><span class="ov-stat-note">{(completed.length / WEEKS).toFixed(1)} a week</span></div>
+      <div class:list={['ov-stat', onTimeRate !== null && onTimeRate < 70 && 'is-alert']}><span class="ov-stat-label">On time</span><strong>{onTimeRate === null ? '—' : `${onTimeRate}%`}</strong><span class="ov-stat-note">{withDue.length} with a due date</span></div>
+      <div class="ov-stat"><span class="ov-stat-label">Cycle time</span><strong>{avgCycle === null ? '—' : `${avgCycle.toFixed(1)}d`}</strong><span class="ov-stat-note">created → done, average</span></div>
+      <div class:list={['ov-stat', overdue.length > 0 && 'is-alert']}><span class="ov-stat-label">Overdue now</span><strong>{overdue.length}</strong><span class="ov-stat-note">{openBugs} open {openBugs === 1 ? 'bug' : 'bugs'}</span></div>
+      <div class="ov-stat is-money"><span class="ov-stat-label">Time logged</span><strong>{formatMinutes(totalMinutes)}</strong><span class="ov-stat-note">{formatMinutes(Math.round(totalMinutes / WEEKS))} a week</span></div>
+    </section>
+
+    <div class="rp-charts">
+      <section class="team-card">
+        <div class="ov-card-head"><h2>Tasks per week</h2></div>
+        <p class="ie-legend rp-legend"><span><span class="ie-dot rp-done"></span> Completed</span><span><span class="ie-dot rp-added"></span> Added</span></p>
+        <div class="rp-bars" role="img" aria-label="Tasks completed and added per week">
+          {weeks.map((w) => (
+            <div class="rp-week" title={`w/c ${weekText(w.start)}: ${w.done} completed, ${w.added} added`}>
+              <div class="rp-pair">
+                <span class="rp-col rp-done" style={`height:${(w.done / peak) * 100}%`} />
+                <span class="rp-col rp-added" style={`height:${(w.added / peak) * 100}%`} />
+              </div>
+              <span class="rp-label">{weekText(w.start)}</span>
+            </div>
+          ))}
+        </div>
+      </section>
+      <section class="team-card">
+        <div class="ov-card-head"><h2>Hours per week</h2></div>
+        <div class="rp-bars" role="img" aria-label="Hours logged per week">
+          {weeks.map((w) => (
+            <div class="rp-week" title={`w/c ${weekText(w.start)}: ${formatMinutes(w.minutes)}`}>
+              <div class="rp-pair">
+                <span class="rp-col rp-hours" style={`height:${(w.minutes / peakMinutes) * 100}%`} />
+              </div>
+              <span class="rp-label">{weekText(w.start)}</span>
+            </div>
+          ))}
+        </div>
+        {totalMinutes === 0 && <p class="muted">No time logged yet. Start a timer from any task.</p>}
+      </section>
+    </div>
+
+    <section class="team-card">
+      <div class="ov-card-head"><h2>By person</h2></div>
+      <div class="table-scroll">
+        <table class="team-table rp-table">
+          <thead><tr><th>Person</th><th>Completed</th><th>On time</th><th>Open</th><th>Overdue</th><th>Logged</th></tr></thead>
+          <tbody>
+            {byPerson.map((row) => (
+              <tr>
+                <td>{personLabel(row.email, people)}</td>
+                <td>{row.done}</td>
+                <td>{row.onTime === null ? '—' : `${row.onTime}%`}</td>
+                <td>{row.open}</td>
+                <td class:list={[row.overdue > 0 && 'late']}>{row.overdue}</td>
+                <td>{formatMinutes(row.minutes)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="team-card">
+      <div class="ov-card-head"><h2>By project</h2></div>
+      <div class="table-scroll">
+        <table class="team-table rp-table">
+          <thead>
+            <tr>
+              <th>Project</th><th>Completed</th><th>On time</th><th>Open</th><th>Overdue</th><th>Logged</th>
+              {studio.canLedger && <th title="Income recorded in the period divided by hours logged">Income / hour</th>}
+            </tr>
+          </thead>
+          <tbody>
+            {byProject.map((row) => (
+              <tr>
+                <td><a href={`/team/projects/${row.project.id}?tab=tasks`}>{row.project.name}</a></td>
+                <td>{row.done}</td>
+                <td>{row.onTime === null ? '—' : `${row.onTime}%`}</td>
+                <td>{row.open}</td>
+                <td class:list={[row.overdue > 0 && 'late']}>{row.overdue}</td>
+                <td>{formatMinutes(row.minutes)}</td>
+                {studio.canLedger && (
+                  <td>{row.minutes > 0 && row.income > 0 ? money(row.income / (row.minutes / 60), row.currency) : '—'}</td>
+                )}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  </div>
+</Team>

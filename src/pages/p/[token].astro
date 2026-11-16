@@ -1,0 +1,131 @@
+---
+import '@fontsource-variable/outfit/wght.css';
+import '../../styles/global.css';
+import logo from '../../assets/logo.webp';
+import { site } from '../../data/site';
+import { createPublicSupabase } from '../../lib/supabase';
+
+// Public, read-only client progress page. The database function returns only
+// name, client, status, stages, task counts, and (optionally) the latest check-in.
+const token = Astro.params.token ?? '';
+const supabase = createPublicSupabase();
+let data: {
+  name: string;
+  client: string;
+  status: string;
+  started_on: string | null;
+  stages: { title: string; status: string; estimated_on: string | null }[];
+  tasks_open: number;
+  tasks_done: number;
+  checkin: { body: string; created_at: string } | null;
+  updated_at: string;
+} | null = null;
+if (supabase && /^[a-f0-9]{24,80}$/.test(token)) {
+  const { data: row, error } = await supabase.rpc('public_project_progress', { link_token: token });
+  if (error) console.error('client link failed', error.message);
+  data = row ?? null;
+}
+Astro.response.headers.set('Cache-Control', 'private, no-store');
+Astro.response.headers.set('X-Robots-Tag', 'noindex, nofollow');
+if (!data) Astro.response.status = 404;
+
+const stages = data?.stages ?? [];
+const done = stages.filter((s) => s.status === 'done').length;
+const pct = stages.length ? Math.round((done / stages.length) * 100) : 0;
+const current = stages.find((s) => s.status === 'current') ?? stages.find((s) => s.status !== 'done');
+const today = new Date().toISOString().slice(0, 10);
+const fmt = (iso: string | null) =>
+  iso ? new Date(`${iso.slice(0, 10)}T12:00:00`).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) : '';
+const taskTotal = (data?.tasks_open ?? 0) + (data?.tasks_done ?? 0);
+---
+
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="robots" content="noindex, nofollow" />
+    <meta name="referrer" content="no-referrer" />
+    <title>{data ? `${data.name} · Progress · ${site.name}` : `Link not found · ${site.name}`}</title>
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+  </head>
+  <body class="team-body client-page">
+    <Fragment set:html="<!--email_off-->" />
+    <main class="wrap client-wrap">
+      <header class="client-brand">
+        <img src={logo.src} alt="" width="36" height="36" />
+        <span>{site.name}</span>
+      </header>
+      {
+        !data ? (
+          <section class="pd-hero client-missing">
+            <h1>This link isn't active</h1>
+            <p class="muted">Ask your project contact for a new progress link.</p>
+          </section>
+        ) : (
+          <>
+            <section class="pd-hero">
+              <p class="kicker">Project progress</p>
+              <h1 class="client-title">{data.name}</h1>
+              <p class="pd-sub">
+                {data.client && <>{data.client} · </>}
+                {data.status === 'active' ? 'In progress' : data.status === 'done' ? 'Completed' : 'Paused'}
+                {data.started_on && <> · started {fmt(data.started_on)}</>}
+              </p>
+              <dl class="pd-stats">
+                <div class="pd-stat">
+                  <dt>Current stage</dt>
+                  <dd>
+                    <strong>{done === stages.length && stages.length ? 'All stages done' : current?.title ?? '—'}</strong>
+                    <span>{current?.estimated_on ? `Planned for ${fmt(current.estimated_on)}` : ''}</span>
+                  </dd>
+                </div>
+                <div class="pd-stat">
+                  <dt>Stages</dt>
+                  <dd>
+                    <strong>{done} of {stages.length}</strong>
+                    <span class="pj-progress" role="img" aria-label={`${pct}% complete`}><span style={`width:${pct}%`} /></span>
+                  </dd>
+                </div>
+                {taskTotal > 0 && (
+                  <div class="pd-stat">
+                    <dt>Work items</dt>
+                    <dd>
+                      <strong>{data.tasks_done} done</strong>
+                      <span>{data.tasks_open} in progress or planned</span>
+                    </dd>
+                  </div>
+                )}
+              </dl>
+              {data.checkin && (
+                <div class="pd-now client-now">
+                  <span class="pd-now-tag">Latest</span>
+                  <span class="pd-now-body">{data.checkin.body}</span>
+                  <span class="pd-now-meta">{fmt(data.checkin.created_at)}</span>
+                </div>
+              )}
+            </section>
+
+            <section class="team-card">
+              <h2>Timeline</h2>
+              <ol class="client-stages">
+                {stages.map((s) => (
+                  <li class:list={[`is-${s.status}`, s.status !== 'done' && s.estimated_on && s.estimated_on < today && 'is-late']}>
+                    <span class="client-dot" aria-hidden="true" />
+                    <span class="client-stage-title">{s.title}</span>
+                    <span class="client-stage-meta">
+                      {s.status === 'done' ? 'Done' : s.status === 'current' ? 'In progress' : 'Upcoming'}
+                      {s.estimated_on && <> · {fmt(s.estimated_on)}</>}
+                    </span>
+                  </li>
+                ))}
+              </ol>
+            </section>
+            <p class="muted client-foot">Updated {fmt(data.updated_at)} · Shared privately by {site.name}. Please don't forward this link.</p>
+          </>
+        )
+      }
+    </main>
+    <Fragment set:html="<!--/email_off-->" />
+  </body>
+</html>

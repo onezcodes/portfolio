@@ -12,14 +12,16 @@ const supabase = Astro.locals.supabase;
 const pattern = q ? `%${q.replace(/[%_,]/g, '')}%` : '';
 
 let projects: Pick<Project, 'id' | 'name' | 'client' | 'logo_url'>[] = [];
-let tasks: Pick<ProjectTask, 'id' | 'title' | 'project_id'>[] = [];
+let tasks: Pick<ProjectTask, 'id' | 'title' | 'project_id' | 'status' | 'kind'>[] = [];
+let comments: { task_id: string; project_id: string; body: string; author_email: string; project_tasks: { title: string } | null }[] = [];
+let projectNames = new Map<string, string>();
 let credentials: Pick<CredentialRecord, 'id' | 'title' | 'website'>[] = [];
 let people: Pick<TeamMember, 'email' | 'display_name'>[] = [];
 
 if (pattern) {
-  const [{ data: projectRows }, { data: taskRows }, creds, members] = await Promise.all([
+  const [{ data: projectRows }, { data: taskRows }, creds, members, { data: commentRows }, { data: allProjects }] = await Promise.all([
     supabase.from('projects').select('id, name, client, logo_url').or(`name.ilike.${pattern},client.ilike.${pattern}`).limit(20),
-    supabase.from('project_tasks').select('id, title, project_id').ilike('title', pattern).limit(20),
+    supabase.from('project_tasks').select('id, title, project_id, status, kind').or(`title.ilike.${pattern},notes.ilike.${pattern}`).limit(25),
     studio?.canVault
       ? supabase.from('studio_credentials').select('id, title, website').ilike('title', pattern).limit(20)
       : Promise.resolve({ data: [] }),
@@ -30,14 +32,23 @@ if (pattern) {
           .or(`email.ilike.${pattern},display_name.ilike.${pattern}`)
           .limit(20)
       : Promise.resolve({ data: [] }),
+    supabase.from('task_comments').select('task_id, project_id, body, author_email, project_tasks(title)').ilike('body', pattern).order('created_at', { ascending: false }).limit(15),
+    supabase.from('projects').select('id, name'),
   ]);
+  comments = (commentRows ?? []) as typeof comments;
+  projectNames = new Map(((allProjects ?? []) as { id: string; name: string }[]).map((p) => [p.id, p.name]));
   projects = (projectRows ?? []) as Pick<Project, 'id' | 'name' | 'client' | 'logo_url'>[];
-  tasks = (taskRows ?? []) as Pick<ProjectTask, 'id' | 'title' | 'project_id'>[];
+  tasks = (taskRows ?? []) as typeof tasks;
   credentials = (creds.data ?? []) as Pick<CredentialRecord, 'id' | 'title' | 'website'>[];
   people = (members.data ?? []) as Pick<TeamMember, 'email' | 'display_name'>[];
 }
 
-const empty = Boolean(q) && projects.length === 0 && tasks.length === 0 && credentials.length === 0 && people.length === 0;
+const empty = Boolean(q) && projects.length === 0 && tasks.length === 0 && comments.length === 0 && credentials.length === 0 && people.length === 0;
+const snippet = (body: string) => {
+  const at = body.toLowerCase().indexOf(q.toLowerCase());
+  const start = Math.max(0, at - 40);
+  return `${start > 0 ? '…' : ''}${body.slice(start, start + 140)}${body.length > start + 140 ? '…' : ''}`;
+};
 const marks = await logoHrefs(supabase, projects);
 ---
 
@@ -85,9 +96,24 @@ const marks = await logoHrefs(supabase, projects);
               <ul class="team-list">
                 {tasks.map((row) => (
                   <li>
-                    <a href={`/team/projects/${row.project_id}?tab=schedule`}>
-                      <strong>{row.title}</strong>
-                      <span>Task</span>
+                    <a href={`/team/projects/${row.project_id}?tab=tasks&task=${row.id}`}>
+                      <strong>{row.kind === 'bug' ? '🐞 ' : ''}{row.title}</strong>
+                      <span>{projectNames.get(row.project_id) ?? 'Task'}{row.status === 'done' ? ' · completed' : ''}</span>
+                    </a>
+                  </li>
+                ))}
+              </ul>
+            </section>
+          )}
+          {comments.length > 0 && (
+            <section>
+              <h2 class="team-h2">Comments</h2>
+              <ul class="team-list">
+                {comments.map((row) => (
+                  <li>
+                    <a href={`/team/projects/${row.project_id}?tab=tasks&task=${row.task_id}`}>
+                      <strong>{row.project_tasks?.title ?? 'Task'}</strong>
+                      <span>{snippet(row.body)} · {row.author_email.split('@')[0]} · {projectNames.get(row.project_id) ?? ''}</span>
                     </a>
                   </li>
                 ))}

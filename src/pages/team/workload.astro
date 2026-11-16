@@ -1,0 +1,163 @@
+---
+import Team from '../../layouts/Team.astro';
+import { todayIso, type Project, type TeamMember } from '../../lib/ledger';
+import { personFace, personInitial } from '../../lib/profile';
+import { priorityLabel, sortTaskQueue, type ProjectTask } from '../../lib/tasks';
+import { formatMinutes } from '../../lib/timeTracking';
+
+const supabase = Astro.locals.supabase;
+const studio = Astro.locals.studio;
+if (!studio) return Astro.redirect('/team/login');
+
+const today = todayIso();
+const DAY = 86_400_000;
+const dayN = (iso: string) => Math.round(Date.parse(`${iso}T00:00:00Z`) / DAY);
+const todayN = dayN(today);
+const weekStart = todayN - ((new Date(todayN * DAY).getUTCDay() + 6) % 7); // Monday
+const weekAgo = new Date(Date.now() - 7 * DAY).toISOString();
+
+const [{ data: taskRows }, { data: memberRows }, { data: crewRows }, { data: projectRows }, { data: timeRows }] = await Promise.all([
+  supabase
+    .from('project_tasks')
+    .select('id, project_id, title, status, assignee_email, due_on, start_on, priority, kind, sort_order')
+    .neq('status', 'done'),
+  supabase.from('team_members').select('email, display_name, avatar_url, job_title').order('email'),
+  supabase.from('project_members').select('email, project_id'),
+  supabase.from('projects').select('id, name, status'),
+  supabase.from('task_time_entries').select('email, minutes, started_at').gte('started_at', weekAgo),
+]);
+
+const tasks = (taskRows ?? []) as ProjectTask[];
+const members = (memberRows ?? []) as (Pick<TeamMember, 'email' | 'display_name' | 'avatar_url'> & { job_title?: string })[];
+const projects = new Map(((projectRows ?? []) as Pick<Project, 'id' | 'name' | 'status'>[]).map((p) => [p.id, p]));
+const onAProject = new Set(((crewRows ?? []) as { email: string }[]).map((row) => row.email));
+const hours = new Map<string, number>();
+for (const row of (timeRows ?? []) as { email: string; minutes: number }[]) hours.set(row.email, (hours.get(row.email) ?? 0) + (row.minutes || 0));
+
+const buckets = [
+  { id: 'late', label: 'Overdue', test: (n: number) => n < todayN },
+  { id: 'w0', label: 'This week', test: (n: number) => n >= todayN && n < weekStart + 7 },
+  { id: 'w1', label: weekLabel(weekStart + 7), test: (n: number) => n >= weekStart + 7 && n < weekStart + 14 },
+  { id: 'w2', label: weekLabel(weekStart + 14), test: (n: number) => n >= weekStart + 14 && n < weekStart + 21 },
+  { id: 'w3', label: weekLabel(weekStart + 21), test: (n: number) => n >= weekStart + 21 && n < weekStart + 28 },
+  { id: 'later', label: 'Later', test: (n: number) => n >= weekStart + 28 },
+];
+function weekLabel(n: number) {
+  return `w/c ${new Date(n * DAY).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', timeZone: 'UTC' })}`;
+}
+const HEAVY = 6;
+const BUSY = 4;
+
+function rowFor(email: string) {
+  const mine = tasks.filter((t) => t.assignee_email === email && projects.has(t.project_id));
+  const cells = buckets.map((bucket) => mine.filter((t) => t.due_on && bucket.test(dayN(t.due_on))));
+  const noDate = mine.filter((t) => !t.due_on);
+  return { email, mine: sortTaskQueue(mine), cells, noDate };
+}
+
+const people = members
+  .filter((m) => onAProject.has(m.email) || tasks.some((t) => t.assignee_email === m.email))
+  .map((m) => ({ member: m, ...rowFor(m.email) }))
+  .sort((a, b) => b.mine.length - a.mine.length);
+const unassigned = rowFor('');
+const heavyWeeks = people.filter((p) => p.cells.slice(1, 3).some((c) => c.length >= HEAVY)).length;
+const lightest = [...people].sort((a, b) => a.cells[1].length + a.cells[2].length - (b.cells[1].length + b.cells[2].length))[0];
+
+const level = (n: number, id: string) => (n === 0 ? '' : id === 'late' ? 'late' : n >= HEAVY ? 'heavy' : n >= BUSY ? 'busy' : 'ok');
+const taskHref = (t: ProjectTask) => `/team/projects/${t.project_id}?tab=tasks&task=${t.id}`;
+const dueText = (t: ProjectTask) =>
+  t.due_on ? new Date(`${t.due_on}T12:00:00`).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' }) : 'No date';
+---
+
+<Team title="Workload">
+  <div class="wrap team-page insights">
+    <header class="pj-hero">
+      <div class="team-intro">
+        <p class="kicker">Insights</p>
+        <h1>Workload</h1>
+        <p class="lede">Open work per person by due week. Check here before you assign.</p>
+      </div>
+      <nav class="pj-seg" aria-label="Insights">
+        <a href="/team/workload" aria-current="page">Workload</a>
+        <a href="/team/reports">Reports</a>
+      </nav>
+    </header>
+
+    <section class="ov-stats" aria-label="Summary">
+      <div class="ov-stat"><span class="ov-stat-label">Open tasks</span><strong>{tasks.filter((t) => projects.has(t.project_id)).length}</strong><span class="ov-stat-note">across {projects.size} projects you can see</span></div>
+      <div class:list={['ov-stat', heavyWeeks > 0 && 'is-alert']}><span class="ov-stat-label">Overloaded</span><strong>{heavyWeeks}</strong><span class="ov-stat-note">{HEAVY}+ tasks due this or next week</span></div>
+      <div class:list={['ov-stat', unassigned.mine.length > 0 && 'is-alert']}><span class="ov-stat-label">Unassigned</span><strong>{unassigned.mine.length}</strong><span class="ov-stat-note">open tasks with no owner</span></div>
+      {lightest && (
+        <div class="ov-stat"><span class="ov-stat-label">Most room</span><strong class="wl-name">{lightest.member.display_name?.trim() || lightest.email.split('@')[0]}</strong><span class="ov-stat-note">{lightest.cells[1].length + lightest.cells[2].length} due in the next two weeks</span></div>
+      )}
+    </section>
+
+    <div class="wl-scroll">
+      <table class="wl">
+        <thead>
+          <tr>
+            <th scope="col">Person</th>
+            {buckets.map((b) => <th scope="col" class:list={[b.id === 'late' && 'is-late']}>{b.label}</th>)}
+            <th scope="col">No date</th>
+            <th scope="col">Logged 7d</th>
+          </tr>
+        </thead>
+        <tbody>
+          {[...people, ...(unassigned.mine.length ? [{ member: { email: '', display_name: 'Unassigned', avatar_url: '' }, ...unassigned }] : [])].map((p) => {
+            const face = p.email ? personFace(p.email, members) : null;
+            return (
+              <tr>
+                <th scope="row">
+                  <details class="wl-person">
+                    <summary>
+                      {face ? (
+                        face.avatarUrl ? (
+                          <img class="face" src={face.avatarUrl} alt="" referrerpolicy="no-referrer" width="30" height="30" />
+                        ) : (
+                          <span class="face">{personInitial(face.name, face.email)}</span>
+                        )
+                      ) : (
+                        <span class="face tw-nobody">?</span>
+                      )}
+                      <span>
+                        <strong>{face?.name ?? 'Unassigned'}</strong>
+                        <span>{p.mine.length} open</span>
+                      </span>
+                    </summary>
+                    <ul class="wl-tasks">
+                      {p.mine.slice(0, 25).map((t) => (
+                        <li>
+                          <a href={taskHref(t)}>{t.kind === 'bug' ? '🐞 ' : ''}{t.title}</a>
+                          <span class:list={[t.due_on && t.due_on < today && 'late']}>
+                            {projects.get(t.project_id)?.name} · {dueText(t)}{t.priority ? ` · ${priorityLabel(t.priority)}` : ''}
+                          </span>
+                        </li>
+                      ))}
+                    </ul>
+                  </details>
+                </th>
+                {p.cells.map((cell, i) => (
+                  <td>
+                    {cell.length > 0 && (
+                      <span class:list={['wl-cell', level(cell.length, buckets[i].id)]} title={cell.map((t) => `${t.title} (${dueText(t)})`).join('\n')}>
+                        {cell.length}
+                      </span>
+                    )}
+                  </td>
+                ))}
+                <td>{p.noDate.length > 0 && <span class="wl-cell muted-cell" title={p.noDate.map((t) => t.title).join('\n')}>{p.noDate.length}</span>}</td>
+                <td class="wl-hours">{p.email && hours.get(p.email) ? formatMinutes(hours.get(p.email) ?? 0) : '—'}</td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    </div>
+    <p class="muted wl-legend">
+      <span class="wl-cell ok">1–{BUSY - 1}</span> fine
+      <span class="wl-cell busy">{BUSY}–{HEAVY - 1}</span> busy
+      <span class="wl-cell heavy">{HEAVY}+</span> overloaded
+      <span class="wl-cell late">n</span> overdue · Click a name to see their tasks. Hover a number for the list.
+    </p>
+  </div>
+</Team>

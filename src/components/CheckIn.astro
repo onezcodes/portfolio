@@ -27,9 +27,12 @@ const history = recent.filter((row) => row.id !== latest?.id);
 ---
 
 <section class="team-card" id="checkin">
-  <div class="pay-head">
-    <h2>Check-in</h2>
-    <p class="muted">One note for the last-known state. Not a chat.</p>
+  <div class="card-head">
+    <div class="pay-head">
+      <h2>Check-in</h2>
+      <p class="muted">One note for the last-known state. Not a chat.</p>
+    </div>
+    {canPost && <a class="btn btn-ghost card-add" href="?tab=schedule&action=checkin" data-modal-open="checkin">+ Post check-in</a>}
   </div>
 
   {
@@ -53,22 +56,6 @@ const history = recent.filter((row) => row.id !== latest?.id);
     )
   }
 
-  {
-    canPost && (
-      <details class="pay-edit" id="post-checkin" open={openPost}>
-        <summary>Post a check-in</summary>
-        <form class="form team-form" method="post">
-          <input type="hidden" name="intent" value="add-checkin" />
-          <input type="hidden" name="tab" value="schedule" />
-          <p class="field">
-            <label for="checkin_body">Now</label>
-            <textarea id="checkin_body" name="body" rows="3" required maxlength="400" placeholder="Blocked on copy. QA on staging."></textarea>
-          </p>
-          <button class="btn" type="submit">Post check-in</button>
-        </form>
-      </details>
-    )
-  }
 
   {
     history.length > 0 && (

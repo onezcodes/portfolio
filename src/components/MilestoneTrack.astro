@@ -43,22 +43,26 @@ function statusCopy(row: Milestone) {
   if (row.status === 'done') return 'Done';
   return 'Upcoming';
 }
+type SignedStage = { signed_off_at?: string | null; signed_off_by: string; signoff_note: string };
 ---
 
 <section class="team-card ms-card">
-  <div class="pay-head">
-    <h2>Milestones</h2>
-    <p class="muted">
-      {
-        milestones.length === 0
-          ? 'Dates set the order. Add stages as the job actually runs.'
-          : allDone
-            ? `Complete · ${stage?.title ?? 'All stages'}`
-            : stage
-              ? `${stage.title} · ${pretty(stage.estimated_on)} · ${doneCount} of ${milestones.length} done`
-              : `${doneCount} of ${milestones.length} done`
-      }
-    </p>
+  <div class="card-head">
+    <div class="pay-head">
+      <h2>Milestones</h2>
+      <p class="muted">
+        {
+          milestones.length === 0
+            ? 'Dates set the order. Add stages as the job actually runs.'
+            : allDone
+              ? `Complete · ${stage?.title ?? 'All stages'}`
+              : stage
+                ? `${stage.title} · ${pretty(stage.estimated_on)} · ${doneCount} of ${milestones.length} done`
+                : `${doneCount} of ${milestones.length} done`
+        }
+      </p>
+    </div>
+    {canPlan && <a class="btn btn-ghost card-add" href="?tab=schedule&action=stage" data-modal-open="stage">+ Add stage</a>}
   </div>
 
   {
@@ -86,6 +90,12 @@ function statusCopy(row: Milestone) {
               <div class="ms-copy">
                 <strong>{row.title}</strong>
                 <span class={`ms-chip ${late(row) ? 'late' : row.status}`}>{statusCopy(row)}</span>
+                {row.status === 'done' && (row as SignedStage).signed_off_at && (
+                  <p class="ms-signoff">
+                    ✓ Signed off by {(row as SignedStage).signed_off_by.split('@')[0]} · {new Date(String((row as SignedStage).signed_off_at)).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })}
+                    {(row as SignedStage).signoff_note && <span>“{(row as SignedStage).signoff_note}”</span>}
+                  </p>
+                )}
               </div>
               <div class="ms-tools">
                 {
@@ -93,7 +103,7 @@ function statusCopy(row: Milestone) {
                     <form method="post">
                       <input type="hidden" name="intent" value="milestone-done" />
                       <input type="hidden" name="milestone_id" value={row.id} />
-                      <button class="btn" type="submit">Mark done</button>
+                      <button class="btn" type="submit" data-modal-open="signoff" data-signoff-for={row.id} data-signoff-title={row.title}>Mark done</button>
                     </form>
                   )
                 }
@@ -150,25 +160,4 @@ function statusCopy(row: Milestone) {
     )
   }
 
-  {
-    canPlan && (
-      <details class="pay-edit" id="add-stage" open={openAdd || milestones.length === 0}>
-        <summary>Add a stage</summary>
-        <form class="form team-form" method="post">
-          <input type="hidden" name="intent" value="add-milestone" />
-          <div class="team-form-row">
-            <p class="field">
-              <label for="ms_title">Stage</label>
-              <input id="ms_title" name="title" required placeholder="Design, launch…" />
-            </p>
-            <p class="field">
-              <label for="ms_date">Date</label>
-              <input id="ms_date" name="estimated_on" type="date" />
-            </p>
-          </div>
-          <button class="btn" type="submit">Add stage</button>
-        </form>
-      </details>
-    )
-  }
 </section>

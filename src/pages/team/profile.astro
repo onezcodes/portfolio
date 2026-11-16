@@ -4,7 +4,7 @@ import TeamFlash from '../../components/TeamFlash.astro';
 import { logEvent, formatEventTime } from '../../lib/events';
 import type { TeamMember } from '../../lib/ledger';
 import { oauthAvatar, oauthName } from '../../lib/profile';
-import { emailOf } from '../../lib/supabase';
+import { emailOf, siteUrl } from '../../lib/supabase';
 
 const supabase = Astro.locals.supabase;
 const user = Astro.locals.user;
@@ -15,6 +15,18 @@ if (!email) return Astro.redirect('/team/login');
 
 if (Astro.request.method === 'POST') {
   const form = await Astro.request.formData();
+  const intent = String(form.get('intent') ?? 'profile');
+  // Calendar feed token (only for your own login, enforced by RLS).
+  if (intent === 'calendar-create' || intent === 'calendar-reset') {
+    if (intent === 'calendar-reset') await supabase.from('calendar_feed_tokens').delete().eq('email', email);
+    const { error } = await supabase.from('calendar_feed_tokens').insert({ email });
+    if (error && error.code !== '23505') console.error('calendar token failed', error.message);
+    return Astro.redirect(`/team/profile?${error && error.code !== '23505' ? 'error=invalid' : 'notice=saved'}#calendar`);
+  }
+  if (intent === 'calendar-delete') {
+    await supabase.from('calendar_feed_tokens').delete().eq('email', email);
+    return Astro.redirect('/team/profile?notice=deleted#calendar');
+  }
   const display_name = String(form.get('display_name') ?? '').trim().slice(0, 80);
   const job_title = String(form.get('job_title') ?? '').trim().slice(0, 80);
   const phone = String(form.get('phone') ?? '').trim().slice(0, 40);
@@ -33,7 +45,12 @@ if (Astro.request.method === 'POST') {
   return Astro.redirect('/team/profile?notice=saved');
 }
 
-const { data } = await supabase.from('team_members').select('*').eq('email', email).maybeSingle();
+const [{ data }, { data: feed }] = await Promise.all([
+  supabase.from('team_members').select('*').eq('email', email).maybeSingle(),
+  supabase.from('calendar_feed_tokens').select('token').eq('email', email).maybeSingle(),
+]);
+const feedUrl = feed?.token ? `${siteUrl(Astro.request)}/api/calendar/${feed.token}.ics` : '';
+const webcalUrl = feedUrl.replace(/^https?:/, 'webcal:');
 const row = data as TeamMember | null;
 const name = row?.display_name?.trim() || oauthName(user);
 const avatar = oauthAvatar(user);
@@ -57,7 +74,7 @@ const lastSignIn = user?.last_sign_in_at ? formatEventTime(user.last_sign_in_at)
       <div class="profile-id">
         {
           avatar ? (
-            <img class="profile-photo" src={avatar} alt="" width="72" height="72" />
+            <img class="profile-photo" src={avatar} alt="" referrerpolicy="no-referrer" width="72" height="72" />
           ) : (
             <span class="profile-photo profile-photo-fallback" aria-hidden="true">
               {(name || email).slice(0, 1).toUpperCase()}
@@ -110,6 +127,40 @@ const lastSignIn = user?.last_sign_in_at ? formatEventTime(user.last_sign_in_at)
         </div>
         <button class="btn" type="submit">Save profile</button>
       </form>
+    </section>
+
+    <section class="team-card" id="calendar">
+      <div class="card-head">
+        <div class="pay-head">
+          <h2>Calendar feed</h2>
+          <p class="muted">Subscribe in Google Calendar, Apple Calendar, or Outlook to see your task due dates and stage dates. Keep the link private: anyone with it can see those items.</p>
+        </div>
+      </div>
+      {feedUrl ? (
+        <div class="share-box">
+          <div class="secret-row">
+            <input class="share-url" id="feed-url" value={feedUrl} readonly aria-label="Calendar feed URL" />
+            <button class="btn" type="button" data-copy="feed-url">Copy</button>
+          </div>
+          <div class="share-actions">
+            <a class="btn btn-ghost" href={webcalUrl}>Open in calendar app</a>
+            <a class="btn btn-ghost" href={`https://calendar.google.com/calendar/r?cid=${encodeURIComponent(webcalUrl)}`} target="_blank" rel="noopener noreferrer">Add to Google Calendar ↗</a>
+            <form method="post" data-confirm="Make a new link? Calendars using the old one stop updating." data-confirm-action="Reset">
+              <input type="hidden" name="intent" value="calendar-reset" />
+              <button class="btn-text" type="submit">Reset link</button>
+            </form>
+            <form method="post" data-confirm="Turn off your calendar feed?" data-confirm-action="Turn off">
+              <input type="hidden" name="intent" value="calendar-delete" />
+              <button class="btn-text td-delete" type="submit">Turn off</button>
+            </form>
+          </div>
+        </div>
+      ) : (
+        <form method="post">
+          <input type="hidden" name="intent" value="calendar-create" />
+          <button class="btn" type="submit">Create my calendar link</button>
+        </form>
+      )}
     </section>
   </div>
 </Team>

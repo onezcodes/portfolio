@@ -86,7 +86,8 @@ function hasJoined(member: TeamMember) {
     </header>
     <TeamFlash />
 
-    <section class="team-card">
+    <div class="team-two">
+    <section class="team-card team-two-aside">
       <h2>Add a team email</h2>
       {
         !canMail && (
@@ -107,7 +108,7 @@ function hasJoined(member: TeamMember) {
       </form>
     </section>
 
-    <section class="team-card">
+    <section class="team-card team-two-main">
       <h2>Current list</h2>
       <ul class="member-list">
         {
@@ -119,7 +120,7 @@ function hasJoined(member: TeamMember) {
               <li class="member-hit">
                 <div class="member-id">
                   {member.avatar_url?.trim() ? (
-                    <img class="face" src={member.avatar_url} alt="" width="36" height="36" />
+                    <img class="face" src={member.avatar_url} alt="" referrerpolicy="no-referrer" width="36" height="36" />
                   ) : (
                     <span class="face" aria-hidden="true">
                       {personInitial(name, member.email)}
@@ -138,6 +139,14 @@ function hasJoined(member: TeamMember) {
                   <span class:list={['status-pill', joined || admin ? 'is-joined' : 'is-wait']}>
                     {admin || joined ? 'Joined' : 'Invited'}
                   </span>
+                  {!admin && (
+                    <form method="post" action="/team/view-as" data-astro-reload>
+                      <input type="hidden" name="intent" value="start" />
+                      <input type="hidden" name="email" value={member.email} />
+                      <input type="hidden" name="back" value="/team" />
+                      <button class="btn-text view-as-btn" type="submit">View as</button>
+                    </form>
+                  )}
                   {!admin && !joined && (
                     <form method="post">
                       <input type="hidden" name="intent" value="invite" />
@@ -159,5 +168,6 @@ function hasJoined(member: TeamMember) {
         }
       </ul>
     </section>
+    </div>
   </div>
 </Team>

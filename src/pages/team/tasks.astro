@@ -1,0 +1,304 @@
+---
+import Team from '../../layouts/Team.astro';
+import TeamFlash from '../../components/TeamFlash.astro';
+import ProjectMark from '../../components/ProjectMark.astro';
+import { capsFor } from '../../lib/access';
+import { logEvent } from '../../lib/events';
+import { todayIso, type Project } from '../../lib/ledger';
+import { logoHrefs } from '../../lib/projectHub';
+import { runningTimer } from '../../lib/timeTracking';
+import {
+  isTaskStatus,
+  priorityLabel,
+  setTaskStatus,
+  sortTaskQueue,
+  taskCounts,
+  taskStatusLabel,
+  type ProjectTask,
+} from '../../lib/tasks';
+
+const supabase = Astro.locals.supabase;
+const studio = Astro.locals.studio;
+if (!studio) return Astro.redirect('/team/login');
+
+const projectFilter = (Astro.url.searchParams.get('project') ?? '').trim();
+const back = projectFilter ? `/team/tasks?project=${encodeURIComponent(projectFilter)}` : '/team/tasks';
+
+// One-click complete / reopen.
+if (Astro.request.method === 'POST') {
+  const form = await Astro.request.formData();
+  const taskId = String(form.get('task_id') ?? '');
+  const status = String(form.get('status') ?? '');
+  if (!taskId || !isTaskStatus(status)) return Astro.redirect(`${back}${back.includes('?') ? '&' : '?'}error=invalid`);
+  const { data: target } = await supabase.from('project_tasks').select('project_id, title').eq('id', taskId).maybeSingle();
+  if (!target || !capsFor(studio, String(target.project_id)).canProgress) {
+    return Astro.redirect(`${back}${back.includes('?') ? '&' : '?'}error=forbidden`);
+  }
+  const result = await setTaskStatus(supabase, String(target.project_id), taskId, status);
+  if (result.error) return Astro.redirect(`${back}${back.includes('?') ? '&' : '?'}error=invalid`);
+  await logEvent(supabase, studio.email, {
+    action: 'status',
+    entityType: 'task',
+    entityId: String(target.project_id),
+    projectId: String(target.project_id),
+    detail: status,
+  });
+  return Astro.redirect(back);
+}
+
+const today = todayIso();
+const addDays = (iso: string, days: number) => {
+  const date = new Date(`${iso}T12:00:00Z`);
+  date.setUTCDate(date.getUTCDate() + days);
+  return date.toISOString().slice(0, 10);
+};
+const weekEnd = addDays(today, 7);
+const recentSince = new Date(Date.now() - 14 * 24 * 60 * 60 * 1000).toISOString();
+
+const [{ data: taskRows }, { data: projectRows }] = await Promise.all([
+  supabase
+    .from('project_tasks')
+    .select('id, project_id, title, status, due_on, priority, completed_at, sort_order, assignee_email')
+    .eq('assignee_email', studio.email)
+    .or(`status.neq.done,completed_at.gte."${recentSince}"`),
+  supabase.from('projects').select('id, name, logo_url, status'),
+]);
+
+const projects = (projectRows ?? []) as Pick<Project, 'id' | 'name' | 'logo_url' | 'status'>[];
+const byProject = new Map(projects.map((project) => [project.id, project]));
+const all = ((taskRows ?? []) as ProjectTask[]).filter((row) => byProject.has(row.project_id));
+const mine = all.filter((row) => !projectFilter || row.project_id === projectFilter);
+const myProjects = projects.filter((project) => all.some((row) => row.project_id === project.id));
+const openIds = all.filter((row) => row.status !== 'done').map((row) => row.id);
+const [marks, counts, { data: depRows }, timer] = await Promise.all([
+  logoHrefs(supabase, myProjects),
+  taskCounts(supabase, myProjects.map((project) => project.id)),
+  openIds.length
+    ? supabase.from('task_dependencies').select('task_id, depends_on_id').in('depends_on_id', openIds)
+    : Promise.resolve({ data: [] as { task_id: string; depends_on_id: string }[] }),
+  runningTimer(supabase, studio.email),
+]);
+// Tasks (anyone's) that wait on one of my open tasks.
+const waitingIds = [...new Set(((depRows ?? []) as { task_id: string }[]).map((row) => row.task_id))];
+const { data: waitingRows } = waitingIds.length
+  ? await supabase.from('project_tasks').select('id, project_id, title, assignee_email, status').in('id', waitingIds).neq('status', 'done')
+  : { data: [] };
+const blockerOf = new Map<string, string[]>();
+for (const dep of (depRows ?? []) as { task_id: string; depends_on_id: string }[]) {
+  const mineTitle = all.find((row) => row.id === dep.depends_on_id)?.title;
+  if (mineTitle) blockerOf.set(dep.task_id, [...(blockerOf.get(dep.task_id) ?? []), mineTitle]);
+}
+const waitingOnMe = (waitingRows ?? []) as Pick<ProjectTask, 'id' | 'project_id' | 'title' | 'assignee_email' | 'status'>[];
+
+const open = sortTaskQueue(mine.filter((row) => row.status !== 'done'));
+const done = mine
+  .filter((row) => row.status === 'done')
+  .sort((a, b) => String(b.completed_at ?? '').localeCompare(String(a.completed_at ?? '')));
+
+const groups = [
+  { id: 'overdue', title: 'Overdue', rows: open.filter((row) => row.due_on && row.due_on < today) },
+  { id: 'today', title: 'Today', rows: open.filter((row) => row.due_on === today) },
+  { id: 'week', title: 'Next 7 days', rows: open.filter((row) => row.due_on && row.due_on > today && row.due_on <= weekEnd) },
+  { id: 'later', title: 'Later', rows: open.filter((row) => row.due_on && row.due_on > weekEnd) },
+  { id: 'nodate', title: 'No due date', rows: open.filter((row) => !row.due_on) },
+];
+
+const weekAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+const stats = {
+  open: open.length,
+  overdue: groups[0].rows.length,
+  today: groups[1].rows.length,
+  doneWeek: done.filter((row) => String(row.completed_at ?? '') >= weekAgo).length,
+};
+
+function taskHref(row: ProjectTask) {
+  return `/team/projects/${row.project_id}?tab=tasks&task=${row.id}`;
+}
+
+function dueLabel(iso: string | null) {
+  if (!iso) return '';
+  if (iso === today) return 'Today';
+  if (iso === addDays(today, 1)) return 'Tomorrow';
+  const date = new Date(`${iso}T12:00:00`);
+  const opts: Intl.DateTimeFormatOptions =
+    iso > today && iso <= weekEnd ? { weekday: 'short', day: 'numeric', month: 'short' } : { day: 'numeric', month: 'short' };
+  return date.toLocaleDateString('en-GB', opts);
+}
+
+const readOnly = Boolean(Astro.locals.viewAs);
+---
+
+<Team title="My tasks">
+  <div class="wrap team-page mt">
+    <header class="pj-hero">
+      <div class="team-intro">
+        <p class="kicker">My tasks</p>
+        <h1>Your work</h1>
+        <p class="lede">Everything assigned to you across projects, by when it is due.</p>
+      </div>
+      <dl class="mt-stats">
+        <div><dt>Open</dt><dd>{stats.open}</dd></div>
+        <div class:list={[stats.overdue > 0 && 'is-late']}><dt>Overdue</dt><dd>{stats.overdue}</dd></div>
+        <div><dt>Due today</dt><dd>{stats.today}</dd></div>
+        <div class="is-ok"><dt>Done this week</dt><dd>{stats.doneWeek}</dd></div>
+      </dl>
+    </header>
+    <TeamFlash />
+
+    {
+      myProjects.length > 1 && (
+        <nav class="pj-people" aria-label="Filter by project">
+          <a href="/team/tasks" aria-current={projectFilter ? undefined : 'page'}>All projects</a>
+          {myProjects.map((project) => (
+            <a href={`/team/tasks?project=${project.id}`} aria-current={projectFilter === project.id ? 'page' : undefined}>
+              <ProjectMark name={project.name} src={marks.get(project.logo_url)} />
+              {project.name}
+            </a>
+          ))}
+        </nav>
+      )
+    }
+
+    {
+      waitingOnMe.length > 0 && (
+        <section class="team-card mt-group mt-waiting">
+          <header class="tw-group-head">
+            <h2>Others are waiting on you</h2>
+            <span class="tw-count">{waitingOnMe.length}</span>
+          </header>
+          <ul class="tw-rows">
+            {waitingOnMe.map((row) => (
+              <li class="tw-row">
+                <span class="tw-chip tw-waiting" aria-hidden="true">⏳</span>
+                <a class="tw-title" href={`/team/projects/${row.project_id}?tab=tasks&task=${row.id}`}>
+                  <span>{row.title}</span>
+                </a>
+                <span class="tw-meta">
+                  <span class="mt-blocked-by">needs: {(blockerOf.get(row.id) ?? []).join(', ')}</span>
+                  <span class="tw-due">{byProject.get(row.project_id)?.name}</span>
+                </span>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )
+    }
+
+    {
+      open.length === 0 ? (
+        <div class="pj-empty mt-clear">
+          <p class="mt-clear-title">You're all caught up</p>
+          <p>Nothing open is assigned to you{projectFilter ? ' in this project' : ''}.</p>
+          <a class="btn btn-ghost" href="/team/projects">Browse projects</a>
+        </div>
+      ) : (
+        <div class="mt-groups">
+          {groups
+            .filter((group) => group.rows.length > 0)
+            .map((group) => (
+              <section class:list={['team-card', 'mt-group', `is-${group.id}`]}>
+                <header class="tw-group-head">
+                  <h2>{group.title}</h2>
+                  <span class="tw-count">{group.rows.length}</span>
+                </header>
+                <ul class="tw-rows">
+                  {group.rows.map((row) => {
+                    const project = byProject.get(row.project_id);
+                    const count = counts.get(row.id);
+                    const late = Boolean(row.due_on && row.due_on < today);
+                    const canMove = !readOnly && capsFor(studio, row.project_id).canProgress;
+                    return (
+                      <li class:list={['tw-row', `is-${row.status}`, late && 'is-late']}>
+                        {canMove ? (
+                          <form method="post" class="tw-check-form">
+                            <input type="hidden" name="task_id" value={row.id} />
+                            <input type="hidden" name="status" value="done" />
+                            <button class="tw-check" type="submit" aria-label={`Mark "${row.title}" complete`} />
+                          </form>
+                        ) : (
+                          <span class="tw-check is-static" aria-hidden="true" />
+                        )}
+                        <a class="tw-title" href={taskHref(row)}>
+                          <span>{row.title}</span>
+                          {row.status !== 'todo' && <em class:list={['tw-status', row.status]}>{taskStatusLabel(row.status)}</em>}
+                        </a>
+                        <span class="tw-meta">
+                          {count && count.subtasks > 0 && (
+                            <span class="tw-chip" title="Subtasks done">
+                              <svg class="tw-ico" viewBox="0 0 16 16" aria-hidden="true"><rect x="2" y="2" width="12" height="12" rx="3" fill="none" stroke="currentColor" stroke-width="1.6" /><path d="m5 8 2 2 4-4" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" /></svg>
+                              {count.subtasksDone}/{count.subtasks}
+                            </span>
+                          )}
+                          {count && count.comments > 0 && (
+                            <span class="tw-chip" title="Comments">
+                              <svg class="tw-ico" viewBox="0 0 16 16" aria-hidden="true"><path d="M3 3.5h10a1 1 0 0 1 1 1v6a1 1 0 0 1-1 1H7l-3 2.5V11.5H3a1 1 0 0 1-1-1v-6a1 1 0 0 1 1-1Z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round" /></svg>
+                              {count.comments}
+                            </span>
+                          )}
+                          {row.priority && <span class:list={['tw-flag', row.priority]}>{priorityLabel(row.priority)}</span>}
+                          {project && (
+                            <a class="mt-project" href={`/team/projects/${project.id}?tab=tasks`}>
+                              <ProjectMark name={project.name} src={marks.get(project.logo_url)} />
+                              {project.name}
+                            </a>
+                          )}
+                          <span class:list={['tw-due', late && 'late']}>{dueLabel(row.due_on)}</span>
+                          {canMove && (
+                            timer?.task_id === row.id ? (
+                              <form method="post" action="/team/timer" class="mt-timer-form">
+                                <input type="hidden" name="intent" value="stop" />
+                                <input type="hidden" name="back" value={back} />
+                                <button class="mt-timer is-on" type="submit" title="Stop timer" aria-label={`Stop timer on ${row.title}`}>■</button>
+                              </form>
+                            ) : (
+                              <form method="post" action="/team/timer" class="mt-timer-form">
+                                <input type="hidden" name="intent" value="start" />
+                                <input type="hidden" name="task_id" value={row.id} />
+                                <input type="hidden" name="back" value={back} />
+                                <button class="mt-timer" type="submit" title="Start timer" aria-label={`Start timer on ${row.title}`}>▶</button>
+                              </form>
+                            )
+                          )}
+                        </span>
+                      </li>
+                    );
+                  })}
+                </ul>
+              </section>
+            ))}
+        </div>
+      )
+    }
+
+    {
+      done.length > 0 && (
+        <details class="team-card tw-done mt-done">
+          <summary>Recently completed · {done.length}</summary>
+          <ul class="tw-rows">
+            {done.map((row) => {
+              const project = byProject.get(row.project_id);
+              const canMove = !readOnly && capsFor(studio, row.project_id).canProgress;
+              return (
+                <li class="tw-row is-done">
+                  {canMove ? (
+                    <form method="post" class="tw-check-form">
+                      <input type="hidden" name="task_id" value={row.id} />
+                      <input type="hidden" name="status" value="todo" />
+                      <button class="tw-check is-on" type="submit" aria-label={`Reopen "${row.title}"`} />
+                    </form>
+                  ) : (
+                    <span class="tw-check is-on is-static" aria-hidden="true" />
+                  )}
+                  <a class="tw-title" href={taskHref(row)}><span>{row.title}</span></a>
+                  <span class="tw-meta">
+                    <span class="tw-due">{project?.name}</span>
+                  </span>
+                </li>
+              );
+            })}
+          </ul>
+        </details>
+      )
+    }
+  </div>
+</Team>

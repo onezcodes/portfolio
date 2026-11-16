@@ -1,0 +1,830 @@
+---
+/**
+ * Task detail drawer (opened with ?task=<id>). Fields, subtasks, and comments post back to
+ * the project page, which redirects here again so the drawer stays open.
+ */
+import type { Milestone } from '../lib/milestones';
+import type { TeamMember } from '../lib/ledger';
+import { formatEventTime } from '../lib/events';
+import { personFace, personInitial, personLabel } from '../lib/profile';
+import {
+  TASK_PRIORITIES,
+  TASK_STATUSES,
+  priorityLabel,
+  taskIsLate,
+  taskStatusLabel,
+  type ProjectTask,
+  type TaskComment,
+  type TaskSubtask,
+} from '../lib/tasks';
+import { websiteHref } from '../lib/credentials';
+import VoucherLink from './VoucherLink.astro';
+import FacePile from './FacePile.astro';
+import {
+  RECUR_OPTIONS,
+  commentParts,
+  describeEvent,
+  formatBytes,
+  mentionHandle,
+  recurLabel,
+  type TaskAttachment,
+  type TaskEvent,
+} from '../lib/taskCollab';
+import { formatMinutes, liveMinutes, type TimeEntry } from '../lib/timeTracking';
+import type { StudioTemplate } from '../lib/templates';
+
+interface Props {
+  task: ProjectTask;
+  subtasks: TaskSubtask[];
+  comments: TaskComment[];
+  people: Pick<TeamMember, 'email' | 'display_name' | 'avatar_url'>[];
+  allPeople: Pick<TeamMember, 'email' | 'display_name' | 'avatar_url'>[];
+  milestones: Milestone[];
+  canPlan: boolean;
+  canProgress: boolean;
+  readOnly: boolean;
+  viewerEmail: string;
+  today: string;
+  view: string;
+  who: string;
+  imageHref?: string;
+  followers: string[];
+  attachments: TaskAttachment[];
+  attachHrefs: Map<string, string>;
+  events: TaskEvent[];
+  waitsOn: string[];
+  blocks: string[];
+  /** Other tasks in the project, for dependencies. */
+  allTasks: Pick<ProjectTask, 'id' | 'title' | 'status'>[];
+  timeEntries: TimeEntry[];
+  checklists: StudioTemplate[];
+}
+
+const {
+  task,
+  subtasks,
+  comments,
+  people,
+  allPeople,
+  milestones,
+  canPlan,
+  canProgress,
+  readOnly,
+  viewerEmail,
+  today,
+  view,
+  who,
+  imageHref,
+  followers,
+  attachments,
+  attachHrefs,
+  events,
+  waitsOn,
+  blocks,
+  allTasks,
+  timeEntries,
+  checklists,
+} = Astro.props;
+const myRunning = timeEntries.find((entry) => !entry.ended_at && entry.email === viewerEmail);
+const totalMinutes = timeEntries.reduce((sum, entry) => sum + liveMinutes(entry), 0);
+const byPerson = [...timeEntries.reduce((map, entry) => map.set(entry.email, (map.get(entry.email) ?? 0) + liveMinutes(entry)), new Map<string, number>())];
+
+const canEdit = canPlan && !readOnly;
+const canMove = canProgress && !readOnly;
+const late = taskIsLate(task, today);
+const doneCount = subtasks.filter((item) => item.done).length;
+const pct = subtasks.length ? Math.round((doneCount / subtasks.length) * 100) : 0;
+// Assignee options: people on the project, plus the current assignee if they left it.
+const assignable = people.some((p) => p.email === task.assignee_email) || !task.assignee_email
+  ? people
+  : [...people, { email: task.assignee_email, display_name: '', avatar_url: '' }];
+const assignee = task.assignee_email ? personFace(task.assignee_email, allPeople) : null;
+const following = followers.includes(viewerEmail);
+const followerFaces = followers.map((email) => personFace(email, allPeople));
+const notFollowing = people.filter((person) => !followers.includes(person.email));
+const taskById = new Map(allTasks.map((item) => [item.id, item]));
+const waiting = waitsOn.map((tid) => taskById.get(tid) ?? { id: tid, title: 'A task', status: 'todo' as const });
+const blocking = blocks.map((tid) => taskById.get(tid) ?? { id: tid, title: 'A task', status: 'todo' as const });
+const openWaits = waiting.filter((item) => item.status !== 'done').length;
+const dependCandidates = allTasks.filter(
+  (item) => item.id !== task.id && item.status !== 'done' && !waitsOn.includes(item.id) && !blocks.includes(item.id),
+);
+const nameOf = (email: string) => personLabel(email, allPeople);
+const mentionables = people.filter((person) => person.email !== viewerEmail).map((person) => ({
+  handle: mentionHandle(person.email),
+  name: personLabel(person.email, allPeople),
+}));
+const hidden = { tab: 'tasks', return_task: task.id, view, who };
+function fileIcon(item: TaskAttachment) {
+  if (item.kind === 'link') return 'link';
+  if (item.content_type.startsWith('image/')) return 'image';
+  if (item.content_type === 'application/pdf') return 'pdf';
+  return 'file';
+}
+const sameTaskHref = (tid: string) => {
+  const params = new URLSearchParams({ tab: 'tasks', task: tid });
+  if (view) params.set('view', view);
+  if (who) params.set('who', who);
+  return `?${params}`;
+};
+
+function longDate(iso: string | null) {
+  if (!iso) return '';
+  return new Date(`${iso.slice(0, 10)}T12:00:00`).toLocaleDateString('en-GB', {
+    weekday: 'short',
+    day: 'numeric',
+    month: 'short',
+    year: 'numeric',
+  });
+}
+---
+
+<dialog class="team-modal task-drawer" id="modal-taskpanel" aria-labelledby="task-panel-title" data-autoopen data-no-focus data-task-panel>
+  <div class="team-modal-card">
+    <header class="td-head">
+      {canMove ? (
+        <form method="post" class="td-complete">
+          <input type="hidden" name="intent" value={task.status === 'done' ? 'task-todo' : 'task-done'} />
+          <input type="hidden" name="task_id" value={task.id} />
+          <input type="hidden" name="tab" value="tasks" />
+          <input type="hidden" name="return_task" value={task.id} />
+          <input type="hidden" name="view" value={view} />
+          <input type="hidden" name="who" value={who} />
+          <button class:list={['btn', task.status === 'done' ? 'btn-ghost is-done' : 'btn-ghost']} type="submit">
+            <span class:list={['tw-check', task.status === 'done' && 'is-on']} aria-hidden="true" />
+            {task.status === 'done' ? 'Completed' : 'Mark complete'}
+          </button>
+        </form>
+      ) : (
+        <span class:list={['tw-status', task.status]}>{taskStatusLabel(task.status)}</span>
+      )}
+      <div class="td-head-side">
+        {followerFaces.length > 0 && (
+          <span class="td-followers" title={`Followers: ${followerFaces.map((f) => f.name).join(', ')}`}>
+            <FacePile people={followerFaces} label="Followers" limit={4} />
+          </span>
+        )}
+        {canMove && (
+          <form method="post">
+            <input type="hidden" name="intent" value={following ? 'unfollow' : 'follow'} />
+            <input type="hidden" name="task_id" value={task.id} />
+            {Object.entries(hidden).map(([k, v]) => <input type="hidden" name={k} value={v} />)}
+            <button class:list={['btn', 'btn-ghost', 'td-follow', following && 'is-on']} type="submit" title={following ? 'You get updates on this task' : 'Get inbox updates on this task'}>
+              {following ? 'Following' : 'Follow'}
+            </button>
+          </form>
+        )}
+      </div>
+      <button class="team-modal-x" type="button" data-modal-close aria-label="Close task">
+        <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18" stroke="currentColor" stroke-width="2" stroke-linecap="round" /></svg>
+      </button>
+    </header>
+
+    <div class="team-modal-body td-body">
+      {canMove && (
+        <nav class="td-status" aria-label="Status">
+          {TASK_STATUSES.map((status) => (
+            <form method="post">
+              <input type="hidden" name="intent" value={`task-${status}`} />
+              <input type="hidden" name="task_id" value={task.id} />
+              <input type="hidden" name="tab" value="tasks" />
+              <input type="hidden" name="return_task" value={task.id} />
+              <input type="hidden" name="view" value={view} />
+              <input type="hidden" name="who" value={who} />
+              <button class:list={['td-status-btn', status]} type="submit" aria-pressed={task.status === status ? 'true' : 'false'}>
+                {taskStatusLabel(status)}
+              </button>
+            </form>
+          ))}
+        </nav>
+      )}
+
+      {canEdit ? (
+        <form method="post" class="td-form" id="td-fields" data-autosave>
+          <input type="hidden" name="intent" value="update-task" />
+          <input type="hidden" name="task_id" value={task.id} />
+          <input type="hidden" name="tab" value="tasks" />
+          <input type="hidden" name="return_task" value={task.id} />
+          <input type="hidden" name="view" value={view} />
+          <input type="hidden" name="who" value={who} />
+          <label class="sr-only" for="td_title">Task name</label>
+          <textarea id="td_title" class="td-title" name="title" rows="1" required maxlength="200" data-autogrow>{task.title}</textarea>
+
+          <dl class="td-fields">
+            <div>
+              <dt><label for="td_assignee">Assignee</label></dt>
+              <dd>
+                <select id="td_assignee" name="assignee_email" data-autosubmit>
+                  <option value="">Unassigned</option>
+                  {assignable.map((person) => (
+                    <option value={person.email} selected={person.email === task.assignee_email}>
+                      {personLabel(person.email, allPeople)}
+                    </option>
+                  ))}
+                </select>
+              </dd>
+            </div>
+            <div>
+              <dt><label for="td_due">Due date</label></dt>
+              <dd>
+                <input id="td_due" name="due_on" type="date" value={task.due_on ?? ''} data-autosubmit class:list={[late && 'is-late']} />
+              </dd>
+            </div>
+            <div>
+              <dt><label for="td_start">Start date</label></dt>
+              <dd>
+                <input id="td_start" name="start_on" type="date" value={task.start_on ?? ''} max={task.due_on ?? undefined} data-autosubmit />
+              </dd>
+            </div>
+            <div>
+              <dt><label for="td_recur">Repeats</label></dt>
+              <dd>
+                <select id="td_recur" name="recur" data-autosubmit>
+                  {RECUR_OPTIONS.map((option) => (
+                    <option value={option.id} selected={task.recur === option.id}>{option.label}</option>
+                  ))}
+                </select>
+              </dd>
+            </div>
+            <div>
+              <dt><label for="td_priority">Priority</label></dt>
+              <dd>
+                <select id="td_priority" name="priority" data-autosubmit class:list={['td-priority', task.priority]}>
+                  <option value="">None</option>
+                  {TASK_PRIORITIES.map((p) => (
+                    <option value={p} selected={task.priority === p}>{priorityLabel(p)}</option>
+                  ))}
+                </select>
+              </dd>
+            </div>
+            <div>
+              <dt><label for="td_stage">Stage</label></dt>
+              <dd>
+                <select id="td_stage" name="milestone_id" data-autosubmit>
+                  <option value="">No stage</option>
+                  {milestones.map((stage) => (
+                    <option value={stage.id} selected={stage.id === task.milestone_id}>{stage.title}</option>
+                  ))}
+                </select>
+              </dd>
+            </div>
+          </dl>
+
+          <label class="td-label" for="td_notes">Description</label>
+          <textarea id="td_notes" name="notes" rows="4" placeholder="What does done look like? Links, context, acceptance criteria…" data-autogrow>{task.notes}</textarea>
+          <div class="td-save" data-save-bar hidden>
+            <button class="btn btn-ghost" type="reset">Discard</button>
+            <button class="btn" type="submit">Save changes</button>
+          </div>
+        </form>
+      ) : (
+        <div class="td-form">
+          <h2 class="td-title is-static" id="task-panel-title">{task.title}</h2>
+          <dl class="td-fields">
+            <div><dt>Assignee</dt><dd>{assignee ? assignee.name : 'Unassigned'}</dd></div>
+            <div><dt>Due date</dt><dd class:list={[late && 'late']}>{task.due_on ? longDate(task.due_on) : 'No date'}</dd></div>
+            <div><dt>Start date</dt><dd>{task.start_on ? longDate(task.start_on) : '—'}</dd></div>
+            <div><dt>Repeats</dt><dd>{recurLabel(task.recur)}</dd></div>
+            <div><dt>Priority</dt><dd>{task.priority ? priorityLabel(task.priority) : 'None'}</dd></div>
+            <div><dt>Stage</dt><dd>{milestones.find((m) => m.id === task.milestone_id)?.title ?? 'No stage'}</dd></div>
+          </dl>
+          {task.notes ? <p class="td-notes">{task.notes}</p> : <p class="muted">No description.</p>}
+        </div>
+      )}
+      {canEdit && <h2 class="sr-only" id="task-panel-title">{task.title}</h2>}
+      {task.kind === 'bug' && <p class="td-bug-note">🐞 Bug report{task.priority ? ` · ${priorityLabel(task.priority)} priority` : ''}</p>}
+      {task.recur && (
+        <p class="td-recur-note">
+          ↻ {recurLabel(task.recur)}. Completing it creates the next one{task.due_on ? ' with the due date moved on' : ''}.
+        </p>
+      )}
+
+      {(task.link_url || (task.image_url && imageHref)) && (
+        <div class="td-attach">
+          {task.image_url && imageHref && <VoucherLink path={task.image_url} href={imageHref} alt={task.title} />}
+          {task.link_url && (
+            <a href={websiteHref(task.link_url)} target="_blank" rel="noopener noreferrer">{task.link_url.replace(/^https?:\/\//, '')} ↗</a>
+          )}
+        </div>
+      )}
+
+      {(waiting.length > 0 || blocking.length > 0 || (canEdit && dependCandidates.length > 0)) && (
+        <section class="td-section" aria-labelledby="td-dep-title">
+          <header class="td-section-head">
+            <h3 id="td-dep-title">Dependencies</h3>
+            {openWaits > 0 && <span class="td-wait-badge">Waiting on {openWaits}</span>}
+          </header>
+          {waiting.length > 0 && (
+            <ul class="td-deps">
+              {waiting.map((item) => (
+                <li class:list={[item.status === 'done' && 'is-done']}>
+                  <span class="td-dep-kind">Waiting on</span>
+                  <a href={sameTaskHref(item.id)}>{item.title}</a>
+                  <span class:list={['tw-status', item.status]}>{taskStatusLabel(item.status)}</span>
+                  {canEdit && (
+                    <form method="post" class="td-sub-x">
+                      <input type="hidden" name="intent" value="delete-dependency" />
+                      <input type="hidden" name="task_id" value={task.id} />
+                      <input type="hidden" name="depends_on_id" value={item.id} />
+                      {Object.entries(hidden).map(([k, v]) => <input type="hidden" name={k} value={v} />)}
+                      <button type="submit" aria-label={`Stop waiting on ${item.title}`}>×</button>
+                    </form>
+                  )}
+                </li>
+              ))}
+            </ul>
+          )}
+          {blocking.length > 0 && (
+            <ul class="td-deps">
+              {blocking.map((item) => (
+                <li>
+                  <span class="td-dep-kind is-blocking">Blocking</span>
+                  <a href={sameTaskHref(item.id)}>{item.title}</a>
+                  <span class:list={['tw-status', item.status]}>{taskStatusLabel(item.status)}</span>
+                </li>
+              ))}
+            </ul>
+          )}
+          {canEdit && dependCandidates.length > 0 && (
+            <form method="post" class="td-dep-add">
+              <input type="hidden" name="intent" value="add-dependency" />
+              <input type="hidden" name="task_id" value={task.id} />
+              {Object.entries(hidden).map(([k, v]) => <input type="hidden" name={k} value={v} />)}
+              <label class="sr-only" for="td_dep">This task waits on</label>
+              <select id="td_dep" name="depends_on_id" required data-autosubmit-form>
+                <option value="">+ Waits on another task…</option>
+                {dependCandidates.map((item) => (
+                  <option value={item.id}>{item.title}</option>
+                ))}
+              </select>
+            </form>
+          )}
+        </section>
+      )}
+
+      <section class="td-section" aria-labelledby="td-att-title">
+        <header class="td-section-head">
+          <h3 id="td-att-title">Attachments</h3>
+          {attachments.length > 0 && <span class="muted">{attachments.length}</span>}
+        </header>
+        {attachments.length > 0 && (
+          <ul class="td-files">
+            {attachments.map((item) => {
+              const href = attachHrefs.get(item.id);
+              const icon = fileIcon(item);
+              return (
+                <li>
+                  {icon === 'image' && href ? (
+                    <a class="td-file-thumb" href={href} target="_blank" rel="noopener noreferrer">
+                      <img src={href} alt="" loading="lazy" />
+                    </a>
+                  ) : (
+                    <span class:list={['td-file-icon', icon]} aria-hidden="true">{icon === 'link' ? '↗' : icon === 'pdf' ? 'PDF' : 'FILE'}</span>
+                  )}
+                  <span class="td-file-meta">
+                    {href ? (
+                      <a href={href} target="_blank" rel="noopener noreferrer">{item.name || 'Attachment'}</a>
+                    ) : (
+                      <span>{item.name || 'Attachment'}</span>
+                    )}
+                    <span>
+                      {[formatBytes(item.size_bytes), nameOf(item.added_by), formatEventTime(item.created_at)].filter(Boolean).join(' · ')}
+                    </span>
+                  </span>
+                  {!readOnly && (item.added_by === viewerEmail || canPlan) && (
+                    <form method="post" class="td-sub-x" data-confirm="Remove this attachment?">
+                      <input type="hidden" name="intent" value="delete-attachment" />
+                      <input type="hidden" name="attachment_id" value={item.id} />
+                      {Object.entries(hidden).map(([k, v]) => <input type="hidden" name={k} value={v} />)}
+                      <button type="submit" aria-label={`Remove ${item.name}`}>×</button>
+                    </form>
+                  )}
+                </li>
+              );
+            })}
+          </ul>
+        )}
+        {canMove && (
+          <div class="td-attach-actions">
+            <form method="post" enctype="multipart/form-data" class="td-upload">
+              <input type="hidden" name="intent" value="add-attachment" />
+              <input type="hidden" name="task_id" value={task.id} />
+              {Object.entries(hidden).map(([k, v]) => <input type="hidden" name={k} value={v} />)}
+              <label class="btn btn-ghost">
+                Upload file
+                <input class="sr-only" type="file" name="file" required data-autosubmit-form />
+              </label>
+            </form>
+            <details class="td-link-add">
+              <summary class="btn btn-ghost">Add link</summary>
+              <form method="post">
+                <input type="hidden" name="intent" value="add-link" />
+                <input type="hidden" name="task_id" value={task.id} />
+                {Object.entries(hidden).map(([k, v]) => <input type="hidden" name={k} value={v} />)}
+                <input name="link" type="url" placeholder="https://figma.com/…" required />
+                <input name="link_name" placeholder="Name (optional)" maxlength="300" />
+                <button class="btn" type="submit">Add</button>
+              </form>
+            </details>
+            <span class="muted td-attach-hint">Up to 10 MB · images, PDF, docs, zip</span>
+          </div>
+        )}
+      </section>
+
+      <section class="td-section" aria-labelledby="td-time-title">
+        <header class="td-section-head">
+          <h3 id="td-time-title">Time</h3>
+          <span class="muted">{formatMinutes(totalMinutes)} logged</span>
+        </header>
+        {canMove && (
+          <div class="td-timer">
+            <form method="post">
+              <input type="hidden" name="intent" value={myRunning ? 'stop-timer' : 'start-timer'} />
+              <input type="hidden" name="task_id" value={task.id} />
+              {Object.entries(hidden).map(([k, v]) => <input type="hidden" name={k} value={v} />)}
+              <button class:list={['btn', myRunning ? 'td-timer-stop' : 'btn-ghost']} type="submit">
+                {myRunning ? (
+                  <>
+                    <span class="td-timer-dot" aria-hidden="true" /> Stop · <span data-live-since={myRunning.started_at}>{formatMinutes(liveMinutes(myRunning))}</span>
+                  </>
+                ) : (
+                  '▶ Start timer'
+                )}
+              </button>
+            </form>
+            <details class="td-log">
+              <summary class="btn-text">+ Log time</summary>
+              <form method="post" class="td-log-form">
+                <input type="hidden" name="intent" value="log-time" />
+                <input type="hidden" name="task_id" value={task.id} />
+                {Object.entries(hidden).map(([k, v]) => <input type="hidden" name={k} value={v} />)}
+                <label class="sr-only" for="td_duration">Duration</label>
+                <input id="td_duration" name="duration" required placeholder="1h 30m" inputmode="text" autocomplete="off" />
+                <label class="sr-only" for="td_day">Day</label>
+                <input id="td_day" name="day" type="date" value={today} max={today} />
+                <label class="sr-only" for="td_time_note">Note</label>
+                <input id="td_time_note" name="note" placeholder="What you did (optional)" maxlength="300" />
+                <button class="btn" type="submit">Log</button>
+              </form>
+            </details>
+          </div>
+        )}
+        {byPerson.length > 0 && (
+          <p class="td-time-split">
+            {byPerson.map(([email, minutes]) => <span>{nameOf(email)} · {formatMinutes(minutes)}</span>)}
+          </p>
+        )}
+        {timeEntries.length > 0 && (
+          <details class="td-time-list">
+            <summary>Entries · {timeEntries.length}</summary>
+            <ul>
+              {timeEntries.map((entry) => (
+                <li>
+                  <strong>{entry.ended_at ? formatMinutes(entry.minutes) : 'Running'}</strong>
+                  <span>
+                    {nameOf(entry.email)} · {new Date(entry.started_at).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })}
+                    {entry.note ? ` · ${entry.note}` : ''}
+                  </span>
+                  {!readOnly && entry.ended_at && (entry.email === viewerEmail || canPlan) && (
+                    <form method="post" class="td-sub-x">
+                      <input type="hidden" name="intent" value="delete-time" />
+                      <input type="hidden" name="time_id" value={entry.id} />
+                      {Object.entries(hidden).map(([k, v]) => <input type="hidden" name={k} value={v} />)}
+                      <button type="submit" aria-label="Delete time entry">×</button>
+                    </form>
+                  )}
+                </li>
+              ))}
+            </ul>
+          </details>
+        )}
+      </section>
+
+      <section class="td-section" aria-labelledby="td-sub-title">
+        <header class="td-section-head">
+          <h3 id="td-sub-title">Subtasks</h3>
+          {subtasks.length > 0 && <span class="muted">{doneCount} of {subtasks.length}</span>}
+        </header>
+        {subtasks.length > 0 && (
+          <div class="pj-progress td-progress" role="img" aria-label={`${pct}% of subtasks done`}>
+            <span style={`width:${pct}%`} />
+          </div>
+        )}
+        <ul class="td-subtasks">
+          {subtasks.map((item) => (
+            <li class:list={[item.done && 'is-done']}>
+              {canMove ? (
+                <form method="post">
+                  <input type="hidden" name="intent" value="toggle-subtask" />
+                  <input type="hidden" name="subtask_id" value={item.id} />
+                  <input type="hidden" name="done" value={item.done ? '0' : '1'} />
+                  <input type="hidden" name="tab" value="tasks" />
+                  <input type="hidden" name="return_task" value={task.id} />
+                  <input type="hidden" name="view" value={view} />
+                  <input type="hidden" name="who" value={who} />
+                  <button class:list={['tw-check', 'sm', item.done && 'is-on']} type="submit" aria-label={item.done ? `Uncheck ${item.title}` : `Check ${item.title}`} />
+                </form>
+              ) : (
+                <span class:list={['tw-check', 'sm', 'is-static', item.done && 'is-on']} aria-hidden="true" />
+              )}
+              <span class="td-sub-title">{item.title}</span>
+              {canMove && (
+                <form method="post" class="td-sub-x">
+                  <input type="hidden" name="intent" value="delete-subtask" />
+                  <input type="hidden" name="subtask_id" value={item.id} />
+                  <input type="hidden" name="tab" value="tasks" />
+                  <input type="hidden" name="return_task" value={task.id} />
+                  <input type="hidden" name="view" value={view} />
+                  <input type="hidden" name="who" value={who} />
+                  <button type="submit" aria-label={`Remove ${item.title}`}>×</button>
+                </form>
+              )}
+            </li>
+          ))}
+        </ul>
+        {canMove && (
+          <form method="post" class="td-add">
+            <input type="hidden" name="intent" value="add-subtask" />
+            <input type="hidden" name="task_id" value={task.id} />
+            <input type="hidden" name="tab" value="tasks" />
+            <input type="hidden" name="return_task" value={task.id} />
+            <input type="hidden" name="view" value={view} />
+            <input type="hidden" name="who" value={who} />
+            <label class="sr-only" for="td_subtask">Add a subtask</label>
+            <input id="td_subtask" name="subtask_title" placeholder="+ Add subtask… press Enter" maxlength="300" autocomplete="off" required />
+          </form>
+        )}
+        {canMove && checklists.length > 0 && (
+          <form method="post" class="td-dep-add">
+            <input type="hidden" name="intent" value="apply-checklist" />
+            <input type="hidden" name="task_id" value={task.id} />
+            {Object.entries(hidden).map(([k, v]) => <input type="hidden" name={k} value={v} />)}
+            <label class="sr-only" for="td_checklist">Add a checklist</label>
+            <select id="td_checklist" name="template_id" required data-autosubmit-form>
+              <option value="">+ Add checklist from template…</option>
+              {checklists.map((item) => (
+                <option value={item.id}>{item.name} ({('items' in item.body ? item.body.items.length : 0)} items)</option>
+              ))}
+            </select>
+          </form>
+        )}
+      </section>
+
+      <section class="td-section" aria-labelledby="td-com-title">
+        <header class="td-section-head">
+          <h3 id="td-com-title">Comments</h3>
+          {comments.length > 0 && <span class="muted">{comments.length}</span>}
+        </header>
+        <ol class="td-comments">
+          {comments.map((item) => {
+            const author = personFace(item.author_email, allPeople);
+            return (
+              <li>
+                {author.avatarUrl ? (
+                  <img class="face" src={author.avatarUrl} alt="" referrerpolicy="no-referrer" width="30" height="30" />
+                ) : (
+                  <span class="face" aria-hidden="true">{personInitial(author.name, author.email)}</span>
+                )}
+                <div>
+                  <p class="td-com-meta">
+                    <strong>{author.name}</strong> <span>{formatEventTime(item.created_at)}</span>
+                  </p>
+                  <p class="td-com-body">
+                    {commentParts(item.body, allPeople).map((part) =>
+                      part.mention ? <mark class:list={['td-mention', part.mention === viewerEmail && 'is-me']}>{part.text}</mark> : part.text,
+                    )}
+                  </p>
+                  {!readOnly && (item.author_email === viewerEmail || canPlan) && (
+                    <form method="post" data-confirm="Delete this comment?" data-confirm-action="Delete">
+                      <input type="hidden" name="intent" value="delete-comment" />
+                      <input type="hidden" name="comment_id" value={item.id} />
+                      <input type="hidden" name="tab" value="tasks" />
+                      <input type="hidden" name="return_task" value={task.id} />
+                      <input type="hidden" name="view" value={view} />
+                      <input type="hidden" name="who" value={who} />
+                      <button class="btn-text td-com-del" type="submit">Delete</button>
+                    </form>
+                  )}
+                </div>
+              </li>
+            );
+          })}
+        </ol>
+        {comments.length === 0 && <p class="muted td-empty">No comments yet. Ask a question or share an update.</p>}
+        {canMove && (
+          <form method="post" class="td-comment-form">
+            <input type="hidden" name="intent" value="add-comment" />
+            <input type="hidden" name="task_id" value={task.id} />
+            <input type="hidden" name="tab" value="tasks" />
+            <input type="hidden" name="return_task" value={task.id} />
+            <input type="hidden" name="view" value={view} />
+            <input type="hidden" name="who" value={who} />
+            <label class="sr-only" for="td_comment">Write a comment</label>
+            <div class="td-mention-wrap">
+              <textarea id="td_comment" name="body" rows="2" maxlength="2000" required placeholder="Write a comment… type @ to mention someone" data-autogrow data-mentions={JSON.stringify(mentionables)}></textarea>
+              <ul class="td-mention-menu" role="listbox" hidden data-mention-menu></ul>
+            </div>
+            <div class="td-comment-actions">
+              <span class="muted">{followers.length > 0 ? `${followers.length} ${followers.length === 1 ? 'follower' : 'followers'} get notified` : 'Followers get notified'}</span>
+              <button class="btn" type="submit">Comment</button>
+            </div>
+          </form>
+        )}
+      </section>
+
+      <details class="td-section td-activity">
+        <summary>Activity · {events.length}</summary>
+        <ol class="td-events">
+          {[...events].reverse().map((event) => (
+            <li>
+              <span class="td-event-dot" aria-hidden="true" />
+              <span>
+                <strong>{event.actor_email ? nameOf(event.actor_email) : 'Automation'}</strong> {describeEvent(event, nameOf)}
+                <time>{formatEventTime(event.created_at)}</time>
+              </span>
+            </li>
+          ))}
+        </ol>
+        {events.length === 0 && <p class="muted">No activity recorded yet.</p>}
+        {canEdit && notFollowing.length > 0 && (
+          <form method="post" class="td-dep-add">
+            <input type="hidden" name="intent" value="follow" />
+            <input type="hidden" name="task_id" value={task.id} />
+            {Object.entries(hidden).map(([k, v]) => <input type="hidden" name={k} value={v} />)}
+            <label class="sr-only" for="td_add_follower">Add a follower</label>
+            <select id="td_add_follower" name="email" required data-autosubmit-form>
+              <option value="">+ Add a follower…</option>
+              {notFollowing.map((person) => (
+                <option value={person.email}>{personLabel(person.email, allPeople)}</option>
+              ))}
+            </select>
+          </form>
+        )}
+      </details>
+
+      <footer class="td-foot">
+        <p>
+          Created {task.created_by_email ? `by ${personLabel(task.created_by_email, allPeople)} ` : ''}{formatEventTime(task.created_at)}
+          {task.completed_at && <> · Completed {formatEventTime(task.completed_at)}</>}
+        </p>
+        {canEdit && (
+          <form method="post" data-confirm="Delete this task, its subtasks, and comments?" data-confirm-action="Delete">
+            <input type="hidden" name="intent" value="delete-task" />
+            <input type="hidden" name="task_id" value={task.id} />
+            <input type="hidden" name="tab" value="tasks" />
+            <input type="hidden" name="view" value={view} />
+            <input type="hidden" name="who" value={who} />
+            <button class="btn-text td-delete" type="submit">Delete task</button>
+          </form>
+        )}
+      </footer>
+    </div>
+  </div>
+</dialog>
+
+<script>
+  function bindTaskPanel() {
+    const panel = document.querySelector<HTMLDialogElement>('[data-task-panel]');
+    if (!panel || panel.dataset.bound) return;
+    panel.dataset.bound = '1';
+
+    // Closing the drawer drops ?task= from the address bar.
+    panel.addEventListener('close', () => {
+      const url = new URL(location.href);
+      url.searchParams.delete('task');
+      history.replaceState(history.state, '', url);
+    });
+
+    const form = panel.querySelector<HTMLFormElement>('[data-autosave]');
+    if (form) {
+      // Selects and dates save straight away; text fields show a Save bar when edited.
+      form.querySelectorAll<HTMLElement>('[data-autosubmit]').forEach((el) =>
+        el.addEventListener('change', () => form.requestSubmit()),
+      );
+      const bar = form.querySelector<HTMLElement>('[data-save-bar]');
+      const texts = form.querySelectorAll<HTMLTextAreaElement>('textarea');
+      const dirty = () => [...texts].some((t) => t.value !== t.defaultValue);
+      texts.forEach((t) => t.addEventListener('input', () => bar && (bar.hidden = !dirty())));
+      form.addEventListener('reset', () => setTimeout(() => bar && (bar.hidden = true)));
+      const title = form.querySelector<HTMLTextAreaElement>('.td-title');
+      title?.addEventListener('keydown', (event) => {
+        if (event.key === 'Enter') {
+          event.preventDefault();
+          form.requestSubmit();
+        }
+      });
+    }
+
+    // Grow textareas with their content. Measure only while visible (a closed dialog
+    // reports zero height), and again whenever the drawer opens or resizes.
+    const grow = [...panel.querySelectorAll<HTMLTextAreaElement>('[data-autogrow]')];
+    const fit = (t: HTMLTextAreaElement) => {
+      if (!panel.open) return;
+      t.style.height = 'auto';
+      if (t.scrollHeight > 0) t.style.height = `${t.scrollHeight + 2}px`;
+    };
+    grow.forEach((t) => t.addEventListener('input', () => fit(t)));
+    new ResizeObserver(() => grow.forEach(fit)).observe(panel);
+
+    // Selects and file pickers outside the main form submit their own small form.
+    panel.querySelectorAll<HTMLInputElement | HTMLSelectElement>('[data-autosubmit-form]').forEach((el) =>
+      el.addEventListener('change', () => {
+        if (el.value) el.form?.requestSubmit();
+      }),
+    );
+
+    // @mention autocomplete in the comment box.
+    const box = panel.querySelector<HTMLTextAreaElement>('#td_comment');
+    const menu = panel.querySelector<HTMLUListElement>('[data-mention-menu]');
+    if (box && menu) {
+      const people: { handle: string; name: string }[] = JSON.parse(box.dataset.mentions || '[]');
+      let matches: typeof people = [];
+      let active = 0;
+      const tokenAt = () => {
+        const before = box.value.slice(0, box.selectionStart ?? 0);
+        const m = before.match(/(^|\s)@([\w.+-]*)$/);
+        return m ? { query: m[2].toLowerCase(), start: before.length - m[2].length - 1 } : null;
+      };
+      const close = () => {
+        menu.hidden = true;
+        matches = [];
+      };
+      const render = () => {
+        menu.innerHTML = '';
+        matches.forEach((p, i) => {
+          const li = document.createElement('li');
+          li.role = 'option';
+          li.className = i === active ? 'is-active' : '';
+          li.innerHTML = '';
+          const strong = document.createElement('strong');
+          strong.textContent = p.name;
+          const handle = document.createElement('span');
+          handle.textContent = `@${p.handle}`;
+          li.append(strong, handle);
+          li.addEventListener('mousedown', (e) => {
+            e.preventDefault();
+            pick(p);
+          });
+          menu.append(li);
+        });
+        menu.hidden = matches.length === 0;
+      };
+      const pick = (p: { handle: string }) => {
+        const token = tokenAt();
+        if (!token) return close();
+        const caret = box.selectionStart ?? box.value.length;
+        box.value = `${box.value.slice(0, token.start)}@${p.handle} ${box.value.slice(caret)}`;
+        const pos = token.start + p.handle.length + 2;
+        box.setSelectionRange(pos, pos);
+        box.dispatchEvent(new Event('input'));
+        close();
+        box.focus();
+      };
+      box.addEventListener('input', () => {
+        const token = tokenAt();
+        if (!token) return close();
+        matches = people
+          .filter((p) => p.handle.startsWith(token.query) || p.name.toLowerCase().includes(token.query))
+          .slice(0, 6);
+        active = 0;
+        render();
+      });
+      box.addEventListener('keydown', (event) => {
+        if (menu.hidden) return;
+        if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+          event.preventDefault();
+          active = (active + (event.key === 'ArrowDown' ? 1 : matches.length - 1)) % matches.length;
+          render();
+        } else if (event.key === 'Enter' || event.key === 'Tab') {
+          event.preventDefault();
+          event.stopImmediatePropagation();
+          pick(matches[active]);
+        } else if (event.key === 'Escape') {
+          // Close the menu, not the whole drawer.
+          event.preventDefault();
+          event.stopPropagation();
+          close();
+        }
+      });
+      box.addEventListener('blur', () => setTimeout(close, 120));
+    }
+
+    // Running timer: tick the minutes shown.
+    const live = panel.querySelector<HTMLElement>('[data-live-since]');
+    if (live) {
+      const since = Date.parse(live.dataset.liveSince ?? '');
+      const fmt = (m: number) => (m >= 60 ? `${Math.floor(m / 60)}h ${m % 60}m` : `${m}m`);
+      setInterval(() => (live.textContent = fmt(Math.max(0, Math.round((Date.now() - since) / 60000)))), 30000);
+    }
+
+    // Cmd/Ctrl+Enter posts a comment.
+    panel.querySelector<HTMLTextAreaElement>('#td_comment')?.addEventListener('keydown', (event) => {
+      if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) {
+        event.preventDefault();
+        (event.target as HTMLTextAreaElement).form?.requestSubmit();
+      }
+    });
+  }
+  bindTaskPanel();
+  document.addEventListener('astro:page-load', bindTaskPanel);
+</script>

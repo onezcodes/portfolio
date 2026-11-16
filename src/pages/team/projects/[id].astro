@@ -8,7 +8,6 @@ import IncomeExpenseChart from '../../../components/IncomeExpenseChart.astro';
 import FundingPie from '../../../components/FundingPie.astro';
 import MilestoneTrack from '../../../components/MilestoneTrack.astro';
 import CheckIn from '../../../components/CheckIn.astro';
-import TaskBoard from '../../../components/TaskBoard.astro';
 import ProjectCalendar from '../../../components/ProjectCalendar.astro';
 import { parseMonth } from '../../../lib/calendar';
 import { projectFromForm } from '../../../lib/forms';
@@ -28,27 +27,65 @@ import {
   removeMilestone,
   seedMilestones,
   setMilestoneStatus,
+  currentStage,
   stageLabel,
   updateMilestone,
   sortMilestones,
   type Milestone,
 } from '../../../lib/milestones';
 import {
+  addComment,
+  addSubtask,
   addTask,
   isTaskStatus,
   markTaskMail,
+  removeComment,
+  removeSubtask,
   removeTask,
   setTaskStatus,
   shouldNotifyAssignee,
+  sortTaskQueue,
+  taskCounts,
+  taskDetail,
+  taskIsLate,
+  toggleSubtask,
   updateTask,
   type ProjectTask,
 } from '../../../lib/tasks';
 import { addCheckin, removeCheckin, type ProjectCheckin } from '../../../lib/checkins';
-import { sendProjectInvite, sendTaskAssigned, taskWorkUrl } from '../../../lib/mail';
+import { sendProjectInvite, sendTaskAssigned, sendTaskComment, taskWorkUrl } from '../../../lib/mail';
 import { logEvent } from '../../../lib/events';
 import { personFace, personInitial, personLabel } from '../../../lib/profile';
 import SecretField from '../../../components/SecretField.astro';
 import ProjectMark from '../../../components/ProjectMark.astro';
+import FacePile from '../../../components/FacePile.astro';
+import Modal from '../../../components/Modal.astro';
+import TaskWorkspace from '../../../components/TaskWorkspace.astro';
+import TaskPanel from '../../../components/TaskPanel.astro';
+import {
+  addDependency,
+  addFileAttachment,
+  addLinkAttachment,
+  attachmentHrefs,
+  deleteView,
+  follow,
+  followersOf,
+  logTaskEvent,
+  notify,
+  parseMentions,
+  projectDependencies,
+  removeAttachment,
+  removeDependency,
+  saveView,
+  savedViews,
+  unfollow,
+  viewQuery,
+} from '../../../lib/taskCollab';
+import { formatMinutes, logTime, removeTime, startTimer, stopTimer, taskTime } from '../../../lib/timeTracking';
+import { maskWebhook, parseWebhookUrl, postToChat, webhookKind } from '../../../lib/chat';
+import { applyChecklist, listTemplates, saveProjectAsTemplate } from '../../../lib/templates';
+import { projectHealth } from '../../../lib/health';
+import { siteUrl } from '../../../lib/supabase';
 import ImagePick from '../../../components/ImagePick.astro';
 import { decryptSecret, vaultReady, websiteHref } from '../../../lib/credentials';
 import {
@@ -76,11 +113,23 @@ import {
 
 function projectHref(
   projectId: string,
-  opts: { tab?: ProjectTab; month?: string | null; notice?: string; error?: string; action?: string } = {},
+  opts: {
+    tab?: ProjectTab;
+    month?: string | null;
+    notice?: string;
+    error?: string;
+    action?: string;
+    task?: string;
+    view?: string;
+    who?: string;
+  } = {},
 ) {
   const params = new URLSearchParams();
   params.set('tab', opts.tab ?? 'schedule');
   if (opts.month) params.set('month', opts.month);
+  if (opts.view) params.set('view', opts.view);
+  if (opts.who) params.set('who', opts.who);
+  if (opts.task) params.set('task', opts.task);
   if (opts.action) params.set('action', opts.action);
   if (opts.notice) params.set('notice', opts.notice);
   if (opts.error) params.set('error', opts.error);
@@ -89,6 +138,8 @@ function projectHref(
 
 const supabase = Astro.locals.supabase;
 const user = Astro.locals.user;
+// Super admin can preview the app as a teammate (read-only). Hidden while already previewing.
+const canViewAs = Boolean(Astro.locals.studio?.superAdmin && !Astro.locals.viewAs);
 const studio = Astro.locals.studio;
 const { id } = Astro.params;
 if (!id) {
@@ -114,11 +165,25 @@ if (Astro.request.method === 'POST') {
   const tab = caps.tabs.some((item) => item.id === requestedTab)
     ? (requestedTab as ProjectTab)
     : pickTab(tabForIntent(intent), caps);
+  // Task forms send back the open task, view, and filter so the page returns to the same place.
+  const keep = {
+    task: String(form.get('return_task') ?? '') || undefined,
+    view: String(form.get('view') ?? '') || undefined,
+    who: String(form.get('who') ?? '') || undefined,
+  };
   const bounce = (flash: { notice?: string; error?: string }) =>
-    Astro.redirect(projectHref(id, { tab, ...flash }));
+    Astro.redirect(projectHref(id, { tab, ...keep, ...flash }));
   const actor = studio.email;
   const track = (action: string, detail = '', entityType = 'project') =>
     logEvent(supabase, actor, { action, entityType, entityId: id, projectId: id, detail });
+  // Team chat (Slack/Discord) for this project, if configured.
+  const chat = async (text: string, path = `/team/projects/${id}`) => {
+    const { data: hook } = await supabase.from('projects').select('name, chat_webhook_url').eq('id', id).maybeSingle();
+    if (hook?.chat_webhook_url) {
+      await postToChat(String(hook.chat_webhook_url), `[${hook.name}] ${text}`, `${siteUrl(Astro.request)}${path}`);
+    }
+  };
+  const who = studio.displayName || actor;
 
   if (!allowedIntent(intent, caps)) {
     return bounce({ error: 'forbidden' });
@@ -211,6 +276,25 @@ if (Astro.request.method === 'POST') {
     if (!milestoneId) return bounce({ error: 'invalid' });
     const status = intent === 'milestone-current' ? 'current' : intent === 'milestone-done' ? 'done' : 'pending';
     const result = await setMilestoneStatus(supabase, id, milestoneId, status);
+    if (!result.error && status === 'done') {
+      // Sign-off: who closed the stage, when, and what was delivered.
+      const note = String(form.get('signoff_note') ?? '').trim().slice(0, 600);
+      const { data: closed } = await supabase
+        .from('project_milestones')
+        .update({ signoff_note: note, signed_off_by: actor, signed_off_at: new Date().toISOString() })
+        .eq('id', milestoneId)
+        .eq('project_id', id)
+        .select('title')
+        .maybeSingle();
+      await chat(`✅ ${who} signed off stage “${closed?.title ?? 'stage'}”${note ? `: ${note}` : ''}`, `/team/projects/${id}?tab=schedule`);
+    }
+    if (!result.error && status === 'pending') {
+      await supabase
+        .from('project_milestones')
+        .update({ signoff_note: '', signed_off_by: '', signed_off_at: null })
+        .eq('id', milestoneId)
+        .eq('project_id', id);
+    }
     if (result.error) return bounce({ error: 'invalid' });
     await track('status', status, 'milestone');
     return bounce({ notice: 'saved' });
@@ -226,9 +310,18 @@ if (Astro.request.method === 'POST') {
   }
 
   if (intent === 'add-task') {
-    const result = await addTask(supabase, form, id, user?.id ?? null);
+    const result = await addTask(supabase, form, id, user?.id ?? null, actor);
     if (result.error) return bounce({ error: result.error });
     await track('create', result.title, 'task');
+    await follow(supabase, result.id, actor);
+    if (result.assignee_email) {
+      await follow(supabase, result.id, result.assignee_email);
+      await notify(supabase, actor, [result.assignee_email], { kind: 'assigned', projectId: id, taskId: result.id, title: result.title });
+    }
+    await chat(
+      `➕ ${who} added “${result.title}”${result.assignee_email ? ` for ${result.assignee_email}` : ''}`,
+      `/team/projects/${id}?tab=tasks&task=${result.id}`,
+    );
     if (shouldNotifyAssignee(result.assignee_email, actor)) {
       const { data: named } = await supabase.from('projects').select('name').eq('id', id).maybeSingle();
       const mail = await sendTaskAssigned(
@@ -236,7 +329,7 @@ if (Astro.request.method === 'POST') {
         named?.name ?? 'a project',
         result.title,
         result.due_on,
-        taskWorkUrl(Astro.request, id),
+        taskWorkUrl(Astro.request, id, result.id),
       );
       if (!mail.error) await markTaskMail(supabase, result.id);
     }
@@ -247,6 +340,10 @@ if (Astro.request.method === 'POST') {
     const result = await updateTask(supabase, form, id, user?.id ?? null);
     if (result.error) return bounce({ error: result.error });
     await track('update', result.title, 'task');
+    if (result.assignee_email && result.assignee_email !== result.previous_assignee) {
+      await follow(supabase, result.id, result.assignee_email);
+      await notify(supabase, actor, [result.assignee_email], { kind: 'assigned', projectId: id, taskId: result.id, title: result.title });
+    }
     if (shouldNotifyAssignee(result.assignee_email, actor, result.previous_assignee)) {
       const { data: named } = await supabase.from('projects').select('name').eq('id', id).maybeSingle();
       const mail = await sendTaskAssigned(
@@ -254,7 +351,7 @@ if (Astro.request.method === 'POST') {
         named?.name ?? 'a project',
         result.title,
         result.due_on,
-        taskWorkUrl(Astro.request, id),
+        taskWorkUrl(Astro.request, id, result.id),
       );
       if (!mail.error) await markTaskMail(supabase, result.id);
     }
@@ -268,7 +365,305 @@ if (Astro.request.method === 'POST') {
     const result = await setTaskStatus(supabase, id, taskId, status);
     if (result.error) return bounce({ error: 'invalid' });
     await track('status', status, 'task');
+    if (status === 'done') {
+      const [{ data: done }, watchers] = await Promise.all([
+        supabase.from('project_tasks').select('title, created_by_email').eq('id', taskId).maybeSingle(),
+        followersOf(supabase, taskId),
+      ]);
+      if (done) {
+        await notify(supabase, actor, [...watchers, String(done.created_by_email ?? '')], {
+          kind: 'completed',
+          projectId: id,
+          taskId,
+          title: String(done.title),
+        });
+        await chat(`🎉 ${who} completed “${done.title}”`, `/team/projects/${id}?tab=tasks&task=${taskId}`);
+      }
+    }
     return bounce({ notice: 'saved' });
+  }
+
+  if (intent === 'add-subtask') {
+    const result = await addSubtask(supabase, form);
+    if (result.error) return bounce({ error: result.error });
+    await logTaskEvent(supabase, String(form.get('task_id') ?? ''), actor, 'subtask_add', result.title);
+    return bounce({});
+  }
+
+  if (intent === 'toggle-subtask') {
+    const result = await toggleSubtask(supabase, form, id);
+    if (result.error) return bounce({ error: result.error });
+    if (result.done && result.taskId) await logTaskEvent(supabase, result.taskId, actor, 'subtask_done', result.title);
+    return bounce({});
+  }
+
+  if (intent === 'delete-subtask') {
+    const result = await removeSubtask(supabase, form, id);
+    return result.error ? bounce({ error: result.error }) : bounce({});
+  }
+
+  if (intent === 'add-comment') {
+    const { data: crewEmails } = await supabase.from('project_members').select('email').eq('project_id', id);
+    const mentioned = parseMentions(String(form.get('body') ?? ''), (crewEmails ?? []) as { email: string }[]).filter(
+      (email) => email !== actor,
+    );
+    const result = await addComment(supabase, form, actor, mentioned);
+    if (result.error) return bounce({ error: result.error });
+    const taskId = String(form.get('task_id') ?? '');
+    const watchers = await followersOf(supabase, taskId);
+    await follow(supabase, taskId, actor);
+    const { data: target } = await supabase
+      .from('project_tasks')
+      .select('title, assignee_email, projects(name)')
+      .eq('id', taskId)
+      .eq('project_id', id)
+      .maybeSingle();
+    await track('comment', String(target?.title ?? '').slice(0, 80), 'task');
+    const commentTitle = String(target?.title ?? 'a task');
+    const snippet = (result.body ?? '').slice(0, 280);
+    // Mentioned people: inbox + email. Assignee and followers: inbox.
+    await notify(supabase, actor, mentioned, { kind: 'mention', projectId: id, taskId, title: commentTitle, body: snippet });
+    await notify(
+      supabase,
+      actor,
+      [...watchers, String(target?.assignee_email ?? '')].filter((email) => !mentioned.includes(email)),
+      { kind: 'comment', projectId: id, taskId, title: commentTitle, body: snippet },
+    );
+    const mentionProject = (target?.projects as { name?: string } | null)?.name ?? 'a project';
+    for (const email of mentioned) {
+      await follow(supabase, taskId, email);
+      await sendTaskComment(email, mentionProject, commentTitle, studio.displayName || actor, result.body ?? '', taskWorkUrl(Astro.request, id, taskId), true);
+    }
+    // Tell the assignee by email too, unless they wrote it or were already mentioned.
+    const assignee = String(target?.assignee_email ?? '').trim().toLowerCase();
+    if (target && assignee && assignee !== actor && !mentioned.includes(assignee)) {
+      const projectName = (target.projects as { name?: string } | null)?.name ?? 'a project';
+      await sendTaskComment(
+        assignee,
+        projectName,
+        String(target.title),
+        studio.displayName || actor,
+        result.body ?? '',
+        taskWorkUrl(Astro.request, id, taskId),
+      );
+    }
+    return bounce({});
+  }
+
+  if (intent === 'delete-comment') {
+    const result = await removeComment(supabase, form, id);
+    return result.error ? bounce({ error: result.error }) : bounce({});
+  }
+
+  if (intent === 'follow' || intent === 'unfollow') {
+    const taskId = String(form.get('task_id') ?? '');
+    const who = String(form.get('email') ?? '').trim().toLowerCase() || actor;
+    if (!taskId || (who !== actor && !caps.canPlan)) return bounce({ error: 'forbidden' });
+    if (intent === 'follow') {
+      await follow(supabase, taskId, who);
+      if (who !== actor) {
+        await logTaskEvent(supabase, taskId, actor, 'follow', who);
+        const { data: named } = await supabase.from('project_tasks').select('title').eq('id', taskId).maybeSingle();
+        await notify(supabase, actor, [who], { kind: 'follow', projectId: id, taskId, title: String(named?.title ?? 'a task') });
+      }
+    } else {
+      const result = await unfollow(supabase, taskId, who);
+      if (result.error) return bounce({ error: 'forbidden' });
+    }
+    return bounce({});
+  }
+
+  if (intent === 'add-attachment') {
+    const result = await addFileAttachment(supabase, form, id, actor);
+    if (result.error) return bounce({ error: result.error });
+    await logTaskEvent(supabase, String(form.get('task_id') ?? ''), actor, 'attach', result.name);
+    return bounce({});
+  }
+
+  if (intent === 'add-link') {
+    const result = await addLinkAttachment(supabase, form, actor);
+    if (result.error) return bounce({ error: result.error });
+    await logTaskEvent(supabase, String(form.get('task_id') ?? ''), actor, 'attach', result.name);
+    return bounce({});
+  }
+
+  if (intent === 'delete-attachment') {
+    const result = await removeAttachment(supabase, form, id);
+    return result.error ? bounce({ error: result.error }) : bounce({});
+  }
+
+  if (intent === 'add-dependency' || intent === 'delete-dependency') {
+    const result = intent === 'add-dependency' ? await addDependency(supabase, form) : await removeDependency(supabase, form, id);
+    if (result.error) return bounce({ error: result.error });
+    const { data: other } = await supabase
+      .from('project_tasks')
+      .select('title')
+      .eq('id', String(form.get('depends_on_id') ?? ''))
+      .maybeSingle();
+    await logTaskEvent(
+      supabase,
+      String(form.get('task_id') ?? ''),
+      actor,
+      intent === 'add-dependency' ? 'depend_add' : 'depend_remove',
+      String(other?.title ?? ''),
+    );
+    return bounce({});
+  }
+
+  if (intent === 'save-view') {
+    const result = await saveView(supabase, form, id, actor);
+    if (result.error) return bounce({ error: result.error });
+    const query = String(form.get('view_query') ?? '');
+    return Astro.redirect(`${projectHref(id, { tab: 'tasks' })}${query ? `&${query}` : ''}&notice=saved`);
+  }
+
+  if (intent === 'delete-view') {
+    const result = await deleteView(supabase, form);
+    return result.error ? bounce({ error: result.error }) : bounce({ notice: 'deleted' });
+  }
+
+  if (intent === 'start-timer') {
+    const taskId = String(form.get('task_id') ?? '');
+    const result = await startTimer(supabase, taskId, actor);
+    return result.error ? bounce({ error: result.error }) : bounce({});
+  }
+
+  if (intent === 'stop-timer') {
+    await stopTimer(supabase, actor);
+    return bounce({});
+  }
+
+  if (intent === 'log-time') {
+    const result = await logTime(supabase, form, actor);
+    if (result.error) return bounce({ error: 'invalid' });
+    await logTaskEvent(supabase, String(form.get('task_id') ?? ''), actor, 'time', formatMinutes(result.minutes));
+    return bounce({});
+  }
+
+  if (intent === 'delete-time') {
+    const result = await removeTime(supabase, form, id);
+    return result.error ? bounce({ error: result.error }) : bounce({});
+  }
+
+  if (intent === 'apply-checklist') {
+    const taskId = String(form.get('task_id') ?? '');
+    const result = await applyChecklist(supabase, taskId, String(form.get('template_id') ?? ''));
+    if (result.error) return bounce({ error: 'invalid' });
+    await logTaskEvent(supabase, taskId, actor, 'subtask_add', `${result.count} checklist items`);
+    return bounce({});
+  }
+
+  if (intent === 'report-bug') {
+    const title = String(form.get('title') ?? '').trim().slice(0, 200);
+    if (!title) return bounce({ error: 'invalid' });
+    const severity = String(form.get('severity') ?? 'minor');
+    const priority = severity === 'critical' ? 'high' : severity === 'major' ? 'medium' : 'low';
+    const section = (label: string, key: string) => {
+      const value = String(form.get(key) ?? '').trim();
+      return value ? `${label}:\n${value}` : '';
+    };
+    const notes = [
+      `Severity: ${severity}`,
+      section('Steps to reproduce', 'steps'),
+      section('Expected', 'expected'),
+      section('Actual', 'actual'),
+      section('Device / browser', 'device'),
+    ]
+      .filter(Boolean)
+      .join('\n\n')
+      .slice(0, 4000);
+    const milestoneRaw = String(form.get('milestone_id') ?? '').trim();
+    const { data: created, error: bugError } = await supabase
+      .from('project_tasks')
+      .insert({
+        project_id: id,
+        title,
+        notes,
+        kind: 'bug',
+        priority,
+        milestone_id: milestoneRaw || null,
+        assignee_email: String(form.get('assignee_email') ?? '').trim().toLowerCase(),
+        created_by_email: actor,
+        status: 'todo',
+      })
+      .select('id')
+      .single();
+    if (bugError || !created) {
+      console.error('bug report failed', bugError?.message);
+      return bounce({ error: 'invalid' });
+    }
+    const bugId = String(created.id);
+    await follow(supabase, bugId, actor);
+    const shot = form.get('file');
+    if (shot instanceof File && shot.size > 0) {
+      const fileForm = new FormData();
+      fileForm.set('task_id', bugId);
+      fileForm.set('file', shot);
+      const attached = await addFileAttachment(supabase, fileForm, id, actor);
+      if (attached.error) console.error('bug screenshot failed', attached.error);
+    }
+    await track('create', `Bug: ${title}`, 'task');
+    // Tell the project's leads and managers (or the assignee).
+    const { data: planners } = await supabase.from('project_members').select('email, roles').eq('project_id', id);
+    const recipients = ((planners ?? []) as { email: string; roles: string[] }[])
+      .filter((row) => row.roles?.includes('lead') || row.roles?.includes('manager'))
+      .map((row) => row.email);
+    const assignee = String(form.get('assignee_email') ?? '').trim().toLowerCase();
+    await notify(supabase, actor, assignee ? [assignee, ...recipients] : recipients, {
+      kind: 'bug',
+      projectId: id,
+      taskId: bugId,
+      title,
+      body: `${severity[0].toUpperCase()}${severity.slice(1)} bug`,
+    });
+    await chat(`🐞 ${who} reported a ${severity} bug: “${title}”`, `/team/projects/${id}?tab=tasks&task=${bugId}`);
+    return Astro.redirect(projectHref(id, { tab: 'tasks', task: bugId, notice: 'created' }));
+  }
+
+  if (intent === 'save-template') {
+    const name = String(form.get('template_name') ?? '').trim();
+    if (!name) return bounce({ error: 'invalid' });
+    const result = await saveProjectAsTemplate(supabase, id, name, actor);
+    return result.error ? bounce({ error: result.error }) : bounce({ notice: 'saved' });
+  }
+
+  if (intent === 'update-chat') {
+    const parsed = parseWebhookUrl(String(form.get('chat_webhook_url') ?? ''));
+    if (parsed === null) return bounce({ error: 'webhook' });
+    const { error: hookError } = await supabase.from('projects').update({ chat_webhook_url: parsed }).eq('id', id);
+    if (hookError) return bounce({ error: 'invalid' });
+    await track('update', parsed ? 'chat notifications on' : 'chat notifications off');
+    if (parsed && form.get('test') === '1') await chat(`👋 ${who} connected this project's team notifications.`);
+    return bounce({ notice: 'saved' });
+  }
+
+  if (intent === 'share-create') {
+    const { error: shareError } = await supabase
+      .from('project_share_links')
+      .upsert({ project_id: id, created_by: actor }, { onConflict: 'project_id', ignoreDuplicates: true });
+    if (shareError) return bounce({ error: 'invalid' });
+    await track('update', 'client link created');
+    return bounce({ notice: 'saved' });
+  }
+
+  if (intent === 'share-reset') {
+    await supabase.from('project_share_links').delete().eq('project_id', id);
+    const { error: shareError } = await supabase.from('project_share_links').insert({ project_id: id, created_by: actor });
+    if (shareError) return bounce({ error: 'invalid' });
+    await track('update', 'client link reset');
+    return bounce({ notice: 'saved' });
+  }
+
+  if (intent === 'share-checkin') {
+    const show = String(form.get('show_checkin') ?? '') === '1';
+    await supabase.from('project_share_links').update({ show_checkin: show }).eq('project_id', id);
+    return bounce({ notice: 'saved' });
+  }
+
+  if (intent === 'share-delete') {
+    await supabase.from('project_share_links').delete().eq('project_id', id);
+    await track('update', 'client link turned off');
+    return bounce({ notice: 'deleted' });
   }
 
   if (intent === 'delete-task') {
@@ -283,6 +678,7 @@ if (Astro.request.method === 'POST') {
   if (intent === 'add-checkin') {
     const result = await addCheckin(supabase, form, id, actor);
     if (result.error) return bounce({ error: result.error });
+    await chat(`📍 ${who} checked in: ${String(form.get('body') ?? '').trim().slice(0, 300)}`, `/team/projects/${id}?tab=schedule#checkin`);
     await track('create', String(form.get('body') ?? '').trim().slice(0, 80), 'checkin');
     return bounce({ notice: 'created' });
   }
@@ -379,9 +775,13 @@ if (Astro.request.method === 'POST') {
 const tab = pickTab(Astro.url.searchParams.get('tab'), caps);
 const action = Astro.url.searchParams.get('action') ?? '';
 const calCursor = parseMonth(Astro.url.searchParams.get('month'), new Date());
-const needMoney = tab === 'funding' || tab === 'ledger' || (tab === 'schedule' && caps.canFinance);
-const needMembers = tab === 'people' || tab === 'funding' || tab === 'schedule';
-const needCrew = tab === 'people' || tab === 'schedule';
+const taskParam = caps.canSchedule ? (Astro.url.searchParams.get('task') ?? '').trim() : '';
+const taskView = Astro.url.searchParams.get('view') === 'board' ? 'board' : 'list';
+const taskWho = (Astro.url.searchParams.get('who') ?? '').trim().toLowerCase();
+// The header shows funding, team, and open work on every tab, so these load everywhere.
+const needMoney = caps.canFinance;
+const needMembers = true;
+const needCrew = true;
 const none = { data: [] as never[] };
 
 const [
@@ -393,12 +793,20 @@ const [
   { data: contribRows },
   { data: memberRows },
   { data: crewRows },
+  counts,
+  detail,
+  dependencies,
+  views,
+  timeEntries,
+  checklists,
+  { data: shareLink },
+  { data: projectTime },
 ] = await Promise.all([
   supabase.from('projects').select('*').eq('id', id).maybeSingle(),
   supabase.from('project_milestones').select('*').eq('project_id', id).order('sort_order'),
-  tab === 'schedule'
+  tab === 'schedule' || tab === 'tasks'
     ? supabase.from('project_tasks').select('*').eq('project_id', id)
-    : Promise.resolve(none),
+    : supabase.from('project_tasks').select('id, status, due_on').eq('project_id', id).neq('status', 'done'),
   supabase.from('project_checkins').select('*').eq('project_id', id).order('created_at', { ascending: false }).limit(tab === 'schedule' ? 8 : 1),
   needMoney
     ? supabase.from('ledger_entries').select('*').eq('project_id', id).order('occurred_on', { ascending: false })
@@ -410,6 +818,16 @@ const [
   needCrew
     ? supabase.from('project_members').select('email, roles').eq('project_id', id).order('email')
     : Promise.resolve(none),
+  tab === 'tasks' ? taskCounts(supabase, [id]) : Promise.resolve(new Map<string, { subtasks: number; subtasksDone: number; comments: number }>()),
+  taskParam ? taskDetail(supabase, id, taskParam) : Promise.resolve(null),
+  tab === 'tasks' || taskParam ? projectDependencies(supabase, id) : Promise.resolve([]),
+  tab === 'tasks' ? savedViews(supabase, id) : Promise.resolve([]),
+  taskParam ? taskTime(supabase, taskParam) : Promise.resolve([]),
+  taskParam ? listTemplates(supabase, 'checklist') : Promise.resolve([]),
+  tab === 'details' && caps.lead
+    ? supabase.from('project_share_links').select('token, show_checkin, created_at').eq('project_id', id).maybeSingle()
+    : Promise.resolve({ data: null }),
+  supabase.from('task_time_entries').select('minutes, started_at, ended_at').eq('project_id', id),
 ]);
 if (error || !project) {
   return Astro.redirect('/team/projects?error=not-found');
@@ -436,13 +854,18 @@ const primaryFund = funding[0];
 const fundRemaining = funding.map((item) => money(item.remaining, item.currency)).join(' · ');
 const fundIn = funding.map((item) => money(item.funded, item.currency)).join(' · ');
 const fundOut = funding.map((item) => money(item.spent, item.currency)).join(' · ');
-const slips = await voucherHrefs(supabase, [
+const slipsPromise = voucherHrefs(supabase, [
   ...(tab === 'funding' || tab === 'ledger'
     ? [...entries, ...contributions.map((item) => ({ voucher_url: item.voucher_url }))]
     : []),
   { voucher_url: row.qr_url },
   { voucher_url: row.logo_url },
-  ...tasks.map((item) => ({ voucher_url: item.image_url })),
+  ...(tab === 'schedule' || tab === 'tasks' ? tasks.map((item) => ({ voucher_url: item.image_url })) : []),
+  ...(detail ? [{ voucher_url: detail.task.image_url }] : []),
+]);
+const [slips, attachHrefs] = await Promise.all([
+  slipsPromise,
+  detail ? attachmentHrefs(supabase, detail.attachments) : Promise.resolve(new Map<string, string>()),
 ]);
 const qrHref = slips.get(row.qr_url);
 const logoHref = slips.get(row.logo_url) ?? '';
@@ -450,7 +873,6 @@ const links = projectLinks(row);
 const extraLinks = extraLinksOf(row.extra_links);
 const editing = action === 'edit' && caps.canEditDetails;
 const peopleEditing = tab === 'people' && action === 'edit';
-const peopleInvite = tab === 'people' && (action === 'invite' || action === 'edit');
 const hasLogin = Boolean(row.login_username || row.login_email || row.login_url || row.login_password_enc);
 const extraRows =
   extraLinks.length === 0
@@ -464,102 +886,198 @@ const extraRows =
       : [...extraLinks, { label: '', url: '' }];
 const loginPassword = revealedLogin ? decryptSecret(row.login_password_enc) : '';
 const today = todayIso();
+const stage = currentStage(milestones);
+const stagesDone = milestones.filter((item) => item.status === 'done').length;
+const allStagesDone = milestones.length > 0 && stagesDone === milestones.length;
+const stageLate = Boolean(!allStagesDone && stage?.estimated_on && stage.estimated_on < today);
+const stagePct = milestones.length ? Math.round((stagesDone / milestones.length) * 100) : 0;
+const openTasks = tasks.filter((item) => item.status !== 'done');
+const lateTasks = openTasks.filter((item) => item.due_on && item.due_on < today);
+const crewFaces = crew.map((person) => personFace(person.email, members));
+const health = projectHealth({
+  status: row.status,
+  today,
+  stages: milestones,
+  tasks,
+  lastCheckin: latestCheckin?.created_at ?? null,
+  funding: caps.canFinance ? funding : null,
+});
+const weekAgoIso = new Date(Date.now() - 7 * 86_400_000).toISOString();
+const timeRows = (projectTime ?? []) as { minutes: number; started_at: string; ended_at: string | null }[];
+const loggedMinutes = timeRows.reduce((sum, entry) => sum + (entry.minutes || 0), 0);
+const weekMinutes = timeRows.filter((entry) => entry.started_at >= weekAgoIso).reduce((sum, entry) => sum + (entry.minutes || 0), 0);
+const shareUrl = shareLink?.token ? `${siteUrl(Astro.request)}/p/${shareLink.token}` : '';
+function shortDate(iso: string) {
+  return new Date(`${iso}T12:00:00`).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
+}
 ---
 
 <Team title={row.name}>
   <div class="wrap team-page">
-    <header class="team-intro project-intro">
-      <ProjectMark name={row.name} src={logoHref} size="lg" />
-      <div>
-        <p class="kicker">Project</p>
-        <h1>{row.name}</h1>
-        <p class="lede">
-          {row.client || 'No client recorded'} · {row.status} · {stageLabel(milestones)}
-          {caps.canFinance && primaryFund ? ` · ${fundRemaining} left` : ''}
-          {' · '}
-          {caps.roleLabels.join(' · ')}
-        </p>
-        {
-          latestCheckin && (
-            <p class="checkin-lede">
-              <strong>Now.</strong> {latestCheckin.body}
-            </p>
-          )
-        }
-        {
-          links.length > 0 && (
-            <nav class="project-links" aria-label="Project links">
-              {links.map((link) => (
-                <a href={link.href} target="_blank" rel="noopener noreferrer">
-                  {link.label}
-                </a>
-              ))}
-            </nav>
-          )
-        }
-      </div>
-    </header>
-    <nav class="quick-actions" aria-label="Quick actions">
-      {
-        row.meeting_url && (
-          <a
-            class="btn"
-            href={websiteHref(row.meeting_url)}
-            target="_blank"
-            rel="noopener noreferrer"
-            data-astro-reload
-          >
-            Join meeting
-          </a>
-        )
-      }
-      {
-        caps.canFinance && (
-          <>
-            <a class="btn btn-ghost" href={projectHref(row.id, { tab: 'funding', action: 'contribute' })}>
-              Add contribution
+    <header class="pd-hero">
+      <div class="pd-top">
+        <ProjectMark name={row.name} src={logoHref} size="lg" />
+        <div class="pd-name">
+          <p class="kicker"><a href="/team/projects">Projects</a></p>
+          <h1>
+            {row.name}
+            <em class:list={['ov-status', row.status]}>{row.status}</em>
+            {health.level !== 'idle' && (
+              <span class:list={['health-badge', health.level]} title={health.reasons.join(' · ') || 'Everything on schedule'}>
+                <i aria-hidden="true" />
+                {health.label}
+              </span>
+            )}
+          </h1>
+          <p class="pd-sub">
+            {row.client || 'No client recorded'}
+            {row.started_on ? ` · started ${shortDate(row.started_on)}` : ''}
+            <span class="pd-role">{caps.roleLabels.join(' · ') || 'Viewer'}</span>
+          </p>
+          {health.reasons.length > 0 && <p class:list={['health-reasons', health.level]}>{health.reasons.join(' · ')}</p>}
+        </div>
+        <div class="pd-top-side">
+          {crewFaces.length > 0 && (
+            <a class="pd-crew" href={projectHref(row.id, { tab: caps.canPeople ? 'people' : tab })} title="Team on this project">
+              <FacePile people={crewFaces} label="Team" limit={5} />
+              <span>{crewFaces.length} on team</span>
             </a>
-            <a class="btn btn-ghost" href={projectHref(row.id, { tab: 'ledger', action: 'expense' })}>Add expense</a>
-            <a class="btn btn-ghost" href={`${projectHref(row.id, { tab: 'funding' })}#pay`}>Pay details</a>
-          </>
+          )}
+          {row.meeting_url && (
+            <a class="btn" href={websiteHref(row.meeting_url)} target="_blank" rel="noopener noreferrer" data-astro-reload>
+              Join meeting
+            </a>
+          )}
+        </div>
+      </div>
+
+      {
+        links.length > 0 && (
+          <nav class="project-links" aria-label="Project links">
+            {links.map((link) => (
+              <a href={link.href} target="_blank" rel="noopener noreferrer">
+                {link.label}
+                <span aria-hidden="true">↗</span>
+              </a>
+            ))}
+          </nav>
         )
       }
+
+      <dl class="pd-stats">
+        <div class:list={['pd-stat', stageLate && 'is-late']}>
+          <dt>Current stage</dt>
+          <dd>
+            <strong>{allStagesDone ? 'All done' : stage?.title ?? 'No stages yet'}</strong>
+            <span>
+              {allStagesDone
+                ? 'Every stage is complete'
+                : stage?.estimated_on
+                  ? `${stageLate ? 'Late · was due ' : 'Due '}${shortDate(stage.estimated_on)}`
+                  : 'No date set'}
+            </span>
+          </dd>
+        </div>
+        <div class="pd-stat">
+          <dt>Progress</dt>
+          <dd>
+            <strong>{stagesDone} of {milestones.length}</strong>
+            <span class="pj-progress" role="img" aria-label={`${stagePct}% of stages done`}>
+              <span style={`width:${stagePct}%`} />
+            </span>
+          </dd>
+        </div>
+        <div class:list={['pd-stat', lateTasks.length > 0 && 'is-late']}>
+          <dt>Open tasks</dt>
+          <dd>
+            <strong>{openTasks.length}</strong>
+            <span>{lateTasks.length > 0 ? `${lateTasks.length} late` : openTasks.length === 0 ? 'Nothing open' : 'None late'}</span>
+          </dd>
+        </div>
+        <div class="pd-stat">
+          <dt>Time logged</dt>
+          <dd>
+            <strong>{formatMinutes(loggedMinutes)}</strong>
+            <span>{weekMinutes > 0 ? `${formatMinutes(weekMinutes)} this week` : 'Nothing this week'}</span>
+          </dd>
+        </div>
+        {
+          caps.canFinance && (
+            <div class="pd-stat is-money">
+              <dt>Funding left</dt>
+              <dd>
+                <strong>{primaryFund ? fundRemaining : '—'}</strong>
+                <span>{primaryFund ? `${fundIn} in · ${fundOut} out` : 'No team funding yet'}</span>
+              </dd>
+            </div>
+          )
+        }
+      </dl>
+
       {
-        caps.canProgress && (
-          <a class="btn btn-ghost" href={`${projectHref(row.id, { tab: 'schedule', action: 'checkin' })}#post-checkin`}>
-            Check-in
+        latestCheckin && (
+          <a class="pd-now" href={`${projectHref(row.id, { tab: 'schedule' })}#checkin`}>
+            <span class="pd-now-tag">Now</span>
+            <span class="pd-now-body">{latestCheckin.body}</span>
+            <span class="pd-now-meta">
+              {personLabel(latestCheckin.author_email, members)} · {shortDate(latestCheckin.created_at.slice(0, 10))}
+            </span>
           </a>
         )
       }
-      {
-        caps.canPlan && (
-          <a class="btn btn-ghost" href={`${projectHref(row.id, { tab: 'schedule', action: 'task' })}#add-task`}>Add task</a>
-        )
-      }
-      {
-        caps.canPeople && (
-          <a class="btn btn-ghost" href={`${projectHref(row.id, { tab: 'people', action: 'invite' })}#add-person`}>Add person</a>
-        )
-      }
-      {
-        caps.canDetails && (
-          <a class="btn btn-ghost" href={projectHref(row.id, { tab: 'details', action: caps.canEditDetails ? 'edit' : undefined })}>
-            {caps.canEditDetails ? 'Edit workspace' : 'Links and login'}
-          </a>
-        )
-      }
-    </nav>
+    </header>
+
     <TeamFlash />
 
-    <nav class="project-tabs" aria-label="Project sections">
-      {
-        caps.tabs.map((item) => (
-          <a href={projectHref(row.id, { tab: item.id })} data-astro-prefetch="hover" aria-current={tab === item.id ? 'page' : undefined}>
-            {item.label}
-          </a>
-        ))
-      }
-    </nav>
+    <div class="pd-bar">
+      <nav class="project-tabs" aria-label="Project sections">
+        {
+          caps.tabs.map((item) => (
+            <a href={projectHref(row.id, { tab: item.id })} data-astro-prefetch="hover" aria-current={tab === item.id ? 'page' : undefined}>
+              {item.label}
+            </a>
+          ))
+        }
+      </nav>
+      <nav class="pd-actions" aria-label="Quick actions">
+        {
+          caps.canProgress && (
+            <a class="btn btn-ghost" href={projectHref(row.id, { tab: 'schedule', action: 'checkin' })} data-modal-open="checkin">
+              Check-in
+            </a>
+          )
+        }
+        {
+          caps.canPlan && (
+            <a class="btn btn-ghost" href={projectHref(row.id, { tab: 'schedule', action: 'task' })} data-modal-open="task">+ Task</a>
+          )
+        }
+        {
+          caps.canFinance && (
+            <>
+              <a class="btn btn-ghost" href={projectHref(row.id, { tab: 'funding', action: 'contribute' })} data-modal-open="funding">+ Funding</a>
+              <a class="btn btn-ghost" href={projectHref(row.id, { tab: 'ledger', action: 'expense' })} data-modal-open="entry">+ Expense</a>
+            </>
+          )
+        }
+        <details class="pd-more">
+          <summary class="btn btn-ghost" aria-label="More actions">More</summary>
+          <div class="pd-menu">
+            {caps.canFinance && <a href={`${projectHref(row.id, { tab: 'funding' })}#pay`}>Pay details</a>}
+            {caps.canPeople && <a href={projectHref(row.id, { tab: 'people', action: 'invite' })} data-modal-open="person">Add person</a>}
+            {caps.canPlan && <a href={projectHref(row.id, { tab: 'schedule', action: 'stage' })} data-modal-open="stage">Add stage</a>}
+            {caps.canDetails && (
+              <a href={projectHref(row.id, { tab: 'details', action: caps.canEditDetails ? 'edit' : undefined })}>
+                {caps.canEditDetails ? 'Edit workspace' : 'Links and login'}
+              </a>
+            )}
+            {caps.canProgress && <a href={projectHref(row.id, { tab: 'tasks', action: 'bug' })} data-modal-open="bug">Report a bug</a>}
+            {caps.canPlan && <a href={projectHref(row.id, { tab: 'schedule', action: 'template' })} data-modal-open="template">Save as template</a>}
+            <a href="/team/projects">All projects</a>
+          </div>
+        </details>
+      </nav>
+    </div>
 
     <div class="project-panel">
       {
@@ -571,15 +1089,34 @@ const today = todayIso();
               canPlan={caps.canPlan}
               canProgress={caps.canProgress}
             />
-            <TaskBoard
-              tasks={tasks}
-              milestones={milestones}
-              people={taskPeople}
-              images={slips}
-              canPlan={caps.canPlan}
-              canProgress={caps.canProgress}
-              openAdd={action === 'task'}
-            />
+            <section class="team-card task-card">
+              <div class="card-head">
+                <div class="pay-head">
+                  <h2>Tasks</h2>
+                  <p class="muted">
+                    {openTasks.length} open{lateTasks.length > 0 ? ` · ${lateTasks.length} late` : ''}
+                  </p>
+                </div>
+                <a class="btn btn-ghost card-add" href={projectHref(row.id, { tab: 'tasks' })}>Open tasks →</a>
+              </div>
+              {openTasks.length === 0 ? (
+                <p class="muted">Nothing open. {caps.canPlan && 'Add the next slice of work from the Tasks tab.'}</p>
+              ) : (
+                <ul class="tw-rows tw-mini">
+                  {sortTaskQueue(openTasks).slice(0, 5).map((item) => (
+                    <li class:list={['tw-row', taskIsLate(item, today) && 'is-late']}>
+                      <a class="tw-title" href={projectHref(row.id, { tab: 'tasks', task: item.id })}>
+                        <span>{item.title}</span>
+                      </a>
+                      <span class="tw-meta">
+                        <span class:list={['tw-due', taskIsLate(item, today) && 'late']}>{item.due_on ? shortDate(item.due_on) : ''}</span>
+                        <span class="tw-who-name">{item.assignee_email ? personLabel(item.assignee_email, members) : 'Unassigned'}</span>
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </section>
             <CheckIn
               latest={latestCheckin}
               recent={checkins}
@@ -605,167 +1142,134 @@ const today = todayIso();
       }
 
       {
+        tab === 'tasks' && (
+          <TaskWorkspace
+            tasks={tasks}
+            milestones={milestones}
+            people={members}
+            counts={counts}
+            view={taskView}
+            who={taskWho}
+            viewerEmail={studio.email}
+            today={today}
+            canPlan={caps.canPlan}
+            canProgress={caps.canProgress}
+            readOnly={Boolean(Astro.locals.viewAs)}
+            base={projectHref(row.id, { tab: 'tasks' })}
+            dependencies={dependencies}
+            savedViews={views}
+            params={Astro.url.searchParams}
+            milestoneDates={milestones}
+          />
+        )
+      }
+
+      {
         tab === 'funding' && (
           <>
-    <section class="team-totals" aria-label="Funding">
-      {
-        funding.length === 0 ? (
-          <p class="muted">No team funding yet. Add contributions below. Expenses come out of this pot.</p>
-        ) : (
-          funding.map((item) => (
-            <article class="team-stat">
-              <p class="kicker">{item.currency} funding</p>
-              <dl>
-                <div>
-                  <dt>Contributed</dt>
-                  <dd>{money(item.funded, item.currency)}</dd>
-                </div>
-                <div>
-                  <dt>Expenses</dt>
-                  <dd>{money(item.spent, item.currency)}</dd>
-                </div>
-                <div>
-                  <dt>Remaining</dt>
-                  <dd>{money(item.remaining, item.currency)}</dd>
-                </div>
-              </dl>
-            </article>
-          ))
-        )
-      }
-    </section>
+    <div class="fund-layout">
+      <div class="fund-main">
 
-    <BankPayCard
-      bankName={row.bank_name}
-      accountNumber={row.account_number}
-      qrHref={qrHref}
-      qrPath={row.qr_url}
-      remaining={primaryFund ? fundRemaining : money(0, 'THB')}
-      funded={primaryFund ? fundIn : money(0, 'THB')}
-      spent={primaryFund ? fundOut : money(0, 'THB')}
-    />
-
-    <section class="team-card">
-      <div class="pay-head">
-        <h2>Team funding</h2>
-        <p class="muted">
-          Current total {primaryFund ? fundRemaining : money(0, 'THB')}. Contributions in, expenses out.
-        </p>
-      </div>
-
-      <FundingPie contributions={contributions} />
-
-      {
-        byMember.length > 0 && (
-          <ul class="contrib-people">
-            {byMember.map((member) => (
-              <li>
-                <span class="contrib-avatar" aria-hidden="true">
-                  {member.email.slice(0, 1).toUpperCase()}
-                </span>
-                <span>
-                  <strong>{member.email}</strong>
-                  <span>{member.totals.map((total) => money(total.amount, total.currency)).join(' · ')}</span>
-                </span>
-              </li>
-            ))}
-          </ul>
-        )
-      }
-
-      <details class="pay-edit" id="record-contribution" open={action === 'contribute' || contributions.length === 0}>
-        <summary>Record a contribution</summary>
-        <form class="form team-form" method="post" enctype="multipart/form-data">
-          <input type="hidden" name="intent" value="add-contribution" />
-          <input type="hidden" name="tab" value="funding" />
-          <div class="team-form-row">
-            <p class="field">
-              <label for="member_email">Member</label>
-              <select id="member_email" name="member_email" required>
-                <option value="">Select</option>
-                {members.map((member) => (
-                  <option value={member.email}>{member.email}</option>
-                ))}
-              </select>
-            </p>
-            <p class="field">
-              <label for="contrib_amount">Amount</label>
-              <input id="contrib_amount" name="amount" type="number" min="0.01" step="0.01" required />
-            </p>
-            <p class="field">
-              <label for="contrib_currency">Currency</label>
-              <input id="contrib_currency" name="currency" value="THB" maxlength="8" required />
-            </p>
-            <p class="field">
-              <label for="contrib_date">Date</label>
-              <input id="contrib_date" name="occurred_on" type="date" value={today} required />
-            </p>
+        <section class="team-card">
+          <div class="card-head">
+            <div class="pay-head">
+              <h2>Team funding</h2>
+              <p class="muted">
+                Current total {primaryFund ? fundRemaining : money(0, 'THB')}. Contributions in, expenses out.
+              </p>
+            </div>
+            <a class="btn btn-ghost card-add" href={projectHref(row.id, { tab: 'funding', action: 'contribute' })} data-modal-open="funding">+ Record funding</a>
           </div>
-          <p class="field">
-            <label for="contrib_notes">Note</label>
-            <input id="contrib_notes" name="notes" placeholder="Optional" />
-          </p>
-          <ImagePick id="contrib_voucher" name="voucher" label="Voucher slip" />
-          <p class="field">
-            <label for="contrib_voucher_url">Or slip URL</label>
-            <input
-              id="contrib_voucher_url"
-              name="voucher_url"
-              type="url"
-              placeholder="https://"
-              data-image-url-for="contrib_voucher"
-            />
-          </p>
-          <button class="btn" type="submit">Add</button>
-        </form>
-      </details>
 
-      <h3 class="tx-heading">Transactions</h3>
-      {
-        txs.length === 0 ? (
-          <p class="muted">No transactions yet.</p>
-        ) : (
-          <ol class="tx-log" aria-label="Fund transactions">
-            {txs.map((tx) => (
-              <li class={tx.kind === 'in' ? 'tx-in' : 'tx-out'}>
-                <span>
-                  <strong>
-                    {tx.kind === 'in' ? '+' : '−'}
-                    {money(tx.amount, tx.currency)}
-                  </strong>
-                  <span>
-                    {tx.title} · {tx.date}
-                    {tx.detail ? ` · ${tx.detail}` : ''}
-                  </span>
-                </span>
-                <div class="tx-actions">
-                  <VoucherLink path={tx.voucher_url} href={slips.get(tx.voucher_url)} />
-                  {tx.delete && (
-                    <form
-                      method="post"
-                      data-confirm={
-                        tx.delete.intent === 'delete-contribution'
-                          ? `Remove this contribution of ${money(tx.amount, tx.currency)}?`
-                          : `Remove this expense of ${money(tx.amount, tx.currency)}?`
-                      }
-                    >
-                      <input type="hidden" name="tab" value="funding" />
-                      <input type="hidden" name="intent" value={tx.delete.intent} />
-                      <input
-                        type="hidden"
-                        name={tx.delete.intent === 'delete-contribution' ? 'contribution_id' : 'entry_id'}
-                        value={tx.delete.id}
-                      />
-                      <button class="btn btn-ghost" type="submit">Remove</button>
-                    </form>
-                  )}
-                </div>
-              </li>
-            ))}
-          </ol>
-        )
-      }
-    </section>
+          <FundingPie contributions={contributions} />
+
+          {
+            byMember.length > 0 && (
+              <ul class="contrib-people">
+                {byMember.map((member) => (
+                  <li>
+                    <span class="contrib-avatar" aria-hidden="true">
+                      {member.email.slice(0, 1).toUpperCase()}
+                    </span>
+                    <span>
+                      <strong>{member.email}</strong>
+                      <span>{member.totals.map((total) => money(total.amount, total.currency)).join(' · ')}</span>
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            )
+          }
+
+
+        </section>
+
+        <section class="team-card">
+          <div class="card-head">
+            <div class="pay-head">
+              <h2>Transactions</h2>
+              <p class="muted">{txs.length} {txs.length === 1 ? 'entry' : 'entries'} · newest first</p>
+            </div>
+            <a class="btn btn-ghost card-add" href={projectHref(row.id, { tab: 'ledger', action: 'expense' })} data-modal-open="entry">+ Expense</a>
+          </div>
+          {
+            txs.length === 0 ? (
+              <p class="muted">No transactions yet.</p>
+            ) : (
+              <ol class="tx-log" aria-label="Fund transactions">
+                {txs.map((tx) => (
+                  <li class={tx.kind === 'in' ? 'tx-in' : 'tx-out'}>
+                    <span>
+                      <strong>
+                        {tx.kind === 'in' ? '+' : '−'}
+                        {money(tx.amount, tx.currency)}
+                      </strong>
+                      <span>
+                        {tx.title} · {tx.date}
+                        {tx.detail ? ` · ${tx.detail}` : ''}
+                      </span>
+                    </span>
+                    <div class="tx-actions">
+                      <VoucherLink path={tx.voucher_url} href={slips.get(tx.voucher_url)} />
+                      {tx.delete && (
+                        <form
+                          method="post"
+                          data-confirm={
+                            tx.delete.intent === 'delete-contribution'
+                              ? `Remove this contribution of ${money(tx.amount, tx.currency)}?`
+                              : `Remove this expense of ${money(tx.amount, tx.currency)}?`
+                          }
+                        >
+                          <input type="hidden" name="tab" value="funding" />
+                          <input type="hidden" name="intent" value={tx.delete.intent} />
+                          <input
+                            type="hidden"
+                            name={tx.delete.intent === 'delete-contribution' ? 'contribution_id' : 'entry_id'}
+                            value={tx.delete.id}
+                          />
+                          <button class="btn-text" type="submit">Remove</button>
+                        </form>
+                      )}
+                    </div>
+                  </li>
+                ))}
+              </ol>
+            )
+          }
+        </section>
+      </div>
+      <aside class="fund-side">
+        <BankPayCard
+          bankName={row.bank_name}
+          accountNumber={row.account_number}
+          qrHref={qrHref}
+          qrPath={row.qr_url}
+          remaining={primaryFund ? fundRemaining : money(0, 'THB')}
+          funded={primaryFund ? fundIn : money(0, 'THB')}
+          spent={primaryFund ? fundOut : money(0, 'THB')}
+        />
+      </aside>
+    </div>
           </>
         )
       }
@@ -987,10 +1491,89 @@ const today = todayIso();
     </section>
         )
       }
+      {
+        tab === 'details' && (caps.lead || caps.canEditDetails) && !Astro.locals.viewAs && (
+          <div class="details-extras">
+            {caps.lead && (
+              <section class="team-card">
+                <div class="card-head">
+                  <div class="pay-head">
+                    <h2>Client link</h2>
+                    <p class="muted">A read-only progress page for the client: stages, progress, and (optionally) the latest check-in. No money, people, tasks, or links.</p>
+                  </div>
+                </div>
+                {shareUrl ? (
+                  <div class="share-box">
+                    <div class="secret-row">
+                      <input class="share-url" id="share-url" value={shareUrl} readonly aria-label="Client link" />
+                      <button class="btn" type="button" data-copy="share-url">Copy</button>
+                    </div>
+                    <div class="share-actions">
+                      <a class="btn btn-ghost" href={shareUrl} target="_blank" rel="noopener noreferrer">Preview ↗</a>
+                      <form method="post">
+                        <input type="hidden" name="intent" value="share-checkin" />
+                        <input type="hidden" name="tab" value="details" />
+                        <input type="hidden" name="show_checkin" value={shareLink?.show_checkin ? '0' : '1'} />
+                        <button class="btn btn-ghost" type="submit">{shareLink?.show_checkin ? 'Hide check-in' : 'Show check-in'}</button>
+                      </form>
+                      <form method="post" data-confirm="Make a new link? The old link stops working." data-confirm-action="Reset">
+                        <input type="hidden" name="intent" value="share-reset" />
+                        <input type="hidden" name="tab" value="details" />
+                        <button class="btn-text" type="submit">Reset link</button>
+                      </form>
+                      <form method="post" data-confirm="Turn off the client link?" data-confirm-action="Turn off">
+                        <input type="hidden" name="intent" value="share-delete" />
+                        <input type="hidden" name="tab" value="details" />
+                        <button class="btn-text td-delete" type="submit">Turn off</button>
+                      </form>
+                    </div>
+                  </div>
+                ) : (
+                  <form method="post">
+                    <input type="hidden" name="intent" value="share-create" />
+                    <input type="hidden" name="tab" value="details" />
+                    <button class="btn" type="submit">Create client link</button>
+                  </form>
+                )}
+              </section>
+            )}
+            {caps.canEditDetails && (
+              <section class="team-card">
+                <div class="card-head">
+                  <div class="pay-head">
+                    <h2>Team chat</h2>
+                    <p class="muted">
+                      Post new tasks, completions, bugs, check-ins, and stage sign-offs to a Slack or Discord channel.
+                      {row.chat_webhook_url ? ` Connected to ${webhookKind(String(row.chat_webhook_url))} (${maskWebhook(String(row.chat_webhook_url))}).` : ''}
+                    </p>
+                  </div>
+                </div>
+                <form method="post" class="form team-form chat-form">
+                  <input type="hidden" name="intent" value="update-chat" />
+                  <input type="hidden" name="tab" value="details" />
+                  <p class="field">
+                    <label for="chat_webhook_url">Incoming webhook URL</label>
+                    <input id="chat_webhook_url" name="chat_webhook_url" type="url" placeholder="https://hooks.slack.com/services/… or https://discord.com/api/webhooks/…" value={row.chat_webhook_url ? String(row.chat_webhook_url) : ''} autocomplete="off" />
+                  </p>
+                  <label class="check-line">
+                    <input type="checkbox" name="test" value="1" checked={!row.chat_webhook_url} />
+                    Send a test message
+                  </label>
+                  <div class="ms-tools">
+                    <button class="btn" type="submit">Save</button>
+                    {row.chat_webhook_url && <button class="btn-text" type="submit" name="chat_webhook_url" value="" formnovalidate>Disconnect</button>}
+                  </div>
+                </form>
+              </section>
+            )}
+          </div>
+        )
+      }
 
       {
         tab === 'ledger' && (
           <>
+            <div class="ledger-top">
             {
               totals.length > 0 && (
                 <section class="team-totals" aria-label="Income and profit">
@@ -1018,15 +1601,16 @@ const today = todayIso();
             }
 
             <IncomeExpenseChart entries={entries} />
+            </div>
 
     <section class="team-card">
-      <h2>Income and expense</h2>
-      <p class="muted">Expenses come out of team funding.</p>
-      <LedgerForm
-        action={`/team/projects/${row.id}`}
-        projectId={row.id}
-        defaultKind={action === 'expense' ? 'expense' : 'income'}
-      />
+      <div class="card-head">
+        <div class="pay-head">
+          <h2>Income and expense</h2>
+          <p class="muted">Expenses come out of team funding.</p>
+        </div>
+        <a class="btn btn-ghost card-add" href={projectHref(row.id, { tab: 'ledger', action: 'expense' })} data-modal-open="entry">+ Add entry</a>
+      </div>
       {
         entries.length === 0 ? (
           <p class="muted">No entries yet.</p>
@@ -1047,7 +1631,7 @@ const today = todayIso();
               {entries.map((entry) => (
                 <tr>
                   <td>{entry.occurred_on}</td>
-                  <td>{entry.kind}</td>
+                  <td><span class:list={['kind-pill', entry.kind]}>{entry.kind}</span></td>
                   <td>{money(entry.amount, entry.currency)}</td>
                   <td>{entry.category || entry.notes || '—'}</td>
                   <td>
@@ -1058,7 +1642,7 @@ const today = todayIso();
                       <input type="hidden" name="intent" value="delete-entry" />
                       <input type="hidden" name="tab" value="ledger" />
                       <input type="hidden" name="entry_id" value={entry.id} />
-                      <button class="btn btn-ghost" type="submit">Remove</button>
+                      <button class="btn-text" type="submit">Remove</button>
                     </form>
                   </td>
                 </tr>
@@ -1087,9 +1671,9 @@ const today = todayIso();
                   )
                 }
                 {
-                  !peopleInvite && invitees.length > 0 && (
-                    <a class="btn btn-ghost" href={`${projectHref(row.id, { tab: 'people', action: 'invite' })}#add-person`}>
-                      Add person
+                  invitees.length > 0 && (
+                    <a class="btn btn-ghost" href={projectHref(row.id, { tab: 'people', action: 'invite' })} data-modal-open="person">
+                      + Add person
                     </a>
                   )
                 }
@@ -1107,7 +1691,7 @@ const today = todayIso();
                     <header>
                       <div class="member-id">
                         {face.avatarUrl ? (
-                          <img class="face" src={face.avatarUrl} alt="" width="36" height="36" />
+                          <img class="face" src={face.avatarUrl} alt="" referrerpolicy="no-referrer" width="36" height="36" />
                         ) : (
                           <span class="face" aria-hidden="true">{personInitial(face.name, face.email)}</span>
                         )}
@@ -1157,7 +1741,7 @@ const today = todayIso();
                       <li class="member-hit">
                         <div class="member-id">
                           {face.avatarUrl ? (
-                            <img class="face" src={face.avatarUrl} alt="" width="36" height="36" />
+                            <img class="face" src={face.avatarUrl} alt="" referrerpolicy="no-referrer" width="36" height="36" />
                           ) : (
                             <span class="face" aria-hidden="true">{personInitial(face.name, face.email)}</span>
                           )}
@@ -1172,6 +1756,14 @@ const today = todayIso();
                               <span class="role-chip">{label}</span>
                             ))}
                           </span>
+                          {canViewAs && person.email !== studio?.email && (
+                            <form method="post" action="/team/view-as" data-astro-reload>
+                              <input type="hidden" name="intent" value="start" />
+                              <input type="hidden" name="email" value={person.email} />
+                              <input type="hidden" name="back" value={`/team/projects/${id}`} />
+                              <button class="btn-text view-as-btn" type="submit">View as</button>
+                            </form>
+                          )}
                         </div>
                       </li>
                     );
@@ -1179,15 +1771,220 @@ const today = todayIso();
                 </ul>
               )
             }
-            {
-              peopleInvite && (
-                <>
-                  <h3 class="tx-heading" id="add-person">Add from the studio list</h3>
-                  {
-                    invitees.length === 0 ? (
-                      <p class="muted">Everyone on the whitelist is already on this project.</p>
-                    ) : (
-                      <form class="form team-form" method="post">
+          </section>
+        )
+      }
+    </div>
+
+    {
+      detail && (
+        <TaskPanel
+          task={detail.task}
+          subtasks={detail.subtasks}
+          comments={detail.comments}
+          people={taskPeople}
+          allPeople={members}
+          milestones={milestones}
+          canPlan={caps.canPlan}
+          canProgress={caps.canProgress}
+          readOnly={Boolean(Astro.locals.viewAs)}
+          viewerEmail={studio.email}
+          today={today}
+          view={taskView}
+          who={taskWho}
+          imageHref={slips.get(detail.task.image_url)}
+          followers={detail.followers}
+          attachments={detail.attachments}
+          attachHrefs={attachHrefs}
+          events={detail.events}
+          waitsOn={detail.waitsOn}
+          blocks={detail.blocks}
+          allTasks={tasks.filter((item) => 'title' in item)}
+          timeEntries={timeEntries}
+          checklists={checklists}
+        />
+      )
+    }
+    {/* Pop-up forms. They live outside the tabs so the action bar can open them anywhere. */}
+    {
+      caps.canPlan && (
+        <Modal id="task" title="Add a task" lede="A slice of work with an owner and a date." open={action === 'task'}>
+          <form class="form team-form" method="post" enctype="multipart/form-data">
+            <input type="hidden" name="intent" value="add-task" />
+            <input type="hidden" name="tab" value="tasks" />
+            <input type="hidden" name="view" value={taskView} />
+            <p class="field">
+              <label for="task_title">Task</label>
+              <input id="task_title" name="title" required placeholder="What needs doing" />
+            </p>
+            <div class="team-form-row">
+              <p class="field">
+                <label for="task_owner">Owner</label>
+                <select id="task_owner" name="assignee_email">
+                  <option value="">Unassigned</option>
+                  {taskPeople.map((person) => (
+                    <option value={person.email}>{personLabel(person.email, taskPeople)}</option>
+                  ))}
+                </select>
+              </p>
+              <p class="field">
+                <label for="task_due">Due</label>
+                <input id="task_due" name="due_on" type="date" />
+              </p>
+              <p class="field">
+                <label for="task_priority">Priority</label>
+                <select id="task_priority" name="priority">
+                  <option value="">None</option>
+                  <option value="high">High</option>
+                  <option value="medium">Medium</option>
+                  <option value="low">Low</option>
+                </select>
+              </p>
+            </div>
+            <p class="field">
+              <label for="task_stage">Stage</label>
+              <select id="task_stage" name="milestone_id">
+                <option value="">No stage</option>
+                {milestones.map((item) => (
+                  <option value={item.id} selected={item.id === stage?.id}>
+                    {item.title}
+                  </option>
+                ))}
+              </select>
+            </p>
+            <p class="field">
+              <label for="task_notes">Note</label>
+              <input id="task_notes" name="notes" placeholder="Optional" />
+            </p>
+            <details class="modal-extra">
+              <summary>Image and link</summary>
+              <ImagePick id="task_image" name="image" label="Image" />
+              <p class="field">
+                <label for="task_image_url">Or image URL</label>
+                <input id="task_image_url" name="image_url" type="url" placeholder="https://" data-image-url-for="task_image" />
+              </p>
+              <p class="field">
+                <label for="task_link">URL</label>
+                <input id="task_link" name="link_url" type="url" placeholder="https://" />
+              </p>
+            </details>
+            <div class="modal-actions">
+              <button class="btn btn-ghost" type="button" data-modal-close>Cancel</button>
+              <button class="btn" type="submit">Add task</button>
+            </div>
+          </form>
+        </Modal>
+      )
+    }
+    {
+      caps.canPlan && (
+        <Modal id="stage" title="Add a stage" lede="Dates set the order of stages." open={action === 'stage'}>
+          <form class="form team-form" method="post">
+            <input type="hidden" name="intent" value="add-milestone" />
+            <input type="hidden" name="tab" value="schedule" />
+            <div class="team-form-row">
+              <p class="field">
+                <label for="ms_title">Stage</label>
+                <input id="ms_title" name="title" required placeholder="Design, launch…" />
+              </p>
+              <p class="field">
+                <label for="ms_date">Date</label>
+                <input id="ms_date" name="estimated_on" type="date" />
+              </p>
+            </div>
+            <div class="modal-actions">
+              <button class="btn btn-ghost" type="button" data-modal-close>Cancel</button>
+              <button class="btn" type="submit">Add stage</button>
+            </div>
+          </form>
+        </Modal>
+      )
+    }
+    {
+      caps.canProgress && (
+        <Modal id="checkin" title="Post a check-in" lede="One note for the last-known state. It replaces the “Now” line." open={action === 'checkin'}>
+          <form class="form team-form" method="post">
+            <input type="hidden" name="intent" value="add-checkin" />
+            <input type="hidden" name="tab" value="schedule" />
+            <p class="field">
+              <label for="checkin_body">Now</label>
+              <textarea id="checkin_body" name="body" rows="4" required maxlength="400" placeholder="Blocked on copy. QA on staging."></textarea>
+            </p>
+            <div class="modal-actions">
+              <button class="btn btn-ghost" type="button" data-modal-close>Cancel</button>
+              <button class="btn" type="submit">Post check-in</button>
+            </div>
+          </form>
+        </Modal>
+      )
+    }
+    {
+      caps.canFinance && (
+        <Modal id="funding" title="Record funding" lede="Money a teammate put into this project. Expenses come out of it." open={action === 'contribute'}>
+          <form class="form team-form" method="post" enctype="multipart/form-data">
+          <input type="hidden" name="intent" value="add-contribution" />
+          <input type="hidden" name="tab" value="funding" />
+          <div class="team-form-row">
+            <p class="field">
+              <label for="member_email">Member</label>
+              <select id="member_email" name="member_email" required>
+                <option value="">Select</option>
+                {members.map((member) => (
+                  <option value={member.email}>{member.email}</option>
+                ))}
+              </select>
+            </p>
+            <p class="field">
+              <label for="contrib_amount">Amount</label>
+              <input id="contrib_amount" name="amount" type="number" min="0.01" step="0.01" required inputmode="decimal" />
+            </p>
+            <p class="field">
+              <label for="contrib_currency">Currency</label>
+              <input id="contrib_currency" name="currency" value="THB" maxlength="8" required />
+            </p>
+            <p class="field">
+              <label for="contrib_date">Date</label>
+              <input id="contrib_date" name="occurred_on" type="date" value={today} required />
+            </p>
+          </div>
+          <p class="field">
+            <label for="contrib_notes">Note</label>
+            <input id="contrib_notes" name="notes" placeholder="Optional" />
+          </p>
+          <details class="modal-extra">
+            <summary>Voucher slip</summary>
+            <ImagePick id="contrib_voucher" name="voucher" label="Voucher slip" />
+          <p class="field">
+            <label for="contrib_voucher_url">Or slip URL</label>
+            <input
+              id="contrib_voucher_url"
+              name="voucher_url"
+              type="url"
+              placeholder="https://"
+              data-image-url-for="contrib_voucher"
+            />
+          </p>
+          </details>
+          <button class="btn" type="submit">Record funding</button>
+        </form>
+        </Modal>
+      )
+    }
+    {
+      caps.canFinance && (
+        <Modal id="entry" title="Add income or expense" lede="Expenses come out of team funding." open={action === 'expense'}>
+          <LedgerForm action={`/team/projects/${row.id}`} projectId={row.id} defaultKind="expense" idPrefix="entry_" submitLabel="Save entry" compact />
+        </Modal>
+      )
+    }
+    {
+      caps.canPeople && (
+        <Modal id="person" title="Add a person" lede="Pick someone from the studio list and choose what they can do here." open={action === 'invite'}>
+          {
+            invitees.length === 0 ? (
+              <p class="muted">Everyone on the whitelist is already on this project.</p>
+            ) : (
+              <form class="form team-form" method="post">
                         <input type="hidden" name="intent" value="add-member" />
                         <input type="hidden" name="tab" value="people" />
                         <p class="field">
@@ -1221,14 +2018,141 @@ const today = todayIso();
                         </label>
                         <button class="btn" type="submit">Add to project</button>
                       </form>
-                    )
-                  }
-                </>
-              )
-            }
-          </section>
-        )
-      }
-    </div>
+            )
+          }
+        </Modal>
+      )
+    }
+
+    {
+      caps.canProgress && (
+        <Modal id="bug" title="Report a bug" lede="It becomes a task tagged Bug. Leads and managers are notified." open={action === 'bug'} size="lg">
+          <form class="form team-form" method="post" enctype="multipart/form-data">
+            <input type="hidden" name="intent" value="report-bug" />
+            <input type="hidden" name="tab" value="tasks" />
+            <p class="field">
+              <label for="bug_title">What's wrong?</label>
+              <input id="bug_title" name="title" required maxlength="200" placeholder="Checkout button does nothing on iOS" />
+            </p>
+            <div class="team-form-row">
+              <p class="field">
+                <label for="bug_severity">Severity</label>
+                <select id="bug_severity" name="severity">
+                  <option value="critical">Critical · broken, no workaround</option>
+                  <option value="major">Major · important, has a workaround</option>
+                  <option value="minor" selected>Minor · cosmetic or small</option>
+                </select>
+              </p>
+              <p class="field">
+                <label for="bug_stage">Stage</label>
+                <select id="bug_stage" name="milestone_id">
+                  <option value="">No stage</option>
+                  {milestones.map((item) => (
+                    <option value={item.id} selected={item.id === stage?.id}>{item.title}</option>
+                  ))}
+                </select>
+              </p>
+              <p class="field">
+                <label for="bug_owner">Assign to</label>
+                <select id="bug_owner" name="assignee_email">
+                  <option value="">Triage later</option>
+                  {taskPeople.map((person) => (
+                    <option value={person.email}>{personLabel(person.email, taskPeople)}</option>
+                  ))}
+                </select>
+              </p>
+            </div>
+            <p class="field">
+              <label for="bug_steps">Steps to reproduce</label>
+              <textarea id="bug_steps" name="steps" rows="3" placeholder="1. Open the app&#10;2. Add an item&#10;3. Tap Checkout"></textarea>
+            </p>
+            <div class="team-form-row">
+              <p class="field">
+                <label for="bug_expected">Expected</label>
+                <input id="bug_expected" name="expected" placeholder="Payment sheet opens" />
+              </p>
+              <p class="field">
+                <label for="bug_actual">Actual</label>
+                <input id="bug_actual" name="actual" placeholder="Nothing happens" />
+              </p>
+            </div>
+            <p class="field">
+              <label for="bug_device">Device / browser</label>
+              <input id="bug_device" name="device" placeholder="iPhone 15, iOS 18.2 · build 1.4.0" />
+            </p>
+            <p class="field">
+              <label for="bug_file">Screenshot or recording (optional, 10 MB)</label>
+              <input id="bug_file" name="file" type="file" accept="image/*,application/pdf,text/plain" />
+            </p>
+            <div class="modal-actions">
+              <button class="btn btn-ghost" type="button" data-modal-close>Cancel</button>
+              <button class="btn" type="submit">Report bug</button>
+            </div>
+          </form>
+        </Modal>
+      )
+    }
+    {
+      caps.canProgress && (
+        <Modal id="signoff" title="Sign off stage" lede="Close the stage and note what was delivered. It shows on the schedule and in team chat.">
+          <form class="form team-form" method="post">
+            <input type="hidden" name="intent" value="milestone-done" />
+            <input type="hidden" name="tab" value="schedule" />
+            <input type="hidden" name="milestone_id" value="" data-signoff-id />
+            <p class="signoff-stage" data-signoff-title></p>
+            <p class="field">
+              <label for="signoff_note">What was delivered? (optional)</label>
+              <textarea id="signoff_note" name="signoff_note" rows="3" maxlength="600" placeholder="Designs approved by the client in Figma. Build handed to QA."></textarea>
+            </p>
+            <div class="modal-actions">
+              <button class="btn btn-ghost" type="button" data-modal-close>Cancel</button>
+              <button class="btn" type="submit">Mark done</button>
+            </div>
+          </form>
+        </Modal>
+      )
+    }
+    {
+      caps.canPlan && (
+        <Modal id="template" title="Save as template" lede="Reuse this project's stages and tasks for the next job. Dates are kept relative to the start date." open={action === 'template'}>
+          <form class="form team-form" method="post">
+            <input type="hidden" name="intent" value="save-template" />
+            <input type="hidden" name="tab" value="schedule" />
+            <p class="field">
+              <label for="template_name">Template name</label>
+              <input id="template_name" name="template_name" required maxlength="80" value={`${row.name} plan`} />
+            </p>
+            <p class="muted">{milestones.length} stages and {tasks.filter((item) => 'kind' in item ? item.kind !== 'bug' : true).length} tasks will be saved.</p>
+            <div class="modal-actions">
+              <button class="btn btn-ghost" type="button" data-modal-close>Cancel</button>
+              <button class="btn" type="submit">Save template</button>
+            </div>
+          </form>
+        </Modal>
+      )
+    }
   </div>
 </Team>
+
+<script>
+  // "Mark done" on a stage opens the sign-off pop-up for that stage.
+  document.addEventListener('click', (event) => {
+    const button = (event.target as Element | null)?.closest<HTMLElement>('[data-signoff-for]');
+    if (!button) return;
+    const dialog = document.getElementById('modal-signoff');
+    dialog?.querySelector<HTMLInputElement>('[data-signoff-id]')?.setAttribute('value', button.dataset.signoffFor ?? '');
+    const title = dialog?.querySelector<HTMLElement>('[data-signoff-title]');
+    if (title) title.textContent = button.dataset.signoffTitle ?? '';
+  }, true);
+
+  // Close the "More" menu on outside click or Escape.
+  document.addEventListener('click', (event) => {
+    for (const menu of document.querySelectorAll<HTMLDetailsElement>('.pd-more[open]')) {
+      if (!(event.target instanceof Node) || !menu.contains(event.target)) menu.open = false;
+    }
+  });
+  document.addEventListener('keydown', (event) => {
+    if (event.key !== 'Escape') return;
+    for (const menu of document.querySelectorAll<HTMLDetailsElement>('.pd-more[open]')) menu.open = false;
+  });
+</script>

@@ -38,7 +38,7 @@ export function eventHref(row: StudioEvent) {
   if (row.entity_type === 'job' && row.entity_id) return `/team/careers/${row.entity_id}`;
   if (row.entity_type === 'credential' && row.entity_id) return `/team/credentials/${row.entity_id}`;
   if (row.entity_type === 'checkin' && row.project_id) return `/team/projects/${row.project_id}?tab=schedule#checkin`;
-  if (row.entity_type === 'task' && row.project_id) return `/team/projects/${row.project_id}?tab=schedule`;
+  if (row.entity_type === 'task' && row.project_id) return `/team/projects/${row.project_id}?tab=tasks`;
   if (row.project_id) return `/team/projects/${row.project_id}`;
   if (row.entity_type === 'project' && row.entity_id) return `/team/projects/${row.entity_id}`;
   if (row.entity_type === 'profile') return '/team/profile';
@@ -74,12 +74,14 @@ const titles: Record<string, string> = {
   'task.update': 'Updated a task',
   'task.status': 'Changed task status',
   'task.delete': 'Removed a task',
+  'task.comment': 'Commented on a task',
   'checkin.create': 'Posted a check-in',
   'checkin.delete': 'Removed a check-in',
   'member.add': 'Whitelisted an email',
   'member.remove': 'Removed a team email',
   'member.invite': 'Sent a team invite',
   'profile.update': 'Updated their profile',
+  'member.view_as': 'Previewed the app as a teammate',
 };
 
 export function eventTitle(row: StudioEvent) {

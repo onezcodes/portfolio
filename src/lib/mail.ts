@@ -271,8 +271,36 @@ export async function notifyVaultGrants(emails: string[], title: string, request
   return sent;
 }
 
-export function taskWorkUrl(request: Request, projectId: string) {
-  return `${siteUrl(request)}/team/projects/${projectId}?tab=schedule`;
+export function taskWorkUrl(request: Request, projectId: string, taskId?: string) {
+  const task = taskId ? `&task=${encodeURIComponent(taskId)}` : '';
+  return `${siteUrl(request)}/team/projects/${projectId}?tab=tasks${task}`;
+}
+
+export function taskCommentMail(projectName: string, title: string, author: string, body: string, href: string, mention = false) {
+  const subject = mention ? `${author} mentioned you on ${title}` : `New comment on ${title}`;
+  const text = `${author} commented on "${title}" (${projectName}):\n\n${body}\n\n${href}`;
+  const html = letter({
+    kicker: 'Comment',
+    heading: escapeHtml(title),
+    body: `<strong>${escapeHtml(author)}</strong> ${mention ? 'mentioned you on' : 'commented on'} ${escapeHtml(projectName)}:<br /><br />${escapeHtml(body).replace(/\n/g, '<br />')}`,
+    cta: 'Open task',
+    href,
+    note: `If the button does not work, open ${href}.`,
+  });
+  return { subject, text, html };
+}
+
+export async function sendTaskComment(
+  to: string,
+  projectName: string,
+  title: string,
+  author: string,
+  body: string,
+  href: string,
+  mention = false,
+) {
+  if (!to.trim()) return { error: 'invalid' as const };
+  return sendMail({ to: to.trim().toLowerCase(), ...taskCommentMail(projectName, title, author, body, href, mention) });
 }
 
 export async function sendTaskAssigned(
@@ -328,4 +356,58 @@ export async function sendContactEnquiry(input: {
     <p style="margin:0;padding-top:20px;border-top:1px solid ${line};font-size:16px;line-height:1.6;white-space:pre-wrap;color:${ink};">${escapeHtml(message)}</p>
   `;
   return sendMail({ to: site.email, replyTo: email, subject, text, html });
+}
+
+export type DigestItem = { title: string; project: string; due: string | null; href: string };
+
+/** Monday summary: overdue, due this week, waiting on you, done last week. */
+export function weeklyDigestMail(input: {
+  name: string;
+  overdue: DigestItem[];
+  dueThisWeek: DigestItem[];
+  waitingOnYou: DigestItem[];
+  doneLastWeek: number;
+  unread: number;
+  href: string;
+}) {
+  const list = (items: DigestItem[]) =>
+    items
+      .slice(0, 8)
+      .map(
+        (item) =>
+          `<li style="margin:0 0 6px"><a href="${escapeHtml(item.href)}" style="color:#171614">${escapeHtml(item.title)}</a> <span style="color:#6b6660">· ${escapeHtml(item.project)}${item.due ? ` · ${escapeHtml(item.due)}` : ''}</span></li>`,
+      )
+      .join('');
+  const block = (label: string, items: DigestItem[]) =>
+    items.length ? `<p style="margin:18px 0 6px"><strong>${label} (${items.length})</strong></p><ul style="margin:0;padding-left:18px">${list(items)}</ul>` : '';
+  const headline =
+    input.overdue.length > 0
+      ? `${input.overdue.length} overdue, ${input.dueThisWeek.length} due this week`
+      : input.dueThisWeek.length > 0
+        ? `${input.dueThisWeek.length} due this week`
+        : 'A clear week ahead';
+  const body = [
+    `Hi ${escapeHtml(input.name)}, here is your week. You finished <strong>${input.doneLastWeek}</strong> ${input.doneLastWeek === 1 ? 'task' : 'tasks'} last week.`,
+    block('Overdue', input.overdue),
+    block('Due this week', input.dueThisWeek),
+    block('Others are waiting on you', input.waitingOnYou),
+    input.unread > 0 ? `<p style="margin:18px 0 0">You have ${input.unread} unread ${input.unread === 1 ? 'update' : 'updates'} in your inbox.</p>` : '',
+  ].join('');
+  const text = [
+    `Your week: ${headline}. Finished last week: ${input.doneLastWeek}.`,
+    ...input.overdue.map((i) => `Overdue: ${i.title} (${i.project})`),
+    ...input.dueThisWeek.map((i) => `Due: ${i.title} (${i.project}${i.due ? `, ${i.due}` : ''})`),
+    ...input.waitingOnYou.map((i) => `Waiting on you: ${i.title} (${i.project})`),
+    '',
+    input.href,
+  ].join('\n');
+  const html = letter({
+    kicker: 'Weekly summary',
+    heading: escapeHtml(headline),
+    body,
+    cta: 'Open my tasks',
+    href: input.href,
+    note: `If the button does not work, open ${input.href}.`,
+  });
+  return { subject: `Your week: ${headline}`, text, html };
 }
