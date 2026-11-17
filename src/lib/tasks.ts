@@ -58,6 +58,8 @@ export type TaskSubtask = {
   title: string;
   done: boolean;
   sort_order: number;
+  /** When set, only this person (or a planner) may check the item. */
+  assignee_email?: string;
   created_at: string;
 };
 
@@ -321,10 +323,26 @@ export async function markTaskMail(supabase: SupabaseClient, taskId: string, tod
   await supabase.from('project_tasks').update({ due_notice_on: today }).eq('id', taskId);
 }
 
+/** Open checklist items that must be checked by their assignee (QA sign-off). */
+export async function openAssignedSubtasks(supabase: SupabaseClient, taskId: string) {
+  const { data } = await supabase
+    .from('task_subtasks')
+    .select('id, title, assignee_email, done')
+    .eq('task_id', taskId)
+    .neq('assignee_email', '')
+    .eq('done', false);
+  return (data ?? []) as Pick<TaskSubtask, 'id' | 'title' | 'assignee_email' | 'done'>[];
+}
+
 export async function setTaskStatus(supabase: SupabaseClient, projectId: string, taskId: string, status: TaskStatus) {
   if (!taskId || !isTaskStatus(status)) return { error: 'invalid' as const };
+  if (status === 'done') {
+    const pending = await openAssignedSubtasks(supabase, taskId);
+    if (pending.length > 0) return { error: 'qa-pending' as const, pending };
+  }
   const { error } = await supabase.from('project_tasks').update({ status }).eq('id', taskId).eq('project_id', projectId);
   if (error) {
+    if (/qa sign-off required/i.test(error.message)) return { error: 'qa-pending' as const };
     console.error(error.message);
     return { error: 'invalid' as const };
   }
@@ -347,10 +365,26 @@ export async function removeTask(supabase: SupabaseClient, taskId: string, proje
 
 // ---------- Subtasks ----------
 
-export async function addSubtask(supabase: SupabaseClient, form: FormData) {
-  const taskId = String(form.get('task_id') ?? '');
-  const title = String(form.get('subtask_title') ?? '').trim().slice(0, 300);
-  if (!taskId || !title) return { error: 'invalid' as const };
+function checklistTitles(form: FormData, key = 'subtask_title') {
+  return String(form.get(key) ?? '')
+    .split('\n')
+    .map((line) => line.replace(/^[-*•\s]+/, '').trim().slice(0, 300))
+    .filter(Boolean)
+    .slice(0, 40);
+}
+
+/** Project members who have the QA role (leads are not implied). */
+export async function qaEmailsForProject(supabase: SupabaseClient, projectId: string) {
+  const { data } = await supabase.from('project_members').select('email, roles').eq('project_id', projectId);
+  return [...new Set(
+    ((data ?? []) as { email: string; roles: string[] | null }[])
+      .filter((row) => Array.isArray(row.roles) && row.roles.includes('qa'))
+      .map((row) => row.email.trim().toLowerCase())
+      .filter(Boolean),
+  )].sort();
+}
+
+async function nextSubtaskSort(supabase: SupabaseClient, taskId: string) {
   const { data: last } = await supabase
     .from('task_subtasks')
     .select('sort_order')
@@ -358,10 +392,18 @@ export async function addSubtask(supabase: SupabaseClient, form: FormData) {
     .order('sort_order', { ascending: false })
     .limit(1)
     .maybeSingle();
+  return (last?.sort_order ?? -1) + 1;
+}
+
+export async function addSubtask(supabase: SupabaseClient, form: FormData) {
+  const taskId = String(form.get('task_id') ?? '');
+  const title = String(form.get('subtask_title') ?? '').trim().slice(0, 300);
+  if (!taskId || !title) return { error: 'invalid' as const };
+  const sortOrder = await nextSubtaskSort(supabase, taskId);
   // project_id is filled from the task by a database trigger.
   const { error } = await supabase
     .from('task_subtasks')
-    .insert({ task_id: taskId, title, sort_order: (last?.sort_order ?? -1) + 1 });
+    .insert({ task_id: taskId, title, sort_order: sortOrder });
   if (error) {
     console.error('subtask add failed', error.message);
     return { error: 'invalid' as const };
@@ -369,23 +411,85 @@ export async function addSubtask(supabase: SupabaseClient, form: FormData) {
   return { error: null, title };
 }
 
-export async function toggleSubtask(supabase: SupabaseClient, form: FormData, projectId: string) {
+/**
+ * Admin/planner checklist: each title is duplicated once per QA member so every
+ * assigned QA must check their own flag before the task can be completed.
+ */
+export async function addQaChecklist(supabase: SupabaseClient, form: FormData, projectId: string) {
+  const taskId = String(form.get('task_id') ?? '');
+  const titles = checklistTitles(form);
+  if (!taskId || titles.length === 0) return { error: 'invalid' as const, count: 0, assignees: [] as string[] };
+  const qas = await qaEmailsForProject(supabase, projectId);
+  if (qas.length === 0) return { error: 'no-qa' as const, count: 0, assignees: [] as string[] };
+  const base = await nextSubtaskSort(supabase, taskId);
+  const rows: { task_id: string; title: string; sort_order: number; assignee_email: string }[] = [];
+  let order = base;
+  for (const title of titles) {
+    for (const email of qas) {
+      rows.push({ task_id: taskId, title, sort_order: order++, assignee_email: email });
+    }
+  }
+  const { error } = await supabase.from('task_subtasks').insert(rows);
+  if (error) {
+    console.error('qa checklist add failed', error.message);
+    return { error: 'invalid' as const, count: 0, assignees: [] as string[] };
+  }
+  return { error: null, count: rows.length, assignees: qas, titles };
+}
+
+export async function toggleSubtask(
+  supabase: SupabaseClient,
+  form: FormData,
+  projectId: string,
+  actorEmail: string,
+  canPlan: boolean,
+) {
   const subtaskId = String(form.get('subtask_id') ?? '');
   if (!subtaskId) return { error: 'invalid' as const };
   const done = String(form.get('done') ?? '') === '1';
+  const { data: current } = await supabase
+    .from('task_subtasks')
+    .select('task_id, title, assignee_email, done')
+    .eq('id', subtaskId)
+    .eq('project_id', projectId)
+    .maybeSingle();
+  if (!current) return { error: 'invalid' as const };
+  const assignee = String(current.assignee_email ?? '');
+  if (assignee && assignee !== actorEmail && !canPlan) return { error: 'forbidden' as const };
   const { data, error } = await supabase
     .from('task_subtasks')
     .update({ done })
     .eq('id', subtaskId)
     .eq('project_id', projectId)
-    .select('task_id, title')
+    .select('task_id, title, assignee_email')
     .maybeSingle();
-  return error ? { error: 'invalid' as const } : { error: null, done, taskId: String(data?.task_id ?? ''), title: String(data?.title ?? '') };
+  return error
+    ? { error: 'invalid' as const }
+    : {
+        error: null,
+        done,
+        taskId: String(data?.task_id ?? ''),
+        title: String(data?.title ?? ''),
+        assignee_email: String(data?.assignee_email ?? ''),
+      };
 }
 
-export async function removeSubtask(supabase: SupabaseClient, form: FormData, projectId: string) {
+export async function removeSubtask(
+  supabase: SupabaseClient,
+  form: FormData,
+  projectId: string,
+  canPlan: boolean,
+) {
   const subtaskId = String(form.get('subtask_id') ?? '');
   if (!subtaskId) return { error: 'invalid' as const };
+  const { data: current } = await supabase
+    .from('task_subtasks')
+    .select('assignee_email')
+    .eq('id', subtaskId)
+    .eq('project_id', projectId)
+    .maybeSingle();
+  if (!current) return { error: 'invalid' as const };
+  if (String(current.assignee_email ?? '') && !canPlan) return { error: 'forbidden' as const };
   const { error } = await supabase.from('task_subtasks').delete().eq('id', subtaskId).eq('project_id', projectId);
   return error ? { error: 'invalid' as const } : { error: null };
 }

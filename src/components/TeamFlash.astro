@@ -34,6 +34,8 @@ const errors: Record<string, string> = {
   'template-duplicate': 'A template with that name already exists.',
   meeting: 'Add at least one weekly time and a meeting link (https://…).',
   'view-as-gone': 'That teammate is no longer on the team, so the preview ended.',
+  'qa-pending': 'Every assigned QA must check their checklist item before this task can be completed.',
+  'no-qa': 'Add at least one QA on the People tab before creating a QA checklist.',
 };
 
 const notice = Astro.url.searchParams.get('notice');

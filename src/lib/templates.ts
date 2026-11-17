@@ -1,6 +1,6 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { sortMilestones, type Milestone } from './milestones';
-import type { ProjectTask } from './tasks';
+import { qaEmailsForProject, type ProjectTask } from './tasks';
 
 /* Reusable project plans (stages + starter tasks) and checklists (subtasks). */
 
@@ -136,6 +136,43 @@ export async function applyChecklist(supabase: SupabaseClient, taskId: string, t
     .from('task_subtasks')
     .insert(items.map((title, i) => ({ task_id: taskId, title: String(title).slice(0, 300), sort_order: base + i })));
   return error ? { error: 'invalid' as const, count: 0 } : { error: null, count: items.length };
+}
+
+/** Apply a checklist template once per QA member (each must check their own copy). */
+export async function applyQaChecklist(
+  supabase: SupabaseClient,
+  taskId: string,
+  templateId: string,
+  projectId: string,
+) {
+  const { data } = await supabase
+    .from('studio_templates')
+    .select('body')
+    .eq('id', templateId)
+    .eq('kind', 'checklist')
+    .maybeSingle();
+  const items = ((data?.body as ChecklistTemplateBody | undefined)?.items ?? []).slice(0, 40);
+  if (!taskId || items.length === 0) return { error: 'invalid' as const, count: 0, assignees: [] as string[] };
+  const qas = await qaEmailsForProject(supabase, projectId);
+  if (qas.length === 0) return { error: 'no-qa' as const, count: 0, assignees: [] as string[] };
+  const { data: last } = await supabase
+    .from('task_subtasks')
+    .select('sort_order')
+    .eq('task_id', taskId)
+    .order('sort_order', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  let order = (last?.sort_order ?? -1) + 1;
+  const rows: { task_id: string; title: string; sort_order: number; assignee_email: string }[] = [];
+  for (const title of items) {
+    for (const email of qas) {
+      rows.push({ task_id: taskId, title: String(title).slice(0, 300), sort_order: order++, assignee_email: email });
+    }
+  }
+  const { error } = await supabase.from('task_subtasks').insert(rows);
+  return error
+    ? { error: 'invalid' as const, count: 0, assignees: [] as string[] }
+    : { error: null, count: rows.length, assignees: qas };
 }
 
 export async function createChecklistTemplate(supabase: SupabaseClient, form: FormData, actorEmail: string) {

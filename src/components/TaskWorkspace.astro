@@ -647,7 +647,14 @@ function statusIntent(status: TaskStatus) {
       card.classList.add('is-saving');
       try {
         const res = await fetch(location.pathname, { method: 'POST', body, redirect: 'manual' });
-        if (res.type !== 'opaqueredirect' && !res.ok) throw new Error('save failed');
+        const loc = res.headers.get('Location') || '';
+        if (loc.includes('error=')) {
+          location.href = loc;
+          return;
+        }
+        if (res.type !== 'opaqueredirect' && !(res.status >= 300 && res.status < 400) && !res.ok) {
+          throw new Error('save failed');
+        }
         card.classList.remove('is-saving');
       } catch {
         location.reload();

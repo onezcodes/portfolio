@@ -6546,6 +6546,59 @@ textarea.td-title:focus {
   text-decoration: line-through;
 }
 
+.td-subtasks li.is-qa .td-sub-title {
+  font-size: 0.88rem;
+}
+
+.td-sub-assignee {
+  display: inline-flex;
+  flex-shrink: 0;
+}
+
+.td-sub-assignee .face {
+  width: 1.35rem;
+  height: 1.35rem;
+  font-size: 0.62rem;
+}
+
+.td-qa-banner {
+  margin: 0 0 0.55rem;
+  padding: 0.45rem 0.65rem;
+  border-radius: 0.5rem;
+  background: color-mix(in srgb, var(--warn, #c47a14) 14%, transparent);
+  color: var(--ink);
+  font-size: 0.85rem;
+}
+
+.td-qa-box {
+  margin-top: 0.85rem;
+  padding-top: 0.75rem;
+  border-top: 1px dashed var(--line-strong);
+}
+
+.td-qa-label {
+  margin: 0;
+  font-size: 0.82rem;
+  font-weight: 650;
+  letter-spacing: 0.01em;
+}
+
+.td-qa-empty {
+  margin: 0.35rem 0 0;
+  font-size: 0.85rem;
+}
+
+.td-complete-wait {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  min-height: 2.2rem;
+  padding: 0 0.55rem 0 0.2rem;
+  color: var(--muted);
+  font-size: 0.88rem;
+  font-weight: 550;
+}
+
 .td-sub-x button {
   width: 1.6rem;
   height: 1.6rem;

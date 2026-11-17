@@ -37,6 +37,7 @@ import {
 import {
   addComment,
   addSubtask,
+  addQaChecklist,
   addTask,
   isTaskStatus,
   markTaskMail,
@@ -86,7 +87,7 @@ import {
 } from '../../../lib/taskCollab';
 import { formatMinutes, logTime, removeTime, startTimer, stopTimer, taskTime } from '../../../lib/timeTracking';
 import { maskWebhook, parseWebhookUrl, postToChat, webhookKind } from '../../../lib/chat';
-import { applyChecklist, listTemplates, saveProjectAsTemplate } from '../../../lib/templates';
+import { applyChecklist, applyQaChecklist, listTemplates, saveProjectAsTemplate } from '../../../lib/templates';
 import { projectHealth } from '../../../lib/health';
 import { availabilityOf, TIME_ZONES } from '../../../lib/presence';
 import {
@@ -408,7 +409,7 @@ if (Astro.request.method === 'POST') {
     const status = intent.slice('task-'.length);
     if (!taskId || !isTaskStatus(status)) return bounce({ error: 'invalid' });
     const result = await setTaskStatus(supabase, id, taskId, status);
-    if (result.error) return bounce({ error: 'invalid' });
+    if (result.error) return bounce({ error: result.error });
     await track('status', status, 'task');
     if (status === 'done') {
       const [{ data: done }, watchers] = await Promise.all([
@@ -435,15 +436,33 @@ if (Astro.request.method === 'POST') {
     return bounce({});
   }
 
+  if (intent === 'add-qa-checklist') {
+    const taskId = String(form.get('task_id') ?? '');
+    const result = await addQaChecklist(supabase, form, id);
+    if (result.error) return bounce({ error: result.error });
+    const label = (result.titles ?? []).join(', ') || 'QA checklist';
+    await logTaskEvent(supabase, taskId, actor, 'subtask_add', `${result.count} QA checks · ${label}`);
+    const { data: target } = await supabase.from('project_tasks').select('title').eq('id', taskId).maybeSingle();
+    await notify(supabase, actor, result.assignees, {
+      kind: 'assigned',
+      projectId: id,
+      taskId,
+      title: String(target?.title ?? 'a task'),
+      body: 'QA checklist assigned — check your items before this task can be completed.',
+    });
+    for (const email of result.assignees) await follow(supabase, taskId, email);
+    return bounce({ notice: 'saved' });
+  }
+
   if (intent === 'toggle-subtask') {
-    const result = await toggleSubtask(supabase, form, id);
+    const result = await toggleSubtask(supabase, form, id, actor, caps.canPlan);
     if (result.error) return bounce({ error: result.error });
     if (result.done && result.taskId) await logTaskEvent(supabase, result.taskId, actor, 'subtask_done', result.title);
     return bounce({});
   }
 
   if (intent === 'delete-subtask') {
-    const result = await removeSubtask(supabase, form, id);
+    const result = await removeSubtask(supabase, form, id, caps.canPlan);
     return result.error ? bounce({ error: result.error }) : bounce({});
   }
 
@@ -650,6 +669,23 @@ if (Astro.request.method === 'POST') {
     if (result.error) return bounce({ error: 'invalid' });
     await logTaskEvent(supabase, taskId, actor, 'subtask_add', `${result.count} checklist items`);
     return bounce({});
+  }
+
+  if (intent === 'apply-qa-checklist') {
+    const taskId = String(form.get('task_id') ?? '');
+    const result = await applyQaChecklist(supabase, taskId, String(form.get('template_id') ?? ''), id);
+    if (result.error) return bounce({ error: result.error });
+    await logTaskEvent(supabase, taskId, actor, 'subtask_add', `${result.count} QA checklist items`);
+    const { data: target } = await supabase.from('project_tasks').select('title').eq('id', taskId).maybeSingle();
+    await notify(supabase, actor, result.assignees, {
+      kind: 'assigned',
+      projectId: id,
+      taskId,
+      title: String(target?.title ?? 'a task'),
+      body: 'QA checklist assigned — check your items before this task can be completed.',
+    });
+    for (const email of result.assignees) await follow(supabase, taskId, email);
+    return bounce({ notice: 'saved' });
   }
 
   if (intent === 'report-bug') {
@@ -948,6 +984,11 @@ const latestCheckin = checkins[0] ?? null;
 const crew = (crewRows ?? []) as ProjectMemberRow[];
 const onProject = new Set(crew.map((person) => person.email));
 const taskPeople = members.filter((member) => onProject.has(member.email));
+const qaEmails = crew
+  .filter((person) => parseRoles(person.roles).includes('qa'))
+  .map((person) => person.email.trim().toLowerCase())
+  .filter(Boolean)
+  .sort();
 const invitees = members.filter((member) => !onProject.has(member.email));
 const totals = totalsByCurrency(entries);
 const expenses = entries.filter((entry) => entry.kind === 'expense');
@@ -2059,6 +2100,7 @@ function shortDate(iso: string) {
           allTasks={tasks.filter((item) => 'title' in item)}
           timeEntries={timeEntries}
           checklists={checklists}
+          qaEmails={qaEmails}
         />
       )
     }

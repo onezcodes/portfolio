@@ -150,7 +150,9 @@ export function tabForIntent(intent: string): ProjectTab {
     intent.includes('timer') ||
     intent.includes('time') ||
     intent === 'report-bug' ||
-    intent === 'apply-checklist'
+    intent === 'apply-checklist' ||
+    intent === 'add-qa-checklist' ||
+    intent === 'apply-qa-checklist'
   ) {
     return 'tasks';
   }
@@ -182,6 +184,7 @@ export function allowedIntent(intent: string, caps: ProjectCaps) {
   if (intent.includes('milestone') || intent.startsWith('task-')) return caps.canProgress;
   // Subtasks and comments: anyone who can move work forward (RLS re-checks authorship on delete).
   if (intent === 'add-subtask' || intent === 'toggle-subtask' || intent === 'delete-subtask') return caps.canProgress;
+  if (intent === 'add-qa-checklist' || intent === 'apply-qa-checklist') return caps.canPlan;
   if (intent === 'add-comment' || intent === 'delete-comment') return caps.canProgress;
   if (intent === 'follow' || intent === 'unfollow') return caps.canProgress;
   if (intent === 'add-attachment' || intent === 'add-link' || intent === 'delete-attachment') return caps.canProgress;

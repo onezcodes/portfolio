@@ -63,6 +63,13 @@ describe('which actions each role may take', () => {
     }
   });
 
+  it('only planners create QA checklists that auto-assign every QA', () => {
+    expect(allowedIntent('add-qa-checklist', qa)).toBe(false);
+    expect(allowedIntent('apply-qa-checklist', dev)).toBe(false);
+    expect(allowedIntent('add-qa-checklist', manager)).toBe(true);
+    expect(allowedIntent('apply-qa-checklist', lead)).toBe(true);
+  });
+
   it('dependencies are planning only', () => {
     expect(allowedIntent('add-dependency', dev)).toBe(false);
     expect(allowedIntent('add-dependency', manager)).toBe(true);

@@ -59,6 +59,8 @@ interface Props {
   allTasks: Pick<ProjectTask, 'id' | 'title' | 'status'>[];
   timeEntries: TimeEntry[];
   checklists: StudioTemplate[];
+  /** Project members with the QA role — used for admin QA checklists. */
+  qaEmails?: string[];
 }
 
 const {
@@ -85,6 +87,7 @@ const {
   allTasks,
   timeEntries,
   checklists,
+  qaEmails = [],
 } = Astro.props;
 const myRunning = timeEntries.find((entry) => !entry.ended_at && entry.email === viewerEmail);
 const totalMinutes = timeEntries.reduce((sum, entry) => sum + liveMinutes(entry), 0);
@@ -95,6 +98,19 @@ const canMove = canProgress && !readOnly;
 const late = taskIsLate(task, today);
 const doneCount = subtasks.filter((item) => item.done).length;
 const pct = subtasks.length ? Math.round((doneCount / subtasks.length) * 100) : 0;
+const qaPending = subtasks.filter((item) => item.assignee_email && !item.done);
+const qaPendingEmails = [...new Set(qaPending.map((item) => item.assignee_email))];
+const canComplete = canMove && (task.status === 'done' || qaPending.length === 0);
+function canToggleSubtask(item: TaskSubtask) {
+  if (!canMove) return false;
+  if (!item.assignee_email) return true;
+  return item.assignee_email === viewerEmail || canPlan;
+}
+function canRemoveSubtask(item: TaskSubtask) {
+  if (!canMove) return false;
+  if (!item.assignee_email) return true;
+  return canPlan;
+}
 // Assignee options: people on the project, plus the current assignee if they left it.
 const assignable = people.some((p) => p.email === task.assignee_email) || !task.assignee_email
   ? people
@@ -143,7 +159,7 @@ function longDate(iso: string | null) {
 <dialog class="team-modal task-drawer" id="modal-taskpanel" aria-labelledby="task-panel-title" data-autoopen data-no-focus data-task-panel>
   <div class="team-modal-card">
     <header class="td-head">
-      {canMove ? (
+      {canComplete ? (
         <form method="post" class="td-complete">
           <input type="hidden" name="intent" value={task.status === 'done' ? 'task-todo' : 'task-done'} />
           <input type="hidden" name="task_id" value={task.id} />
@@ -156,6 +172,11 @@ function longDate(iso: string | null) {
             {task.status === 'done' ? 'Completed' : 'Mark complete'}
           </button>
         </form>
+      ) : canMove && qaPending.length > 0 ? (
+        <span class="td-complete-wait" title={`Waiting on ${qaPendingEmails.map((email) => nameOf(email)).join(', ')}`}>
+          <span class:list={['tw-check', 'sm']} aria-hidden="true" />
+          Waiting on QA · {qaPending.length} left
+        </span>
       ) : (
         <span class:list={['tw-status', task.status]}>{taskStatusLabel(task.status)}</span>
       )}
@@ -506,42 +527,65 @@ function longDate(iso: string | null) {
           <h3 id="td-sub-title">Subtasks</h3>
           {subtasks.length > 0 && <span class="muted">{doneCount} of {subtasks.length}</span>}
         </header>
+        {qaPending.length > 0 && (
+          <p class="td-qa-banner" role="status">
+            QA sign-off required — waiting on {qaPendingEmails.map((email) => nameOf(email)).join(', ')}.
+          </p>
+        )}
         {subtasks.length > 0 && (
           <div class="pj-progress td-progress" role="img" aria-label={`${pct}% of subtasks done`}>
             <span style={`width:${pct}%`} />
           </div>
         )}
         <ul class="td-subtasks">
-          {subtasks.map((item) => (
-            <li class:list={[item.done && 'is-done']}>
-              {canMove ? (
-                <form method="post">
-                  <input type="hidden" name="intent" value="toggle-subtask" />
-                  <input type="hidden" name="subtask_id" value={item.id} />
-                  <input type="hidden" name="done" value={item.done ? '0' : '1'} />
-                  <input type="hidden" name="tab" value="tasks" />
-                  <input type="hidden" name="return_task" value={task.id} />
-                  <input type="hidden" name="view" value={view} />
-                  <input type="hidden" name="who" value={who} />
-                  <button class:list={['tw-check', 'sm', item.done && 'is-on']} type="submit" aria-label={item.done ? `Uncheck ${item.title}` : `Check ${item.title}`} />
-                </form>
-              ) : (
-                <span class:list={['tw-check', 'sm', 'is-static', item.done && 'is-on']} aria-hidden="true" />
-              )}
-              <span class="td-sub-title">{item.title}</span>
-              {canMove && (
-                <form method="post" class="td-sub-x">
-                  <input type="hidden" name="intent" value="delete-subtask" />
-                  <input type="hidden" name="subtask_id" value={item.id} />
-                  <input type="hidden" name="tab" value="tasks" />
-                  <input type="hidden" name="return_task" value={task.id} />
-                  <input type="hidden" name="view" value={view} />
-                  <input type="hidden" name="who" value={who} />
-                  <button type="submit" aria-label={`Remove ${item.title}`}>×</button>
-                </form>
-              )}
-            </li>
-          ))}
+          {subtasks.map((item) => {
+            const assigneeFace = item.assignee_email ? personFace(item.assignee_email, allPeople) : null;
+            const mine = item.assignee_email === viewerEmail;
+            return (
+              <li class:list={[item.done && 'is-done', item.assignee_email && 'is-qa', mine && 'is-mine']}>
+                {canToggleSubtask(item) ? (
+                  <form method="post">
+                    <input type="hidden" name="intent" value="toggle-subtask" />
+                    <input type="hidden" name="subtask_id" value={item.id} />
+                    <input type="hidden" name="done" value={item.done ? '0' : '1'} />
+                    <input type="hidden" name="tab" value="tasks" />
+                    <input type="hidden" name="return_task" value={task.id} />
+                    <input type="hidden" name="view" value={view} />
+                    <input type="hidden" name="who" value={who} />
+                    <button class:list={['tw-check', 'sm', item.done && 'is-on']} type="submit" aria-label={item.done ? `Uncheck ${item.title}` : `Check ${item.title}`} />
+                  </form>
+                ) : (
+                  <span
+                    class:list={['tw-check', 'sm', 'is-static', item.done && 'is-on']}
+                    aria-label={item.assignee_email ? `Assigned to ${nameOf(item.assignee_email)}` : undefined}
+                    title={item.assignee_email && !item.done ? `Only ${nameOf(item.assignee_email)} can check this` : undefined}
+                  />
+                )}
+                <span class="td-sub-title">{item.title}</span>
+                {assigneeFace && (
+                  <span class="td-sub-assignee" title={nameOf(item.assignee_email)}>
+                    {assigneeFace.avatarUrl ? (
+                      <img class="face sm" src={assigneeFace.avatarUrl} alt="" referrerpolicy="no-referrer" width="22" height="22" />
+                    ) : (
+                      <span class="face sm" aria-hidden="true">{personInitial(assigneeFace.name, assigneeFace.email)}</span>
+                    )}
+                    <span class="sr-only">{nameOf(item.assignee_email)}</span>
+                  </span>
+                )}
+                {canRemoveSubtask(item) && (
+                  <form method="post" class="td-sub-x">
+                    <input type="hidden" name="intent" value="delete-subtask" />
+                    <input type="hidden" name="subtask_id" value={item.id} />
+                    <input type="hidden" name="tab" value="tasks" />
+                    <input type="hidden" name="return_task" value={task.id} />
+                    <input type="hidden" name="view" value={view} />
+                    <input type="hidden" name="who" value={who} />
+                    <button type="submit" aria-label={`Remove ${item.title}`}>×</button>
+                  </form>
+                )}
+              </li>
+            );
+          })}
         </ul>
         {canMove && (
           <form method="post" class="td-add">
@@ -568,6 +612,54 @@ function longDate(iso: string | null) {
               ))}
             </select>
           </form>
+        )}
+        {canEdit && (
+          <div class="td-qa-box">
+            <header class="td-section-head">
+              <h4 class="td-qa-label">QA checklist</h4>
+              <span class="muted">
+                {qaEmails.length > 0
+                  ? `Auto-assigns ${qaEmails.length} QA · all must check`
+                  : 'Add a QA on People first'}
+              </span>
+            </header>
+            {qaEmails.length > 0 ? (
+              <>
+                <form method="post" class="td-add">
+                  <input type="hidden" name="intent" value="add-qa-checklist" />
+                  <input type="hidden" name="task_id" value={task.id} />
+                  {Object.entries(hidden).map(([k, v]) => <input type="hidden" name={k} value={v} />)}
+                  <label class="sr-only" for="td_qa_item">Add a QA checklist item</label>
+                  <input
+                    id="td_qa_item"
+                    name="subtask_title"
+                    placeholder="+ Add QA check… press Enter"
+                    maxlength="300"
+                    autocomplete="off"
+                    required
+                  />
+                </form>
+                {checklists.length > 0 && (
+                  <form method="post" class="td-dep-add">
+                    <input type="hidden" name="intent" value="apply-qa-checklist" />
+                    <input type="hidden" name="task_id" value={task.id} />
+                    {Object.entries(hidden).map(([k, v]) => <input type="hidden" name={k} value={v} />)}
+                    <label class="sr-only" for="td_qa_checklist">Add a QA checklist from template</label>
+                    <select id="td_qa_checklist" name="template_id" required data-autosubmit-form>
+                      <option value="">+ Assign checklist to all QA…</option>
+                      {checklists.map((item) => (
+                        <option value={item.id}>
+                          {item.name} × {qaEmails.length} QA
+                        </option>
+                      ))}
+                    </select>
+                  </form>
+                )}
+              </>
+            ) : (
+              <p class="muted td-qa-empty">Give someone the QA role on the People tab, then add checklist items here.</p>
+            )}
+          </div>
         )}
       </section>
 
