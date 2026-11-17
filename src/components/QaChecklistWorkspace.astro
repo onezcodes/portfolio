@@ -67,31 +67,50 @@ const enriched = lists.map((list) => {
     filter === 'me' ? list.checks.filter((row) => row.assignee_email === viewerEmail) : list.checks;
   const doneCount = checks.filter((row) => row.done).length;
   const waitingOn = [...new Set(checks.filter((row) => !row.done).map((row) => row.assignee_email))];
+  const items = groupItems(checks);
+  const status: 'waiting' | 'done' | 'empty' = list.completed_at
+    ? 'done'
+    : checks.length === 0
+      ? 'empty'
+      : doneCount === checks.length
+        ? 'done'
+        : 'waiting';
   return {
     ...list,
     checks,
     doneCount,
     total: checks.length,
     waitingOn,
-    items: groupItems(checks),
-    pct: checks.length ? Math.round((doneCount / checks.length) * 100) : 0,
+    items,
+    status,
+    pct: checks.length ? Math.round((doneCount / checks.length) * 100) : list.completed_at ? 100 : 0,
   };
 });
 
 const visible = enriched.filter((list) => filter !== 'me' || list.total > 0);
-const openLists = visible.filter((list) => !list.completed_at && list.total > 0);
-const emptyOpenLists = visible.filter((list) => !list.completed_at && list.total === 0);
-const doneLists = visible.filter((list) => list.completed_at);
-const showLists = [...openLists, ...emptyOpenLists];
+// Default order: oldest checklist first. The Sort menu reorders on the page.
+const ordered = [...visible].sort(
+  (a, b) => a.created_at.localeCompare(b.created_at) || a.title.localeCompare(b.title),
+);
+const waitingCount = visible.filter((list) => list.status === 'waiting').length;
+const doneCount = visible.filter((list) => list.status === 'done').length;
 
 const openMine = lists.reduce(
   (n, list) => n + list.checks.filter((row) => row.assignee_email === viewerEmail && !row.done).length,
   0,
 );
 const openAll = lists.reduce((n, list) => n + list.checks.filter((row) => !row.done).length, 0);
+const totalChecks =
+  filter === 'me'
+    ? lists.reduce((n, list) => n + list.checks.filter((row) => row.assignee_email === viewerEmail).length, 0)
+    : lists.reduce((n, list) => n + list.checks.length, 0);
+const openShown = filter === 'me' ? openMine : openAll;
+const overallPct = totalChecks ? Math.round(((totalChecks - openShown) / totalChecks) * 100) : 0;
 const completeLists = lists.filter((list) => list.completed_at).length;
 const activeLists = lists.filter((list) => !list.completed_at).length;
 const openCreate = canEdit && qaEmails.length > 0 && (lists.length === 0 || Astro.url.searchParams.get('new') === '1');
+// With a single list there is nothing to scan past, so show it open.
+const openFirst = ordered.length === 1;
 
 function canToggle(assignee: string) {
   return canMove && (assignee === viewerEmail || canPlan);
@@ -105,57 +124,61 @@ function href(nextWho: string) {
 ---
 
 <section class="qa-workspace" aria-label="QA checklists" data-qa-workspace>
-  <header class="qa-hero">
-    <div class="qa-hero-copy">
-      <p class="qa-kicker">Sign-off</p>
+  <header class="qa-head">
+    <div class="qa-head-copy">
       <h2 class="qa-title">QA checklists</h2>
       <p class="qa-lede">
         {
           qaEmails.length > 0
-            ? 'Every item is assigned to all QA. A list is done only when everyone has checked their flag.'
+            ? 'Every item goes to all QA. A list is done when everyone has signed off.'
             : 'Assign the QA role on People, then build checklists here — no task owner needed.'
         }
       </p>
     </div>
     {
       qaEmails.length > 0 && (
-        <div class="qa-stats" aria-label="QA summary">
-          <div class="qa-stat">
-            <strong>{filter === 'me' ? openMine : openAll}</strong>
-            <span>{filter === 'me' ? 'My open' : 'Open checks'}</span>
-          </div>
-          <div class="qa-stat">
-            <strong>{activeLists}</strong>
-            <span>Active lists</span>
-          </div>
-          <div class="qa-stat">
-            <strong>{completeLists}</strong>
-            <span>Complete</span>
-          </div>
-          <div class="qa-stat qa-stat-team">
+        <div class="qa-head-actions">
+          <span class="qa-team" title={qaEmails.map(nameOf).join(', ')}>
             <FacePile people={qaFaces} label="QA team" limit={5} />
             <span>{qaEmails.length} QA</span>
-          </div>
+          </span>
+          {canEdit && (
+            <a class="btn qa-new-btn" href="?tab=qa&who=everyone&new=1#qa-create" data-qa-new>
+              + New checklist
+            </a>
+          )}
         </div>
       )
     }
   </header>
 
-  <div class="qa-toolbar">
-    <nav class="pj-seg" aria-label="Filter checks">
-      <a href={href('everyone')} aria-current={filter === 'everyone' ? 'page' : undefined}>
-        Everyone{openAll > 0 && filter !== 'everyone' ? <span>{openAll}</span> : null}
-      </a>
-      <a href={href('me')} aria-current={filter === 'me' ? 'page' : undefined}>
-        My checks{openMine > 0 ? <span>{openMine}</span> : null}
-      </a>
-    </nav>
-    {
-      canEdit && qaEmails.length > 0 && (
-        <a class="btn qa-new-btn" href="?tab=qa&who=everyone&new=1#qa-create">+ New checklist</a>
-      )
-    }
-  </div>
+  {
+    qaEmails.length > 0 && lists.length > 0 && (
+      <dl class="qa-kpis" aria-label="QA summary">
+        <div>
+          <dt>{filter === 'me' ? 'My open checks' : 'Open checks'}</dt>
+          <dd>{openShown}</dd>
+        </div>
+        <div>
+          <dt>Active lists</dt>
+          <dd>{activeLists}</dd>
+        </div>
+        <div>
+          <dt>Complete</dt>
+          <dd>{completeLists}</dd>
+        </div>
+        <div class="qa-kpi-progress">
+          <dt>Overall</dt>
+          <dd>
+            {overallPct}%
+            <span class="qa-bar" aria-hidden="true">
+              <span style={`width:${overallPct}%`} />
+            </span>
+          </dd>
+        </div>
+      </dl>
+    )
+  }
 
   {
     qaEmails.length === 0 && (
@@ -184,74 +207,129 @@ function href(nextWho: string) {
 
   {
     canEdit && qaEmails.length > 0 && (
-      <details class="qa-create tw-group" id="qa-create" open={openCreate ? true : undefined}>
-        <summary class="qa-create-summary">
-          <span class="qa-create-summary-main">
-            <span class="qa-create-icon" aria-hidden="true">+</span>
-            <span>
-              <strong>New checklist</strong>
-              <span class="muted">Paste many items — each goes to all {qaEmails.length} QA</span>
-            </span>
-          </span>
-          <span class="qa-create-chevron" aria-hidden="true" />
-        </summary>
-        <div class="qa-create-body">
-          <form method="post" class="qa-create-form">
-            <input type="hidden" name="intent" value="add-qa-list" />
-            <input type="hidden" name="tab" value="qa" />
-            <input type="hidden" name="who" value={filter} />
-            <p class="field">
-              <label for="qa_title">Checklist name</label>
-              <input
-                id="qa_title"
-                name="title"
-                required
-                maxlength="200"
-                placeholder="Internal checking — End users"
-                autocomplete="off"
-              />
-            </p>
-            <p class="field">
-              <label for="qa_items">Items <span class="muted">one per line</span></label>
-              <textarea
-                id="qa_items"
-                name="items"
-                rows="7"
-                required
-                placeholder={'Fail login with FB credentials\nBirthday toggle feels jumpy\nQR code too small to scan'}
-              ></textarea>
-            </p>
-            <div class="qa-create-foot">
-              <p class="muted qa-create-hint">
-                <FacePile people={qaFaces} label="Will assign" limit={4} />
-                <span>
-                  {qaEmails.length} QA × each line = {qaEmails.length} checks per item
-                </span>
-              </p>
-              <button class="btn" type="submit">Create &amp; assign</button>
-            </div>
-          </form>
-          {
-            checklists.length > 0 && (
-              <form method="post" class="qa-template-form">
-                <input type="hidden" name="intent" value="add-qa-list" />
-                <input type="hidden" name="from_template" value="1" />
-                <input type="hidden" name="tab" value="qa" />
-                <input type="hidden" name="who" value={filter} />
-                <label class="sr-only" for="qa_template">Create from template</label>
-                <select id="qa_template" name="template_id" required data-autosubmit-form>
-                  <option value="">Or start from a template…</option>
-                  {checklists.map((item) => (
-                    <option value={item.id}>
-                      {item.name} ({'items' in item.body ? item.body.items.length : 0} items × {qaEmails.length} QA)
-                    </option>
-                  ))}
-                </select>
-              </form>
-            )
-          }
+      <div class="qa-create" id="qa-create" hidden={openCreate ? undefined : true} data-qa-create>
+        <div class="qa-create-head">
+          <div>
+            <h3>New checklist</h3>
+            <p class="muted">Paste many items, one per line — each goes to all {qaEmails.length} QA.</p>
+          </div>
+          <button class="btn-text" type="button" data-qa-create-close>
+            Cancel
+          </button>
         </div>
-      </details>
+        <form method="post" class="qa-create-form">
+          <input type="hidden" name="intent" value="add-qa-list" />
+          <input type="hidden" name="tab" value="qa" />
+          <input type="hidden" name="who" value={filter} />
+          <p class="field">
+            <label for="qa_title">Checklist name</label>
+            <input
+              id="qa_title"
+              name="title"
+              required
+              maxlength="200"
+              placeholder="Internal checking — End users"
+              autocomplete="off"
+            />
+          </p>
+          <p class="field">
+            <label for="qa_items">Items <span class="muted">one per line</span></label>
+            <textarea
+              id="qa_items"
+              name="items"
+              rows="6"
+              required
+              placeholder={'Fail login with FB credentials\nBirthday toggle feels jumpy\nQR code too small to scan'}
+            ></textarea>
+          </p>
+          <div class="qa-create-foot">
+            <p class="muted qa-create-hint">
+              {qaEmails.length} QA × each line = {qaEmails.length} checks per item
+            </p>
+            <button class="btn" type="submit">Create &amp; assign</button>
+          </div>
+        </form>
+        {
+          checklists.length > 0 && (
+            <form method="post" class="qa-template-form">
+              <input type="hidden" name="intent" value="add-qa-list" />
+              <input type="hidden" name="from_template" value="1" />
+              <input type="hidden" name="tab" value="qa" />
+              <input type="hidden" name="who" value={filter} />
+              <label class="sr-only" for="qa_template">Create from template</label>
+              <select id="qa_template" name="template_id" required data-autosubmit-form>
+                <option value="">Or start from a template…</option>
+                {checklists.map((item) => (
+                  <option value={item.id}>
+                    {item.name} ({'items' in item.body ? item.body.items.length : 0} items × {qaEmails.length} QA)
+                  </option>
+                ))}
+              </select>
+            </form>
+          )
+        }
+      </div>
+    )
+  }
+
+  {
+    qaEmails.length > 0 && (
+      <div class="qa-toolbar">
+        <nav class="pj-seg" aria-label="Whose checks">
+          <a href={href('everyone')} aria-current={filter === 'everyone' ? 'page' : undefined}>
+            Everyone
+          </a>
+          <a href={href('me')} aria-current={filter === 'me' ? 'page' : undefined}>
+            My checks{openMine > 0 ? <span>{openMine}</span> : null}
+          </a>
+        </nav>
+        {
+          visible.length > 0 && (
+            <>
+              <div class="qa-status" role="group" aria-label="Filter by status">
+                <button type="button" data-qa-status="all" aria-pressed="true">
+                  All <span>{visible.length}</span>
+                </button>
+                <button type="button" data-qa-status="waiting" aria-pressed="false">
+                  Waiting <span>{waitingCount}</span>
+                </button>
+                <button type="button" data-qa-status="done" aria-pressed="false">
+                  Done <span>{doneCount}</span>
+                </button>
+              </div>
+              <label class="qa-search">
+                <span class="sr-only">Search checklists and items</span>
+                <svg viewBox="0 0 20 20" width="16" height="16" aria-hidden="true">
+                  <path
+                    d="M8.5 3a5.5 5.5 0 1 0 3.4 9.83l3.63 3.64 1.06-1.06-3.64-3.63A5.5 5.5 0 0 0 8.5 3Zm0 1.5a4 4 0 1 1 0 8 4 4 0 0 1 0-8Z"
+                    fill="currentColor"
+                  />
+                </svg>
+                <input type="search" placeholder="Search lists or items" autocomplete="off" data-qa-search />
+              </label>
+              <label class="qa-sort">
+                <svg viewBox="0 0 20 20" width="16" height="16" aria-hidden="true">
+                  <path
+                    d="M6 3.5 2.5 7h2.75v9.5h1.5V7H9.5L6 3.5Zm8 13L17.5 13h-2.75V3.5h-1.5V13H10.5l3.5 3.5Z"
+                    fill="currentColor"
+                  />
+                </svg>
+                <span class="sr-only">Sort checklists</span>
+                <select data-qa-sort aria-label="Sort checklists">
+                  <option value="oldest">Oldest first</option>
+                  <option value="newest">Newest first</option>
+                  <option value="least">Least done</option>
+                  <option value="most">Most done</option>
+                  <option value="name">Name A–Z</option>
+                </select>
+              </label>
+              <button type="button" class="btn-text qa-expand" data-qa-expand aria-pressed="false">
+                Expand all
+              </button>
+            </>
+          )
+        }
+      </div>
     )
   }
 
@@ -264,7 +342,7 @@ function href(nextWho: string) {
             filter === 'me'
               ? 'When a checklist is assigned to you, your open checks show up here.'
               : canEdit
-                ? 'Create a checklist above — items are assigned to every QA in one step.'
+                ? 'Create a checklist — items are assigned to every QA in one step.'
                 : 'A lead or manager will publish QA checklists here.'
           }
         </p>
@@ -273,47 +351,189 @@ function href(nextWho: string) {
   }
 
   {
-    showLists.length > 0 && (
-      <ul class="qa-lists">
-        {showLists.map((list, index) => {
+    ordered.length > 0 && (
+      <div class="qa-table" data-qa-table>
+        <div class="qa-table-head" aria-hidden="true">
+          <span>Checklist</span>
+          <span>Progress</span>
+          <span>{filter === 'me' ? '' : 'Waiting on'}</span>
+          <span>Status</span>
+        </div>
+        {ordered.map((list) => {
           const waitingFaces = list.waitingOn.map((email) => personFace(email, people));
+          const searchText = [list.title, ...list.items.map((item) => item.title)].join(' \n ').toLowerCase();
           return (
-            <li
-              class:list={['qa-list', 'tw-group', list.total > 0 && list.doneCount === list.total && 'is-complete']}
-              style={`--qa-i:${index}`}
+            <details
+              class:list={['qa-row', `is-${list.status}`]}
+              id={`qa-list-${list.id}`}
+              data-qa-list={list.id}
+              data-status={list.status}
+              data-search={searchText}
+              data-created={list.created_at}
+              data-pct={list.pct}
+              data-title={list.title.toLowerCase()}
+              open={openFirst ? true : undefined}
             >
-              <header class="qa-list-head">
-                <div class="qa-list-identity">
-                  <div class="qa-ring" style={`--p:${list.pct}`} role="img" aria-label={`${list.pct}% complete`}>
-                    <span>{list.pct}%</span>
-                  </div>
-                  <div>
-                    <div class="qa-list-title-row">
-                      <h3>{list.title}</h3>
-                      {list.waitingOn.length > 0 ? (
-                        <span class="qa-chip is-wait">Waiting</span>
-                      ) : list.total > 0 ? (
-                        <span class="qa-chip is-ok">Signed off</span>
-                      ) : (
-                        <span class="qa-chip">Empty</span>
-                      )}
-                    </div>
-                    <p class="qa-list-sub">
-                      <strong>
-                        {list.doneCount}/{list.total}
-                      </strong>
-                      {filter === 'me' ? ' of your checks' : ' checks'}
-                      {list.waitingOn.length > 0 && filter === 'everyone'
-                        ? ` · ${list.waitingOn.map(nameOf).join(', ')}`
-                        : ''}
-                    </p>
-                  </div>
-                </div>
-                <div class="qa-list-meta">
-                  {waitingFaces.length > 0 && filter === 'everyone' && (
-                    <FacePile people={waitingFaces} label="Waiting on" limit={5} />
+              <summary class="qa-row-summary">
+                <span class="qa-row-name">
+                  <span class="qa-chevron" aria-hidden="true" />
+                  <span class="qa-row-title">
+                    <strong>{list.title}</strong>
+                    <span class="muted">
+                      {list.items.length} {list.items.length === 1 ? 'item' : 'items'}
+                    </span>
+                  </span>
+                </span>
+                <span class="qa-row-progress" title={`${list.pct}% signed off`}>
+                  <span class="qa-bar" aria-hidden="true">
+                    <span style={`width:${list.pct}%`} />
+                  </span>
+                  <span class="qa-row-count">
+                    {list.doneCount}/{list.total}
+                  </span>
+                </span>
+                <span class="qa-row-who">
+                  {filter === 'everyone' && waitingFaces.length > 0 ? (
+                    <span title={`Waiting on ${list.waitingOn.map(nameOf).join(', ')}`}>
+                      <FacePile people={waitingFaces} label="Waiting on" limit={4} />
+                    </span>
+                  ) : null}
+                </span>
+                <span class="qa-row-status">
+                  {list.status === 'waiting' ? (
+                    <span class="qa-chip is-wait">Waiting</span>
+                  ) : list.status === 'done' ? (
+                    <span class="qa-chip is-ok">{list.completed_at ? 'Complete' : 'Signed off'}</span>
+                  ) : (
+                    <span class="qa-chip">Empty</span>
                   )}
-                  {canEdit && (
+                </span>
+              </summary>
+
+              <div class="qa-row-body">
+                {list.items.length > 0 && (
+                  <ol class:list={['qa-items', filter === 'me' && 'is-mine-view']}>
+                    {list.items.map((item, index) => (
+                      <li
+                        class:list={['qa-item', item.doneCount === item.total && 'is-done']}
+                        data-search={item.title.toLowerCase()}
+                      >
+                        <span class="qa-item-no" aria-hidden="true">
+                          {index + 1}
+                        </span>
+                        {filter === 'me' && item.mine ? (
+                          <>
+                            <p class="qa-item-title">{item.title}</p>
+                            {canToggle(item.mine.assignee_email) ? (
+                              <form method="post" class="qa-item-check" data-qa-inline>
+                                <input type="hidden" name="intent" value="toggle-qa-check" />
+                                <input type="hidden" name="check_id" value={item.mine.id} />
+                                <input type="hidden" name="done" value={item.mine.done ? '0' : '1'} />
+                                <input type="hidden" name="tab" value="qa" />
+                                <input type="hidden" name="who" value={filter} />
+                                <button
+                                  class:list={['qa-tick', item.mine.done && 'is-on']}
+                                  type="submit"
+                                  aria-label={item.mine.done ? `Uncheck ${item.title}` : `Check ${item.title}`}
+                                >
+                                  {item.mine.done ? 'Signed off' : 'Sign off'}
+                                </button>
+                              </form>
+                            ) : (
+                              <span class:list={['qa-tick', 'is-static', item.mine.done && 'is-on']}>
+                                {item.mine.done ? 'Signed off' : 'Open'}
+                              </span>
+                            )}
+                          </>
+                        ) : (
+                          <>
+                            <p class="qa-item-title">{item.title}</p>
+                            <span class="qa-item-meta">
+                              {item.doneCount}/{item.total}
+                            </span>
+                            <ul class="qa-signoffs" aria-label={`Sign-off for ${item.title}`}>
+                              {item.rows.map((row) => {
+                                const face = personFace(row.assignee_email, people);
+                                const label = nameOf(row.assignee_email);
+                                const faceEl = face.avatarUrl ? (
+                                  <img
+                                    class="face"
+                                    src={face.avatarUrl}
+                                    alt=""
+                                    referrerpolicy="no-referrer"
+                                    width="24"
+                                    height="24"
+                                    loading="lazy"
+                                  />
+                                ) : (
+                                  <span class="face" aria-hidden="true">
+                                    {personInitial(face.name, face.email)}
+                                  </span>
+                                );
+                                return (
+                                  <li>
+                                    {canToggle(row.assignee_email) ? (
+                                      <form method="post" data-qa-inline>
+                                        <input type="hidden" name="intent" value="toggle-qa-check" />
+                                        <input type="hidden" name="check_id" value={row.id} />
+                                        <input type="hidden" name="done" value={row.done ? '0' : '1'} />
+                                        <input type="hidden" name="tab" value="qa" />
+                                        <input type="hidden" name="who" value={filter} />
+                                        <button
+                                          class:list={[
+                                            'qa-sign',
+                                            row.done && 'is-on',
+                                            row.assignee_email === viewerEmail && 'is-mine',
+                                          ]}
+                                          type="submit"
+                                          title={row.done ? `${label} signed off — click to undo` : `Mark signed off for ${label}`}
+                                          aria-label={
+                                            row.done ? `Uncheck ${item.title} for ${label}` : `Check ${item.title} for ${label}`
+                                          }
+                                        >
+                                          {faceEl}
+                                          <span class="qa-sign-mark" aria-hidden="true" />
+                                        </button>
+                                      </form>
+                                    ) : (
+                                      <span
+                                        class:list={['qa-sign', 'is-static', row.done && 'is-on']}
+                                        title={row.done ? `${label} signed off` : `Waiting on ${label}`}
+                                      >
+                                        {faceEl}
+                                        <span class="qa-sign-mark" aria-hidden="true" />
+                                      </span>
+                                    )}
+                                  </li>
+                                );
+                              })}
+                            </ul>
+                          </>
+                        )}
+                      </li>
+                    ))}
+                  </ol>
+                )}
+
+                {canEdit && (
+                  <div class="qa-row-foot">
+                    <form method="post" class="qa-add-more" data-qa-inline>
+                      <input type="hidden" name="intent" value="add-qa-items" />
+                      <input type="hidden" name="checklist_id" value={list.id} />
+                      <input type="hidden" name="tab" value="qa" />
+                      <input type="hidden" name="who" value={filter} />
+                      <label class="sr-only" for={`qa_more_${list.id}`}>
+                        Add an item
+                      </label>
+                      <input
+                        id={`qa_more_${list.id}`}
+                        name="item_title"
+                        placeholder="+ Add item — assigns to all QA"
+                        maxlength="300"
+                        autocomplete="off"
+                        required
+                      />
+                    </form>
                     <form
                       method="post"
                       data-confirm={`Delete checklist “${list.title}”?`}
@@ -324,179 +544,259 @@ function href(nextWho: string) {
                       <input type="hidden" name="tab" value="qa" />
                       <input type="hidden" name="who" value={filter} />
                       <button class="btn-text td-delete" type="submit">
-                        Delete
+                        Delete list
                       </button>
                     </form>
-                  )}
-                </div>
-              </header>
-
-              {list.total > 0 && (
-                <div class="pj-progress qa-progress" aria-hidden="true">
-                  <span style={`width:${list.pct}%`} />
-                </div>
-              )}
-
-              {list.items.length > 0 && (
-                <ul class:list={['qa-items', filter === 'me' && 'is-mine-view']}>
-                  {list.items.map((item) => (
-                    <li class:list={['qa-item', item.doneCount === item.total && 'is-done']}>
-                      {filter === 'me' && item.mine ? (
-                        <>
-                          {canToggle(item.mine.assignee_email) ? (
-                            <form method="post" class="qa-item-check">
-                              <input type="hidden" name="intent" value="toggle-qa-check" />
-                              <input type="hidden" name="check_id" value={item.mine.id} />
-                              <input type="hidden" name="done" value={item.mine.done ? '0' : '1'} />
-                              <input type="hidden" name="tab" value="qa" />
-                              <input type="hidden" name="who" value={filter} />
-                              <button
-                                class:list={['tw-check', item.mine.done && 'is-on']}
-                                type="submit"
-                                aria-label={item.mine.done ? `Uncheck ${item.title}` : `Check ${item.title}`}
-                              />
-                            </form>
-                          ) : (
-                            <span class:list={['tw-check', 'is-static', item.mine.done && 'is-on']} />
-                          )}
-                          <div class="qa-item-body">
-                            <p class="qa-item-title">{item.title}</p>
-                            <p class="qa-item-meta muted">Your sign-off</p>
-                          </div>
-                        </>
-                      ) : (
-                        <>
-                          <div class="qa-item-body">
-                            <p class="qa-item-title">{item.title}</p>
-                            <p class="qa-item-meta muted">
-                              {item.doneCount}/{item.total} signed off
-                            </p>
-                          </div>
-                          <ul class="qa-signoffs" aria-label={`Sign-off for ${item.title}`}>
-                            {item.rows.map((row) => {
-                              const face = personFace(row.assignee_email, people);
-                              const label = nameOf(row.assignee_email);
-                              return (
-                                <li>
-                                  {canToggle(row.assignee_email) ? (
-                                    <form method="post">
-                                      <input type="hidden" name="intent" value="toggle-qa-check" />
-                                      <input type="hidden" name="check_id" value={row.id} />
-                                      <input type="hidden" name="done" value={row.done ? '0' : '1'} />
-                                      <input type="hidden" name="tab" value="qa" />
-                                      <input type="hidden" name="who" value={filter} />
-                                      <button
-                                        class:list={['qa-sign', row.done && 'is-on', row.assignee_email === viewerEmail && 'is-mine']}
-                                        type="submit"
-                                        title={row.done ? `${label} signed off — click to undo` : `Mark signed off for ${label}`}
-                                        aria-label={row.done ? `Uncheck ${item.title} for ${label}` : `Check ${item.title} for ${label}`}
-                                      >
-                                        {face.avatarUrl ? (
-                                          <img class="face" src={face.avatarUrl} alt="" referrerpolicy="no-referrer" width="28" height="28" />
-                                        ) : (
-                                          <span class="face" aria-hidden="true">
-                                            {personInitial(face.name, face.email)}
-                                          </span>
-                                        )}
-                                        <span class="qa-sign-mark" aria-hidden="true" />
-                                      </button>
-                                    </form>
-                                  ) : (
-                                    <span
-                                      class:list={['qa-sign', 'is-static', row.done && 'is-on']}
-                                      title={row.done ? `${label} signed off` : `Waiting on ${label}`}
-                                    >
-                                      {face.avatarUrl ? (
-                                        <img class="face" src={face.avatarUrl} alt="" referrerpolicy="no-referrer" width="28" height="28" />
-                                      ) : (
-                                        <span class="face" aria-hidden="true">
-                                          {personInitial(face.name, face.email)}
-                                        </span>
-                                      )}
-                                      <span class="qa-sign-mark" aria-hidden="true" />
-                                    </span>
-                                  )}
-                                </li>
-                              );
-                            })}
-                          </ul>
-                        </>
-                      )}
-                    </li>
-                  ))}
-                </ul>
-              )}
-
-              {canEdit && (
-                <form method="post" class="qa-add-more">
-                  <input type="hidden" name="intent" value="add-qa-items" />
-                  <input type="hidden" name="checklist_id" value={list.id} />
-                  <input type="hidden" name="tab" value="qa" />
-                  <input type="hidden" name="who" value={filter} />
-                  <label class="sr-only" for={`qa_more_${list.id}`}>
-                    Add more items
-                  </label>
-                  <input
-                    id={`qa_more_${list.id}`}
-                    name="item_title"
-                    placeholder="+ Add item… assigns to all QA"
-                    maxlength="300"
-                    autocomplete="off"
-                    required
-                  />
-                </form>
-              )}
-            </li>
+                  </div>
+                )}
+              </div>
+            </details>
           );
         })}
-      </ul>
-    )
-  }
-
-  {
-    doneLists.length > 0 && (
-      <details class="qa-done-block" open={openLists.length === 0 ? true : undefined}>
-        <summary>
-          <span>Completed</span>
-          <span class="tw-count">{doneLists.length}</span>
-        </summary>
-        <ul class="qa-lists qa-lists-done">
-          {doneLists.map((list) => (
-            <li class="qa-list tw-group is-complete">
-              <header class="qa-list-head">
-                <div class="qa-list-identity">
-                  <div class="qa-ring is-done" style="--p:100" aria-hidden="true">
-                    <span>✓</span>
-                  </div>
-                  <div>
-                    <div class="qa-list-title-row">
-                      <h3>{list.title}</h3>
-                      <span class="qa-chip is-ok">Complete</span>
-                    </div>
-                    <p class="qa-list-sub">
-                      <strong>
-                        {list.doneCount}/{list.total}
-                      </strong>{' '}
-                      signed off
-                    </p>
-                  </div>
-                </div>
-                {canEdit && (
-                  <form method="post" data-confirm={`Delete checklist “${list.title}”?`} data-confirm-action="Delete">
-                    <input type="hidden" name="intent" value="delete-qa-list" />
-                    <input type="hidden" name="checklist_id" value={list.id} />
-                    <input type="hidden" name="tab" value="qa" />
-                    <input type="hidden" name="who" value={filter} />
-                    <button class="btn-text td-delete" type="submit">
-                      Delete
-                    </button>
-                  </form>
-                )}
-              </header>
-            </li>
-          ))}
-        </ul>
-      </details>
+        <p class="qa-no-match muted" hidden data-qa-no-match>
+          No checklists match.
+        </p>
+      </div>
     )
   }
 </section>
+
+<script>
+  // Progressive enhancement for the QA tab: keeps lists open across sign-offs, saves
+  // ticks without a full reload, and filters/searches on the page. Everything still
+  // works as plain forms and links when this script does not run.
+  const filterState = { status: 'all', query: '', sort: readSort() };
+
+  function readSort() {
+    try {
+      return localStorage.getItem('qa-sort') || 'oldest';
+    } catch {
+      return 'oldest';
+    }
+  }
+
+  function applySort() {
+    const root = workspace();
+    const table = root?.querySelector<HTMLElement>('[data-qa-table]');
+    if (!root || !table) return;
+    const by = filterState.sort;
+    const created = (el: HTMLElement) => el.dataset.created || '';
+    const pct = (el: HTMLElement) => Number(el.dataset.pct || 0);
+    const name = (el: HTMLElement) => el.dataset.title || '';
+    const rows = rowsOf(root).sort((a, b) => {
+      if (by === 'newest') return created(b).localeCompare(created(a));
+      if (by === 'least') return pct(a) - pct(b) || created(a).localeCompare(created(b));
+      if (by === 'most') return pct(b) - pct(a) || created(a).localeCompare(created(b));
+      if (by === 'name') return name(a).localeCompare(name(b), undefined, { numeric: true });
+      return created(a).localeCompare(created(b));
+    });
+    const tail = table.querySelector('[data-qa-no-match]');
+    rows.forEach((row) => table.insertBefore(row, tail));
+    const select = root.querySelector<HTMLSelectElement>('[data-qa-sort]');
+    if (select) select.value = by;
+  }
+
+  function stateKey() {
+    return 'qa-open:' + location.pathname;
+  }
+
+  function workspace() {
+    return document.querySelector<HTMLElement>('[data-qa-workspace]');
+  }
+
+  function rowsOf(root: ParentNode) {
+    return [...root.querySelectorAll<HTMLDetailsElement>('details[data-qa-list]')];
+  }
+
+  function readOpen(): Set<string> {
+    try {
+      return new Set(JSON.parse(sessionStorage.getItem(stateKey()) || '[]'));
+    } catch {
+      return new Set();
+    }
+  }
+
+  function saveOpen() {
+    const root = workspace();
+    if (!root) return;
+    const ids = rowsOf(root)
+      .filter((el) => el.open && !el.dataset.autoOpened)
+      .map((el) => el.dataset.qaList);
+    try {
+      sessionStorage.setItem(stateKey(), JSON.stringify(ids));
+    } catch {
+      /* storage blocked: open state just won't persist */
+    }
+  }
+
+  function syncExpandLabel() {
+    const root = workspace();
+    const btn = root?.querySelector<HTMLButtonElement>('[data-qa-expand]');
+    if (!root || !btn) return;
+    const rows = rowsOf(root).filter((r) => !r.hidden);
+    const allOpen = rows.length > 0 && rows.every((r) => r.open);
+    btn.textContent = allOpen ? 'Collapse all' : 'Expand all';
+    btn.setAttribute('aria-pressed', String(allOpen));
+  }
+
+  function applyFilter() {
+    const root = workspace();
+    if (!root) return;
+    const q = filterState.query.trim().toLowerCase();
+    let shown = 0;
+    rowsOf(root).forEach((row) => {
+      const statusOk = filterState.status === 'all' || row.dataset.status === filterState.status;
+      const textOk = !q || (row.dataset.search || '').includes(q);
+      row.hidden = !(statusOk && textOk);
+      if (!row.hidden) shown++;
+      // While searching, open matching lists and fade items that don't match.
+      row.querySelectorAll<HTMLElement>('.qa-item').forEach((item) => {
+        item.classList.toggle('is-dim', Boolean(q) && !(item.dataset.search || '').includes(q));
+      });
+      if (q && !row.hidden && !row.open) {
+        row.dataset.autoOpened = '1';
+        row.open = true;
+      } else if (!q && row.dataset.autoOpened) {
+        delete row.dataset.autoOpened;
+        row.open = false;
+      }
+    });
+    const none = root.querySelector<HTMLElement>('[data-qa-no-match]');
+    if (none) none.hidden = shown > 0;
+    root.querySelectorAll<HTMLButtonElement>('[data-qa-status]').forEach((btn) => {
+      btn.setAttribute('aria-pressed', String(btn.dataset.qaStatus === filterState.status));
+    });
+    syncExpandLabel();
+  }
+
+  function hydrate() {
+    const root = workspace();
+    if (!root) return;
+    const open = readOpen();
+    const hash = location.hash.slice(1);
+    rowsOf(root).forEach((row) => {
+      if (open.has(row.dataset.qaList || '') || row.id === hash) row.open = true;
+    });
+    const search = root.querySelector<HTMLInputElement>('[data-qa-search]');
+    if (search) search.value = filterState.query;
+    applySort();
+    applyFilter();
+  }
+
+  async function submitInline(form: HTMLFormElement, submitter: HTMLElement | null) {
+    const root = workspace();
+    if (!root) return HTMLFormElement.prototype.submit.call(form);
+    saveOpen();
+    root.setAttribute('aria-busy', 'true');
+    submitter?.setAttribute('disabled', '');
+    const focusId = (document.activeElement as HTMLElement | null)?.id;
+    try {
+      const res = await fetch(form.getAttribute('action') || location.href, {
+        method: 'POST',
+        body: new FormData(form),
+        credentials: 'same-origin',
+      });
+      if (!res.ok || new URL(res.url).searchParams.get('error')) throw new Error('post failed');
+      const doc = new DOMParser().parseFromString(await res.text(), 'text/html');
+      const next = doc.querySelector('[data-qa-workspace]');
+      if (!next) throw new Error('missing workspace');
+      root.replaceWith(document.importNode(next, true));
+      hydrate();
+      if (focusId) document.getElementById(focusId)?.focus();
+    } catch {
+      // Fall back to a normal post so the server can show its own error.
+      HTMLFormElement.prototype.submit.call(form);
+    } finally {
+      workspace()?.removeAttribute('aria-busy');
+    }
+  }
+
+  document.addEventListener('submit', (event) => {
+    const form = event.target;
+    if (!(form instanceof HTMLFormElement)) return;
+    if (!form.closest('[data-qa-workspace]')) return;
+    if (!form.matches('form[data-qa-inline]')) {
+      // A normal post reloads the page: remember which lists were open.
+      saveOpen();
+      return;
+    }
+    // Capture phase + stop: handle it here before the page router turns it into a navigation.
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    submitInline(form, (event as SubmitEvent).submitter);
+  }, true);
+
+  document.addEventListener(
+    'toggle',
+    (event) => {
+      const el = event.target;
+      if (el instanceof HTMLDetailsElement && el.matches('[data-qa-workspace] details[data-qa-list]')) {
+        if (!filterState.query) delete el.dataset.autoOpened;
+        saveOpen();
+        syncExpandLabel();
+      }
+    },
+    true,
+  );
+
+  document.addEventListener('click', (event) => {
+    const target = event.target as HTMLElement | null;
+    const root = target?.closest<HTMLElement>('[data-qa-workspace]');
+    if (!target || !root) return;
+
+    const status = target.closest<HTMLButtonElement>('[data-qa-status]');
+    if (status) {
+      filterState.status = status.dataset.qaStatus || 'all';
+      applyFilter();
+      return;
+    }
+
+    if (target.closest('[data-qa-expand]')) {
+      const rows = rowsOf(root).filter((r) => !r.hidden);
+      const openAll = !rows.every((r) => r.open);
+      rows.forEach((r) => {
+        delete r.dataset.autoOpened;
+        r.open = openAll;
+      });
+      saveOpen();
+      syncExpandLabel();
+      return;
+    }
+
+    const create = root.querySelector<HTMLElement>('[data-qa-create]');
+    if (create && target.closest('[data-qa-new]')) {
+      event.preventDefault();
+      create.hidden = !create.hidden;
+      if (!create.hidden) {
+        create.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+        create.querySelector<HTMLInputElement>('#qa_title')?.focus();
+      }
+      return;
+    }
+    if (create && target.closest('[data-qa-create-close]')) create.hidden = true;
+  });
+
+  document.addEventListener('change', (event) => {
+    const select = event.target;
+    if (select instanceof HTMLSelectElement && select.matches('[data-qa-workspace] [data-qa-sort]')) {
+      filterState.sort = select.value;
+      try {
+        localStorage.setItem('qa-sort', select.value);
+      } catch {
+        /* storage blocked: the choice lasts until reload */
+      }
+      applySort();
+    }
+  });
+
+  document.addEventListener('input', (event) => {
+    const input = event.target;
+    if (input instanceof HTMLInputElement && input.matches('[data-qa-search]')) {
+      filterState.query = input.value;
+      applyFilter();
+    }
+  });
+
+  document.addEventListener('astro:page-load', hydrate);
+  hydrate();
+</script>
