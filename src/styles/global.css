@@ -6266,6 +6266,55 @@ i.cal-event {
   border-bottom: 1px solid var(--line);
 }
 
+.td-head-start {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.65rem 0.85rem;
+  min-width: 0;
+}
+
+.td-seen {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  min-width: 0;
+  color: var(--muted);
+  font-size: 0.78rem;
+  line-height: 1.2;
+}
+
+.td-seen-faces {
+  display: flex;
+  align-items: center;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.td-seen-faces li {
+  margin-left: -0.35rem;
+}
+
+.td-seen-faces li:first-child {
+  margin-left: 0;
+}
+
+.td-seen-faces .face {
+  width: 1.45rem;
+  height: 1.45rem;
+  border: 1.5px solid var(--surface);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--line-strong) 55%, transparent);
+  font-size: 0.62rem;
+}
+
+.td-seen-time {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .td-complete .btn {
   gap: 0.5rem;
   min-height: 2.3rem;

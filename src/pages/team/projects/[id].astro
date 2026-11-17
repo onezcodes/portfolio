@@ -79,6 +79,7 @@ import {
   notify,
   parseMentions,
   projectDependencies,
+  recordTaskView,
   removeAttachment,
   removeDependency,
   saveView,
@@ -977,6 +978,10 @@ const calCursor = parseMonth(Astro.url.searchParams.get('month'), new Date());
 const taskParam = caps.canSchedule ? (Astro.url.searchParams.get('task') ?? '').trim() : '';
 const taskView = Astro.url.searchParams.get('view') === 'board' ? 'board' : 'list';
 const taskWho = (Astro.url.searchParams.get('who') ?? '').trim().toLowerCase();
+// Stamp "seen by" before loading the drawer so the current viewer shows up immediately.
+if (taskParam && !Astro.locals.viewAs) {
+  await recordTaskView(supabase, taskParam, studio.email);
+}
 // The header shows funding, team, and open work on every tab, so these load everywhere.
 const needMoney = caps.canFinance;
 const needMembers = true;
@@ -2180,6 +2185,7 @@ function shortDate(iso: string) {
           events={detail.events}
           waitsOn={detail.waitsOn}
           blocks={detail.blocks}
+          viewers={detail.views}
           allTasks={tasks.filter((item) => 'title' in item)}
           timeEntries={timeEntries}
           checklists={checklists}

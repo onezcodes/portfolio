@@ -27,8 +27,10 @@ import {
   formatBytes,
   mentionHandle,
   recurLabel,
+  seenAgo,
   type TaskAttachment,
   type TaskEvent,
+  type TaskView,
 } from '../lib/taskCollab';
 import { formatMinutes, liveMinutes, type TimeEntry } from '../lib/timeTracking';
 import { availabilityOf } from '../lib/presence';
@@ -55,6 +57,8 @@ interface Props {
   events: TaskEvent[];
   waitsOn: string[];
   blocks: string[];
+  /** People who recently opened this task, newest first. */
+  viewers: TaskView[];
   /** Other tasks in the project, for dependencies. */
   allTasks: Pick<ProjectTask, 'id' | 'title' | 'status'>[];
   timeEntries: TimeEntry[];
@@ -82,6 +86,7 @@ const {
   events,
   waitsOn,
   blocks,
+  viewers,
   allTasks,
   timeEntries,
   checklists,
@@ -116,6 +121,19 @@ const assignee = task.assignee_email ? personFace(task.assignee_email, allPeople
 const following = followers.includes(viewerEmail);
 const followerFaces = followers.map((email) => personFace(email, allPeople));
 const notFollowing = people.filter((person) => !followers.includes(person.email));
+const recentViewers = viewers.slice(0, 5).map((row) => ({
+  ...personFace(row.email, allPeople),
+  seen_at: row.seen_at,
+}));
+const latestView = recentViewers[0];
+const seenLabel = latestView
+  ? latestView.email === viewerEmail
+    ? `Seen ${seenAgo(latestView.seen_at)}`
+    : `${latestView.name.split(' ')[0] || latestView.name} · ${seenAgo(latestView.seen_at)}`
+  : '';
+const seenTitle = recentViewers
+  .map((person) => `${person.name} · ${seenAgo(person.seen_at)}`)
+  .join('\n');
 const taskById = new Map(allTasks.map((item) => [item.id, item]));
 const waiting = waitsOn.map((tid) => taskById.get(tid) ?? { id: tid, title: 'A task', status: 'todo' as const });
 const blocking = blocks.map((tid) => taskById.get(tid) ?? { id: tid, title: 'A task', status: 'todo' as const });
@@ -164,27 +182,46 @@ function longDate(iso: string | null) {
 <dialog class="team-modal task-drawer" id="modal-taskpanel" aria-labelledby="task-panel-title" data-autoopen data-no-focus data-task-panel>
   <div class="team-modal-card">
     <header class="td-head">
-      {canComplete ? (
-        <form method="post" class="td-complete">
-          <input type="hidden" name="intent" value={task.status === 'done' ? 'task-todo' : 'task-done'} />
-          <input type="hidden" name="task_id" value={task.id} />
-          <input type="hidden" name="tab" value="tasks" />
-          <input type="hidden" name="return_task" value={task.id} />
-          <input type="hidden" name="view" value={view} />
-          <input type="hidden" name="who" value={who} />
-          <button class:list={['btn', task.status === 'done' ? 'btn-ghost is-done' : 'btn-ghost']} type="submit">
-            <span class:list={['tw-check', task.status === 'done' && 'is-on']} aria-hidden="true" />
-            {task.status === 'done' ? 'Completed' : 'Mark complete'}
-          </button>
-        </form>
-      ) : canMove && qaPending.length > 0 ? (
-        <span class="td-complete-wait" title={`Waiting on ${qaPendingEmails.map((email) => nameOf(email)).join(', ')}`}>
-          <span class:list={['tw-check', 'sm']} aria-hidden="true" />
-          Waiting on QA · {qaPending.length} left
-        </span>
-      ) : (
-        <span class:list={['tw-status', task.status]}>{taskStatusLabel(task.status)}</span>
-      )}
+      <div class="td-head-start">
+        {recentViewers.length > 0 && (
+          <div class="td-seen" title={seenTitle}>
+            <ul class="td-seen-faces" aria-label="Recently viewed by">
+              {recentViewers.map((person) => (
+                <li title={`${person.name} · ${seenAgo(person.seen_at)}`}>
+                  {person.avatarUrl ? (
+                    <img class="face" src={person.avatarUrl} alt="" referrerpolicy="no-referrer" width="24" height="24" />
+                  ) : (
+                    <span class="face" aria-hidden="true">{personInitial(person.name, person.email)}</span>
+                  )}
+                  <span class="sr-only">{person.name}</span>
+                </li>
+              ))}
+            </ul>
+            <span class="td-seen-time">{seenLabel}</span>
+          </div>
+        )}
+        {canComplete ? (
+          <form method="post" class="td-complete">
+            <input type="hidden" name="intent" value={task.status === 'done' ? 'task-todo' : 'task-done'} />
+            <input type="hidden" name="task_id" value={task.id} />
+            <input type="hidden" name="tab" value="tasks" />
+            <input type="hidden" name="return_task" value={task.id} />
+            <input type="hidden" name="view" value={view} />
+            <input type="hidden" name="who" value={who} />
+            <button class:list={['btn', task.status === 'done' ? 'btn-ghost is-done' : 'btn-ghost']} type="submit">
+              <span class:list={['tw-check', task.status === 'done' && 'is-on']} aria-hidden="true" />
+              {task.status === 'done' ? 'Completed' : 'Mark complete'}
+            </button>
+          </form>
+        ) : canMove && qaPending.length > 0 ? (
+          <span class="td-complete-wait" title={`Waiting on ${qaPendingEmails.map((email) => nameOf(email)).join(', ')}`}>
+            <span class:list={['tw-check', 'sm']} aria-hidden="true" />
+            Waiting on QA · {qaPending.length} left
+          </span>
+        ) : (
+          <span class:list={['tw-status', task.status]}>{taskStatusLabel(task.status)}</span>
+        )}
+      </div>
       <div class="td-head-side">
         {followerFaces.length > 0 && (
           <span class="td-followers" title={`Followers: ${followerFaces.map((f) => f.name).join(', ')}`}>

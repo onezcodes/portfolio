@@ -553,7 +553,7 @@ export async function taskCounts(supabase: SupabaseClient, projectIds: string[])
 }
 
 export async function taskDetail(supabase: SupabaseClient, projectId: string, taskId: string) {
-  const [task, subtasks, comments, followers, attachments, events, waitsOn, blocks] = await Promise.all([
+  const [task, subtasks, comments, followers, attachments, events, waitsOn, blocks, views] = await Promise.all([
     supabase.from('project_tasks').select('*').eq('id', taskId).eq('project_id', projectId).maybeSingle(),
     supabase.from('task_subtasks').select('*').eq('task_id', taskId).order('sort_order'),
     supabase.from('task_comments').select('*').eq('task_id', taskId).order('created_at'),
@@ -562,6 +562,7 @@ export async function taskDetail(supabase: SupabaseClient, projectId: string, ta
     supabase.from('task_events').select('id, task_id, actor_email, action, detail, created_at').eq('task_id', taskId).order('created_at'),
     supabase.from('task_dependencies').select('depends_on_id').eq('task_id', taskId),
     supabase.from('task_dependencies').select('task_id').eq('depends_on_id', taskId),
+    supabase.from('task_views').select('email, seen_at').eq('task_id', taskId).order('seen_at', { ascending: false }).limit(8),
   ]);
   if (!task.data) return null;
   return {
@@ -573,6 +574,7 @@ export async function taskDetail(supabase: SupabaseClient, projectId: string, ta
     events: (events.data ?? []) as import('./taskCollab').TaskEvent[],
     waitsOn: (waitsOn.data ?? []).map((row) => String(row.depends_on_id)),
     blocks: (blocks.data ?? []).map((row) => String(row.task_id)),
+    views: (views.data ?? []) as import('./taskCollab').TaskView[],
   };
 }
 

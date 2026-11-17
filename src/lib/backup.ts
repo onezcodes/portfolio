@@ -27,6 +27,7 @@ export const BACKUP_TABLES = [
   'project_qa_checks',
   'task_comments',
   'task_followers',
+  'task_views',
   'task_attachments',
   'task_dependencies',
   'task_events',

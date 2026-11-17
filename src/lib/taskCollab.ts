@@ -81,6 +81,53 @@ export async function followersOf(supabase: SupabaseClient, taskId: string) {
   return (data ?? []).map((row) => String(row.email));
 }
 
+// ---------- Recent viewers (Notion-style "seen by") ----------
+
+export type TaskView = { email: string; seen_at: string };
+
+/** Record that someone opened the task drawer. Throttled to once per minute per person. */
+export async function recordTaskView(supabase: SupabaseClient, taskId: string, email: string) {
+  if (!taskId || !email) return;
+  const { data: existing } = await supabase
+    .from('task_views')
+    .select('seen_at')
+    .eq('task_id', taskId)
+    .eq('email', email)
+    .maybeSingle();
+  const last = existing?.seen_at ? Date.parse(String(existing.seen_at)) : 0;
+  if (last && Date.now() - last < 60_000) return;
+  const { error } = await supabase.from('task_views').upsert(
+    { task_id: taskId, email, seen_at: new Date().toISOString() },
+    { onConflict: 'task_id,email' },
+  );
+  if (error && error.code !== '42501') console.error('task view failed', error.message);
+}
+
+export async function recentTaskViews(supabase: SupabaseClient, taskId: string, limit = 8) {
+  const { data } = await supabase
+    .from('task_views')
+    .select('email, seen_at')
+    .eq('task_id', taskId)
+    .order('seen_at', { ascending: false })
+    .limit(limit);
+  return (data ?? []) as TaskView[];
+}
+
+/** Short relative time for the drawer header, e.g. "just now", "5m ago". */
+export function seenAgo(iso: string, now = Date.now()) {
+  const ago = Math.max(0, now - Date.parse(iso));
+  if (Number.isNaN(ago)) return '';
+  if (ago < 45_000) return 'just now';
+  const minutes = Math.round(ago / 60_000);
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.round(minutes / 60);
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.round(hours / 24);
+  if (days === 1) return 'yesterday';
+  if (days < 7) return `${days}d ago`;
+  return new Date(iso).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' });
+}
+
 // ---------- Attachments ----------
 
 function safeFileName(name: string) {
