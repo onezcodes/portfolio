@@ -135,6 +135,14 @@ function fileIcon(item: TaskAttachment) {
   if (item.content_type === 'application/pdf') return 'pdf';
   return 'file';
 }
+const commentFiles = new Map<string, TaskAttachment[]>();
+for (const item of attachments) {
+  if (!item.comment_id) continue;
+  const list = commentFiles.get(item.comment_id) ?? [];
+  list.push(item);
+  commentFiles.set(item.comment_id, list);
+}
+const fileAccept = 'image/*,.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.csv,.md,.json,.zip,application/pdf,application/zip,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-powerpoint,application/vnd.openxmlformats-officedocument.presentationml.presentation,text/plain,text/csv,text/markdown,application/json';
 const sameTaskHref = (tid: string) => {
   const params = new URLSearchParams({ tab: 'tasks', task: tid });
   if (view) params.set('view', view);
@@ -431,7 +439,7 @@ function longDate(iso: string | null) {
               {Object.entries(hidden).map(([k, v]) => <input type="hidden" name={k} value={v} />)}
               <label class="btn btn-ghost">
                 Upload file
-                <input class="sr-only" type="file" name="file" required data-autosubmit-form />
+                <input class="sr-only" type="file" name="file" accept={fileAccept} required data-autosubmit-form />
               </label>
             </form>
             <details class="td-link-add">
@@ -620,6 +628,8 @@ function longDate(iso: string | null) {
         <ol class="td-comments">
           {comments.map((item) => {
             const author = personFace(item.author_email, allPeople);
+            const files = commentFiles.get(item.id) ?? [];
+            const fileOnly = files.length > 0 && files.some((file) => item.body === `Attached ${file.name}`);
             return (
               <li>
                 {author.avatarUrl ? (
@@ -631,11 +641,40 @@ function longDate(iso: string | null) {
                   <p class="td-com-meta">
                     <strong>{author.name}</strong> <span>{formatEventTime(item.created_at)}</span>
                   </p>
-                  <p class="td-com-body">
-                    {commentParts(item.body, allPeople).map((part) =>
-                      part.mention ? <mark class:list={['td-mention', part.mention === viewerEmail && 'is-me']}>{part.text}</mark> : part.text,
-                    )}
-                  </p>
+                  {!fileOnly && (
+                    <p class="td-com-body">
+                      {commentParts(item.body, allPeople).map((part) =>
+                        part.mention ? <mark class:list={['td-mention', part.mention === viewerEmail && 'is-me']}>{part.text}</mark> : part.text,
+                      )}
+                    </p>
+                  )}
+                  {files.length > 0 && (
+                    <ul class="td-com-files">
+                      {files.map((file) => {
+                        const href = attachHrefs.get(file.id);
+                        const icon = fileIcon(file);
+                        return (
+                          <li>
+                            {icon === 'image' && href ? (
+                              <a class="td-file-thumb" href={href} target="_blank" rel="noopener noreferrer">
+                                <img src={href} alt="" loading="lazy" />
+                              </a>
+                            ) : (
+                              <span class:list={['td-file-icon', icon]} aria-hidden="true">{icon === 'pdf' ? 'PDF' : 'FILE'}</span>
+                            )}
+                            <span class="td-file-meta">
+                              {href ? (
+                                <a href={href} target="_blank" rel="noopener noreferrer">{file.name || 'Attachment'}</a>
+                              ) : (
+                                <span>{file.name || 'Attachment'}</span>
+                              )}
+                              <span>{formatBytes(file.size_bytes)}</span>
+                            </span>
+                          </li>
+                        );
+                      })}
+                    </ul>
+                  )}
                   {!readOnly && (item.author_email === viewerEmail || canPlan) && (
                     <form method="post" data-confirm="Delete this comment?" data-confirm-action="Delete">
                       <input type="hidden" name="intent" value="delete-comment" />
@@ -654,7 +693,7 @@ function longDate(iso: string | null) {
         </ol>
         {comments.length === 0 && <p class="muted td-empty">No comments yet. Ask a question or share an update.</p>}
         {canMove && (
-          <form method="post" class="td-comment-form">
+          <form method="post" enctype="multipart/form-data" class="td-comment-form" data-comment-form>
             <input type="hidden" name="intent" value="add-comment" />
             <input type="hidden" name="task_id" value={task.id} />
             <input type="hidden" name="tab" value="tasks" />
@@ -663,11 +702,28 @@ function longDate(iso: string | null) {
             <input type="hidden" name="who" value={who} />
             <label class="sr-only" for="td_comment">Write a comment</label>
             <div class="td-mention-wrap">
-              <textarea id="td_comment" name="body" rows="2" maxlength="2000" required placeholder="Write a comment… type @ to mention someone" data-autogrow data-mentions={JSON.stringify(mentionables)}></textarea>
+              <textarea id="td_comment" name="body" rows="2" maxlength="2000" placeholder="Write a comment… type @ to mention someone" data-autogrow data-mentions={JSON.stringify(mentionables)} data-comment-body></textarea>
               <ul class="td-mention-menu" role="listbox" hidden data-mention-menu></ul>
             </div>
+            <div class="td-comment-attach" hidden data-comment-file-chip>
+              <span data-comment-file-name></span>
+              <button type="button" class="btn-text" data-comment-file-clear aria-label="Remove attachment">×</button>
+            </div>
             <div class="td-comment-actions">
-              <span class="muted">{followers.length > 0 ? `${followers.length} ${followers.length === 1 ? 'follower' : 'followers'} get notified` : 'Followers get notified'}</span>
+              <div class="td-comment-attach-actions">
+                <label class="btn btn-ghost">
+                  Upload file
+                  <input
+                    class="sr-only"
+                    id="td_comment_file"
+                    type="file"
+                    name="file"
+                    accept={fileAccept}
+                    data-comment-file
+                  />
+                </label>
+                <span class="muted td-attach-hint">Up to 10 MB · images, PDF, docs, zip</span>
+              </div>
               <button class="btn" type="submit">Comment</button>
             </div>
           </form>
@@ -859,11 +915,47 @@ function longDate(iso: string | null) {
       setInterval(() => (live.textContent = fmt(Math.max(0, Math.round((Date.now() - since) / 60000)))), 30000);
     }
 
-    // Cmd/Ctrl+Enter posts a comment.
-    panel.querySelector<HTMLTextAreaElement>('#td_comment')?.addEventListener('keydown', (event) => {
+    // Comment composer: optional file (same limits as Attachments) + Cmd/Ctrl+Enter.
+    const commentForm = panel.querySelector<HTMLFormElement>('[data-comment-form]');
+    const commentBody = panel.querySelector<HTMLTextAreaElement>('[data-comment-body]');
+    const commentFile = panel.querySelector<HTMLInputElement>('[data-comment-file]');
+    const commentChip = panel.querySelector<HTMLElement>('[data-comment-file-chip]');
+    const commentFileName = panel.querySelector<HTMLElement>('[data-comment-file-name]');
+    const commentFileClear = panel.querySelector<HTMLButtonElement>('[data-comment-file-clear]');
+    const syncCommentFile = () => {
+      const file = commentFile?.files?.[0];
+      if (!commentChip || !commentFileName) return;
+      if (file) {
+        commentFileName.textContent = file.name;
+        commentChip.hidden = false;
+      } else {
+        commentFileName.textContent = '';
+        commentChip.hidden = true;
+      }
+    };
+    commentFile?.addEventListener('change', syncCommentFile);
+    commentFileClear?.addEventListener('click', () => {
+      if (!commentFile) return;
+      commentFile.value = '';
+      syncCommentFile();
+      commentBody?.focus();
+    });
+    commentForm?.addEventListener('submit', (event) => {
+      const hasText = Boolean(commentBody?.value.trim());
+      const hasFile = Boolean(commentFile?.files?.[0]);
+      if (!hasText && !hasFile) {
+        event.preventDefault();
+        commentBody?.setCustomValidity('Write a comment or attach a file.');
+        commentBody?.reportValidity();
+        return;
+      }
+      commentBody?.setCustomValidity('');
+    });
+    commentBody?.addEventListener('input', () => commentBody.setCustomValidity(''));
+    commentBody?.addEventListener('keydown', (event) => {
       if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) {
         event.preventDefault();
-        (event.target as HTMLTextAreaElement).form?.requestSubmit();
+        commentForm?.requestSubmit();
       }
     });
   }

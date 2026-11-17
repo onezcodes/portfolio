@@ -34,6 +34,8 @@ export type TaskAttachment = {
   content_type: string;
   added_by: string;
   created_at: string;
+  /** When set, this file was uploaded with a comment. */
+  comment_id?: string | null;
 };
 
 export type TaskEvent = {
@@ -91,6 +93,7 @@ export async function addFileAttachment(
   form: FormData,
   projectId: string,
   actorEmail: string,
+  commentId?: string | null,
 ) {
   const taskId = String(form.get('task_id') ?? '');
   const file = form.get('file');
@@ -105,7 +108,7 @@ export async function addFileAttachment(
     console.error('attachment upload failed', upload.error.message);
     return { error: 'file-type' as const };
   }
-  const { error } = await supabase.from('task_attachments').insert({
+  const row: Record<string, unknown> = {
     task_id: taskId,
     kind: 'file',
     url: path,
@@ -113,7 +116,9 @@ export async function addFileAttachment(
     size_bytes: file.size,
     content_type: file.type,
     added_by: actorEmail,
-  });
+  };
+  if (commentId) row.comment_id = commentId;
+  const { error } = await supabase.from('task_attachments').insert(row);
   if (error) {
     await supabase.storage.from(TASK_FILES_BUCKET).remove([path]);
     console.error('attachment save failed', error.message);

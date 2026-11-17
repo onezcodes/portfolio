@@ -67,6 +67,7 @@ import { clearDonePersonal, handlePersonal, personalItems } from '../../../lib/p
 import TaskWorkspace from '../../../components/TaskWorkspace.astro';
 import TaskPanel from '../../../components/TaskPanel.astro';
 import {
+  MAX_ATTACHMENT_BYTES,
   addDependency,
   addFileAttachment,
   addLinkAttachment,
@@ -481,9 +482,18 @@ if (Astro.request.method === 'POST') {
     const mentioned = parseMentions(String(form.get('body') ?? ''), (crewEmails ?? []) as { email: string }[]).filter(
       (email) => email !== actor,
     );
+    const pendingFile = form.get('file');
+    if (pendingFile instanceof File && pendingFile.size > MAX_ATTACHMENT_BYTES) {
+      return bounce({ error: 'too-large-file' });
+    }
     const result = await addComment(supabase, form, actor, mentioned);
     if (result.error) return bounce({ error: result.error });
     const taskId = String(form.get('task_id') ?? '');
+    if (pendingFile instanceof File && pendingFile.size > 0 && result.id) {
+      const attached = await addFileAttachment(supabase, form, id, actor, result.id);
+      if (attached.error) return bounce({ error: attached.error });
+      await logTaskEvent(supabase, taskId, actor, 'attach', attached.name);
+    }
     const watchers = await followersOf(supabase, taskId);
     await follow(supabase, taskId, actor);
     const { data: target } = await supabase

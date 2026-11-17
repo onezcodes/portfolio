@@ -499,15 +499,21 @@ export async function removeSubtask(
 export async function addComment(supabase: SupabaseClient, form: FormData, authorEmail: string, mentions: string[] = []) {
   const taskId = String(form.get('task_id') ?? '');
   const body = String(form.get('body') ?? '').trim().slice(0, 2000);
-  if (!taskId || !body || !authorEmail) return { error: 'invalid' as const };
-  const row: Record<string, unknown> = { task_id: taskId, author_email: authorEmail, body };
+  const file = form.get('file');
+  const hasFile = file instanceof File && file.size > 0;
+  if (!taskId || !authorEmail || (!body && !hasFile)) return { error: 'invalid' as const };
+  const row: Record<string, unknown> = {
+    task_id: taskId,
+    author_email: authorEmail,
+    body: body || (hasFile ? `Attached ${file.name.slice(0, 200)}` : ''),
+  };
   if (mentions.length > 0) row.mentions = mentions;
-  const { error } = await supabase.from('task_comments').insert(row);
+  const { data, error } = await supabase.from('task_comments').insert(row).select('id, body').single();
   if (error) {
     console.error('comment add failed', error.message);
     return { error: 'invalid' as const };
   }
-  return { error: null, body };
+  return { error: null, body: String(data.body ?? body), id: String(data.id) };
 }
 
 export async function removeComment(supabase: SupabaseClient, form: FormData, projectId: string) {
