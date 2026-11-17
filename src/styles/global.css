@@ -10594,3 +10594,196 @@ kbd {
   min-height: 2.1rem;
   font-size: 0.85rem;
 }
+
+/* ---------- QA checklists tab ---------- */
+.qa-workspace {
+  display: grid;
+  gap: 1rem;
+}
+
+.qa-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.75rem 1.25rem;
+}
+
+.qa-head .team-h2 {
+  margin: 0 0 0.2rem;
+}
+
+.qa-head > div > .muted {
+  margin: 0;
+}
+
+.qa-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.qa-filters {
+  display: inline-flex;
+  gap: 0.2rem;
+  padding: 0.2rem;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--surface);
+}
+
+.qa-filter {
+  display: inline-flex;
+  align-items: center;
+  min-height: 2rem;
+  padding: 0 0.85rem;
+  border-radius: 999px;
+  color: var(--muted);
+  font-size: 0.88rem;
+  text-decoration: none;
+}
+
+.qa-filter.is-on {
+  background: color-mix(in srgb, var(--gold) 22%, var(--surface));
+  color: var(--ink);
+  font-weight: 600;
+}
+
+.qa-empty {
+  margin: 0;
+  padding: 1rem 1.1rem;
+  font-size: 0.95rem;
+}
+
+.qa-create h3 {
+  margin: 0 0 0.75rem;
+  font-size: 1.05rem;
+}
+
+.qa-create-hint {
+  margin: -0.35rem 0 0.85rem;
+  font-size: 0.85rem;
+}
+
+.qa-template-form {
+  margin-top: 0.85rem;
+  padding-top: 0.85rem;
+  border-top: 1px dashed var(--line-strong);
+}
+
+.qa-template-form select {
+  width: 100%;
+  min-height: 2.5rem;
+  padding: 0 0.7rem;
+  border: 1px solid var(--line-strong);
+  border-radius: 0.55rem;
+  background: var(--surface);
+  color: var(--ink);
+  font: inherit;
+}
+
+.qa-lists {
+  display: grid;
+  gap: 0.85rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.qa-list-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.65rem 1rem;
+  margin-bottom: 0.55rem;
+}
+
+.qa-list-head h3 {
+  margin: 0 0 0.15rem;
+  font-size: 1.05rem;
+}
+
+.qa-list-head .muted {
+  margin: 0;
+  font-size: 0.85rem;
+}
+
+.qa-list-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.65rem;
+}
+
+.qa-progress {
+  margin-bottom: 0.65rem;
+}
+
+.qa-list.is-done {
+  opacity: 0.88;
+}
+
+.qa-items {
+  display: grid;
+  gap: 0.75rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.qa-item-title {
+  margin: 0 0 0.3rem;
+  font-size: 0.92rem;
+  font-weight: 600;
+}
+
+.qa-checks {
+  display: grid;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.qa-check {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  min-height: 2.25rem;
+  padding: 0 0.35rem;
+  border-radius: 0.45rem;
+}
+
+.qa-check:hover {
+  background: var(--surface-2);
+}
+
+.qa-check form {
+  display: flex;
+  margin: 0;
+}
+
+.qa-check-who {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  flex: 1;
+  min-width: 0;
+  font-size: 0.88rem;
+}
+
+.qa-check-who .face {
+  width: 1.35rem;
+  height: 1.35rem;
+  font-size: 0.62rem;
+}
+
+.qa-check.is-done .qa-check-who {
+  color: var(--muted);
+  text-decoration: line-through;
+}
+
+.qa-add-more {
+  margin-top: 0.75rem;
+}

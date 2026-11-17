@@ -9,7 +9,7 @@ describe('project roles → capabilities', () => {
     expect(caps.canPlan).toBe(false);
     expect(caps.canFinance).toBe(false);
     expect(caps.canPeople).toBe(false);
-    expect(caps.tabs.map((t) => t.id)).toEqual(['schedule', 'tasks', 'details']);
+    expect(caps.tabs.map((t) => t.id)).toEqual(['schedule', 'tasks', 'qa', 'details']);
   });
 
   it('collaborator sees money only', () => {
@@ -68,6 +68,16 @@ describe('which actions each role may take', () => {
     expect(allowedIntent('apply-qa-checklist', dev)).toBe(false);
     expect(allowedIntent('add-qa-checklist', manager)).toBe(true);
     expect(allowedIntent('apply-qa-checklist', lead)).toBe(true);
+  });
+
+  it('QA tab lists are planner-created; anyone who can progress may toggle their check', () => {
+    expect(allowedIntent('add-qa-list', qa)).toBe(false);
+    expect(allowedIntent('add-qa-list', manager)).toBe(true);
+    expect(allowedIntent('delete-qa-list', lead)).toBe(true);
+    expect(allowedIntent('toggle-qa-check', qa)).toBe(true);
+    expect(allowedIntent('toggle-qa-check', collaborator)).toBe(false);
+    expect(tabForIntent('add-qa-list')).toBe('qa');
+    expect(tabForIntent('toggle-qa-check')).toBe('qa');
   });
 
   it('dependencies are planning only', () => {

@@ -88,6 +88,16 @@ import {
 import { formatMinutes, logTime, removeTime, startTimer, stopTimer, taskTime } from '../../../lib/timeTracking';
 import { maskWebhook, parseWebhookUrl, postToChat, webhookKind } from '../../../lib/chat';
 import { applyChecklist, applyQaChecklist, listTemplates, saveProjectAsTemplate } from '../../../lib/templates';
+import {
+  addQaItems,
+  createQaChecklist,
+  createQaChecklistFromTemplate,
+  listQaChecklists,
+  removeQaCheck,
+  removeQaChecklist,
+  toggleQaCheck,
+} from '../../../lib/qaChecklists';
+import QaChecklistWorkspace from '../../../components/QaChecklistWorkspace.astro';
 import { projectHealth } from '../../../lib/health';
 import { availabilityOf, TIME_ZONES } from '../../../lib/presence';
 import {
@@ -688,6 +698,50 @@ if (Astro.request.method === 'POST') {
     return bounce({ notice: 'saved' });
   }
 
+  if (intent === 'add-qa-list') {
+    const result =
+      String(form.get('from_template') ?? '') === '1' || form.get('template_id')
+        ? await createQaChecklistFromTemplate(supabase, form, id, actor)
+        : await createQaChecklist(supabase, form, id, actor);
+    if (result.error) return bounce({ error: result.error });
+    await notify(supabase, actor, result.assignees, {
+      kind: 'assigned',
+      projectId: id,
+      title: result.title ?? 'QA checklist',
+      body: 'A QA checklist was assigned to you — check your items.',
+    });
+    await track('qa-list', result.title ?? '', 'project');
+    return bounce({ notice: 'created' });
+  }
+
+  if (intent === 'add-qa-items') {
+    const result = await addQaItems(supabase, form, id);
+    if (result.error) return bounce({ error: result.error });
+    await notify(supabase, actor, result.assignees, {
+      kind: 'assigned',
+      projectId: id,
+      title: 'QA checklist',
+      body: 'New QA checklist items were assigned to you.',
+    });
+    return bounce({ notice: 'saved' });
+  }
+
+  if (intent === 'toggle-qa-check') {
+    const result = await toggleQaCheck(supabase, form, id, actor, caps.canPlan);
+    if (result.error) return bounce({ error: result.error });
+    return bounce({});
+  }
+
+  if (intent === 'delete-qa-check') {
+    const result = await removeQaCheck(supabase, form, id);
+    return result.error ? bounce({ error: result.error }) : bounce({ notice: 'deleted' });
+  }
+
+  if (intent === 'delete-qa-list') {
+    const result = await removeQaChecklist(supabase, form, id);
+    return result.error ? bounce({ error: result.error }) : bounce({ notice: 'deleted' });
+  }
+
   if (intent === 'report-bug') {
     const title = String(form.get('title') ?? '').trim().slice(0, 200);
     if (!title) return bounce({ error: 'invalid' });
@@ -938,6 +992,7 @@ const [
   { data: projectTime },
   meetings,
   mine,
+  qaLists,
 ] = await Promise.all([
   supabase.from('projects').select('*').eq('id', id).maybeSingle(),
   supabase.from('project_milestones').select('*').eq('project_id', id).order('sort_order'),
@@ -960,7 +1015,7 @@ const [
   tab === 'tasks' || taskParam ? projectDependencies(supabase, id) : Promise.resolve([]),
   tab === 'tasks' ? savedViews(supabase, id) : Promise.resolve([]),
   taskParam ? taskTime(supabase, taskParam) : Promise.resolve([]),
-  taskParam ? listTemplates(supabase, 'checklist') : Promise.resolve([]),
+  taskParam || tab === 'qa' ? listTemplates(supabase, 'checklist') : Promise.resolve([]),
   tab === 'details' && caps.lead
     ? supabase.from('project_share_links').select('token, show_checkin, created_at').eq('project_id', id).maybeSingle()
     : Promise.resolve({ data: null }),
@@ -968,6 +1023,7 @@ const [
   projectMeetings(supabase, [id]),
   // Private notes: never loaded during "View as" (they belong to the real signed-in person).
   Astro.locals.viewAs ? Promise.resolve([]) : personalItems(supabase, id, studio.email),
+  tab === 'qa' ? listQaChecklists(supabase, id) : Promise.resolve([]),
 ]);
 if (error || !project) {
   return Astro.redirect('/team/projects?error=not-found');
@@ -1458,6 +1514,23 @@ function shortDate(iso: string) {
             savedViews={views}
             params={Astro.url.searchParams}
             milestoneDates={milestones}
+          />
+        )
+      }
+
+      {
+        tab === 'qa' && (
+          <QaChecklistWorkspace
+            lists={qaLists}
+            people={members}
+            qaEmails={qaEmails}
+            checklists={checklists}
+            canPlan={caps.canPlan}
+            canProgress={caps.canProgress}
+            readOnly={Boolean(Astro.locals.viewAs)}
+            viewerEmail={studio.email}
+            who={taskWho}
+            peopleHref={projectHref(row.id, { tab: 'people' })}
           />
         )
       }
@@ -2100,7 +2173,6 @@ function shortDate(iso: string) {
           allTasks={tasks.filter((item) => 'title' in item)}
           timeEntries={timeEntries}
           checklists={checklists}
-          qaEmails={qaEmails}
         />
       )
     }

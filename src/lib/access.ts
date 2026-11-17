@@ -6,7 +6,7 @@ import { PRESENCE_WRITE_MS } from './presence';
 export const PROJECT_ROLES = ['lead', 'manager', 'collaborator', 'developer', 'qa'] as const;
 export type ProjectRole = (typeof PROJECT_ROLES)[number];
 
-export const PROJECT_TABS = ['schedule', 'tasks', 'funding', 'ledger', 'details', 'people'] as const;
+export const PROJECT_TABS = ['schedule', 'tasks', 'qa', 'funding', 'ledger', 'details', 'people'] as const;
 export type ProjectTab = (typeof PROJECT_TABS)[number];
 
 export const ROLE_META: { id: ProjectRole; label: string; hint: string }[] = [
@@ -99,6 +99,7 @@ export function capsFromRoles(roles: ProjectRole[], superAdmin = false, roleLabe
   if (canSchedule) {
     tabs.push({ id: 'schedule', label: 'Schedule' });
     tabs.push({ id: 'tasks', label: 'Tasks' });
+    tabs.push({ id: 'qa', label: 'QA' });
   }
   if (canFinance) {
     tabs.push({ id: 'funding', label: 'Funding' });
@@ -156,6 +157,15 @@ export function tabForIntent(intent: string): ProjectTab {
   ) {
     return 'tasks';
   }
+  if (
+    intent === 'add-qa-list' ||
+    intent === 'delete-qa-list' ||
+    intent === 'add-qa-items' ||
+    intent === 'toggle-qa-check' ||
+    intent === 'delete-qa-check'
+  ) {
+    return 'qa';
+  }
   if (intent.startsWith('share-') || intent === 'update-chat') return 'details';
   if (intent.endsWith('-meeting')) return 'schedule';
   if (intent === 'save-template') return 'schedule';
@@ -185,6 +195,10 @@ export function allowedIntent(intent: string, caps: ProjectCaps) {
   // Subtasks and comments: anyone who can move work forward (RLS re-checks authorship on delete).
   if (intent === 'add-subtask' || intent === 'toggle-subtask' || intent === 'delete-subtask') return caps.canProgress;
   if (intent === 'add-qa-checklist' || intent === 'apply-qa-checklist') return caps.canPlan;
+  if (intent === 'add-qa-list' || intent === 'delete-qa-list' || intent === 'add-qa-items' || intent === 'delete-qa-check') {
+    return caps.canPlan;
+  }
+  if (intent === 'toggle-qa-check') return caps.canProgress;
   if (intent === 'add-comment' || intent === 'delete-comment') return caps.canProgress;
   if (intent === 'follow' || intent === 'unfollow') return caps.canProgress;
   if (intent === 'add-attachment' || intent === 'add-link' || intent === 'delete-attachment') return caps.canProgress;

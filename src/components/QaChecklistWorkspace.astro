@@ -1,0 +1,263 @@
+---
+import type { TeamMember } from '../lib/ledger';
+import { personFace, personInitial, personLabel } from '../lib/profile';
+import type { QaChecklistBundle } from '../lib/qaChecklists';
+import type { StudioTemplate } from '../lib/templates';
+import FacePile from './FacePile.astro';
+
+interface Props {
+  lists: QaChecklistBundle[];
+  people: Pick<TeamMember, 'email' | 'display_name' | 'avatar_url'>[];
+  qaEmails: string[];
+  checklists: StudioTemplate[];
+  canPlan: boolean;
+  canProgress: boolean;
+  readOnly: boolean;
+  viewerEmail: string;
+  who: string;
+  peopleHref: string;
+}
+
+const {
+  lists,
+  people,
+  qaEmails,
+  checklists,
+  canPlan,
+  canProgress,
+  readOnly,
+  viewerEmail,
+  who,
+  peopleHref,
+} = Astro.props;
+
+const canEdit = canPlan && !readOnly;
+const canMove = canProgress && !readOnly;
+const filter = who === 'me' || (!who && qaEmails.includes(viewerEmail.toLowerCase())) ? 'me' : 'everyone';
+const nameOf = (email: string) => personLabel(email, people);
+const qaFaces = qaEmails.map((email) => personFace(email, people));
+
+const visible = lists
+  .map((list) => {
+    const checks =
+      filter === 'me' ? list.checks.filter((row) => row.assignee_email === viewerEmail) : list.checks;
+    if (filter === 'me' && checks.length === 0) return null;
+    const doneCount = checks.filter((row) => row.done).length;
+    const waitingOn = [...new Set(checks.filter((row) => !row.done).map((row) => row.assignee_email))];
+    return { ...list, checks, doneCount, total: checks.length, waitingOn };
+  })
+  .filter(Boolean) as QaChecklistBundle[];
+
+const openMine = lists.reduce(
+  (n, list) => n + list.checks.filter((row) => row.assignee_email === viewerEmail && !row.done).length,
+  0,
+);
+
+function canToggle(assignee: string) {
+  return canMove && (assignee === viewerEmail || canPlan);
+}
+---
+
+<section class="qa-workspace" aria-label="QA checklists">
+  <header class="qa-head">
+    <div>
+      <h2 class="team-h2">QA checklists</h2>
+      <p class="muted">
+        {qaEmails.length > 0
+          ? `Assigned directly to ${qaEmails.length} QA · everyone must check their items.`
+          : 'Add someone with the QA role on People to start.'}
+      </p>
+    </div>
+    {qaFaces.length > 0 && (
+      <div class="qa-head-faces" title="QA on this project">
+        <FacePile people={qaFaces} label="QA" limit={6} />
+      </div>
+    )}
+  </header>
+
+  <div class="qa-toolbar">
+    <div class="qa-filters" role="group" aria-label="Filter checks">
+      <a class:list={['qa-filter', filter === 'everyone' && 'is-on']} href="?tab=qa&who=everyone">Everyone</a>
+      <a class:list={['qa-filter', filter === 'me' && 'is-on']} href="?tab=qa&who=me">
+        My checks{openMine > 0 ? ` (${openMine})` : ''}
+      </a>
+    </div>
+  </div>
+
+  {qaEmails.length === 0 && (
+    <p class="qa-empty team-card">
+      No QA on this project yet.
+      {canEdit ? (
+        <>
+          {' '}
+          <a href={peopleHref}>Add a QA on the People tab</a>, then create a checklist here.
+        </>
+      ) : (
+        ' Ask a lead to assign the QA role.'
+      )}
+    </p>
+  )}
+
+  {canEdit && qaEmails.length > 0 && (
+    <section class="team-card qa-create" aria-labelledby="qa-create-title">
+      <h3 id="qa-create-title">New checklist</h3>
+      <form method="post" class="form team-form">
+        <input type="hidden" name="intent" value="add-qa-list" />
+        <input type="hidden" name="tab" value="qa" />
+        <input type="hidden" name="who" value={filter} />
+        <p class="field">
+          <label for="qa_title">Name</label>
+          <input id="qa_title" name="title" required maxlength="200" placeholder="Internal checking — End users" />
+        </p>
+        <p class="field">
+          <label for="qa_items">Items, one per line</label>
+          <textarea
+            id="qa_items"
+            name="items"
+            rows="6"
+            required
+            placeholder={'Fail login with FB credentials\nBirthday toggle feels jumpy\nQR code too small to scan'}
+          ></textarea>
+        </p>
+        <p class="muted qa-create-hint">Each line becomes a check for every QA ({qaEmails.length}).</p>
+        <button class="btn" type="submit">Create &amp; assign to QA</button>
+      </form>
+      {checklists.length > 0 && (
+        <form method="post" class="qa-template-form">
+          <input type="hidden" name="intent" value="add-qa-list" />
+          <input type="hidden" name="from_template" value="1" />
+          <input type="hidden" name="tab" value="qa" />
+          <input type="hidden" name="who" value={filter} />
+          <label class="sr-only" for="qa_template">Create from template</label>
+          <select id="qa_template" name="template_id" required data-autosubmit-form>
+            <option value="">+ Create from checklist template…</option>
+            {checklists.map((item) => (
+              <option value={item.id}>
+                {item.name} ({'items' in item.body ? item.body.items.length : 0} items × {qaEmails.length} QA)
+              </option>
+            ))}
+          </select>
+        </form>
+      )}
+    </section>
+  )}
+
+  {visible.length === 0 && qaEmails.length > 0 && (
+    <p class="qa-empty muted">
+      {filter === 'me' ? 'No checks assigned to you yet.' : 'No QA checklists yet.'}
+      {canEdit && filter !== 'me' ? ' Create one above.' : ''}
+    </p>
+  )}
+
+  <ul class="qa-lists">
+    {visible.map((list) => {
+      const pct = list.total ? Math.round((list.doneCount / list.total) * 100) : 0;
+      const waitingFaces = list.waitingOn.map((email) => personFace(email, people));
+      const grouped = new Map<string, typeof list.checks>();
+      for (const row of list.checks) {
+        const bucket = grouped.get(row.title) ?? [];
+        bucket.push(row);
+        grouped.set(row.title, bucket);
+      }
+      return (
+        <li class:list={['team-card', 'qa-list', list.completed_at && 'is-done']}>
+          <header class="qa-list-head">
+            <div>
+              <h3>{list.title}</h3>
+              <p class="muted">
+                {list.doneCount} of {list.total} checks
+                {list.completed_at ? ' · Complete' : list.waitingOn.length ? ` · Waiting on ${list.waitingOn.map(nameOf).join(', ')}` : ''}
+              </p>
+            </div>
+            <div class="qa-list-meta">
+              {waitingFaces.length > 0 && <FacePile people={waitingFaces} label="Waiting" limit={5} />}
+              {canEdit && (
+                <form method="post" data-confirm={`Delete checklist “${list.title}”?`} data-confirm-action="Delete">
+                  <input type="hidden" name="intent" value="delete-qa-list" />
+                  <input type="hidden" name="checklist_id" value={list.id} />
+                  <input type="hidden" name="tab" value="qa" />
+                  <input type="hidden" name="who" value={filter} />
+                  <button class="btn-text td-delete" type="submit">Delete</button>
+                </form>
+              )}
+            </div>
+          </header>
+          {list.total > 0 && (
+            <div class="pj-progress qa-progress" role="img" aria-label={`${pct}% complete`}>
+              <span style={`width:${pct}%`} />
+            </div>
+          )}
+          <ul class="qa-items">
+            {[...grouped.entries()].map(([title, rows]) => (
+              <li class="qa-item-group">
+                <p class="qa-item-title">{title}</p>
+                <ul class="qa-checks">
+                  {rows.map((row) => {
+                    const face = personFace(row.assignee_email, people);
+                    return (
+                      <li class:list={['qa-check', row.done && 'is-done', row.assignee_email === viewerEmail && 'is-mine']}>
+                        {canToggle(row.assignee_email) ? (
+                          <form method="post">
+                            <input type="hidden" name="intent" value="toggle-qa-check" />
+                            <input type="hidden" name="check_id" value={row.id} />
+                            <input type="hidden" name="done" value={row.done ? '0' : '1'} />
+                            <input type="hidden" name="tab" value="qa" />
+                            <input type="hidden" name="who" value={filter} />
+                            <button
+                              class:list={['tw-check', 'sm', row.done && 'is-on']}
+                              type="submit"
+                              aria-label={row.done ? `Uncheck ${title} for ${nameOf(row.assignee_email)}` : `Check ${title} for ${nameOf(row.assignee_email)}`}
+                            />
+                          </form>
+                        ) : (
+                          <span
+                            class:list={['tw-check', 'sm', 'is-static', row.done && 'is-on']}
+                            title={row.done ? undefined : `Only ${nameOf(row.assignee_email)} can check this`}
+                          />
+                        )}
+                        <span class="qa-check-who" title={nameOf(row.assignee_email)}>
+                          {face.avatarUrl ? (
+                            <img class="face" src={face.avatarUrl} alt="" referrerpolicy="no-referrer" width="22" height="22" />
+                          ) : (
+                            <span class="face" aria-hidden="true">{personInitial(face.name, face.email)}</span>
+                          )}
+                          <span>{nameOf(row.assignee_email)}</span>
+                        </span>
+                        {canEdit && (
+                          <form method="post" class="td-sub-x">
+                            <input type="hidden" name="intent" value="delete-qa-check" />
+                            <input type="hidden" name="check_id" value={row.id} />
+                            <input type="hidden" name="tab" value="qa" />
+                            <input type="hidden" name="who" value={filter} />
+                            <button type="submit" aria-label={`Remove check for ${nameOf(row.assignee_email)}`}>×</button>
+                          </form>
+                        )}
+                      </li>
+                    );
+                  })}
+                </ul>
+              </li>
+            ))}
+          </ul>
+          {canEdit && (
+            <form method="post" class="td-add qa-add-more">
+              <input type="hidden" name="intent" value="add-qa-items" />
+              <input type="hidden" name="checklist_id" value={list.id} />
+              <input type="hidden" name="tab" value="qa" />
+              <input type="hidden" name="who" value={filter} />
+              <label class="sr-only" for={`qa_more_${list.id}`}>Add more items</label>
+              <input
+                id={`qa_more_${list.id}`}
+                name="item_title"
+                placeholder="+ Add item… assigns to all QA"
+                maxlength="300"
+                autocomplete="off"
+                required
+              />
+            </form>
+          )}
+        </li>
+      );
+    })}
+  </ul>
+</section>

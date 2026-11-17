@@ -59,8 +59,6 @@ interface Props {
   allTasks: Pick<ProjectTask, 'id' | 'title' | 'status'>[];
   timeEntries: TimeEntry[];
   checklists: StudioTemplate[];
-  /** Project members with the QA role — used for admin QA checklists. */
-  qaEmails?: string[];
 }
 
 const {
@@ -87,7 +85,6 @@ const {
   allTasks,
   timeEntries,
   checklists,
-  qaEmails = [],
 } = Astro.props;
 const myRunning = timeEntries.find((entry) => !entry.ended_at && entry.email === viewerEmail);
 const totalMinutes = timeEntries.reduce((sum, entry) => sum + liveMinutes(entry), 0);
@@ -612,54 +609,6 @@ function longDate(iso: string | null) {
               ))}
             </select>
           </form>
-        )}
-        {canEdit && (
-          <div class="td-qa-box">
-            <header class="td-section-head">
-              <h4 class="td-qa-label">QA checklist</h4>
-              <span class="muted">
-                {qaEmails.length > 0
-                  ? `Auto-assigns ${qaEmails.length} QA · all must check`
-                  : 'Add a QA on People first'}
-              </span>
-            </header>
-            {qaEmails.length > 0 ? (
-              <>
-                <form method="post" class="td-add">
-                  <input type="hidden" name="intent" value="add-qa-checklist" />
-                  <input type="hidden" name="task_id" value={task.id} />
-                  {Object.entries(hidden).map(([k, v]) => <input type="hidden" name={k} value={v} />)}
-                  <label class="sr-only" for="td_qa_item">Add a QA checklist item</label>
-                  <input
-                    id="td_qa_item"
-                    name="subtask_title"
-                    placeholder="+ Add QA check… press Enter"
-                    maxlength="300"
-                    autocomplete="off"
-                    required
-                  />
-                </form>
-                {checklists.length > 0 && (
-                  <form method="post" class="td-dep-add">
-                    <input type="hidden" name="intent" value="apply-qa-checklist" />
-                    <input type="hidden" name="task_id" value={task.id} />
-                    {Object.entries(hidden).map(([k, v]) => <input type="hidden" name={k} value={v} />)}
-                    <label class="sr-only" for="td_qa_checklist">Add a QA checklist from template</label>
-                    <select id="td_qa_checklist" name="template_id" required data-autosubmit-form>
-                      <option value="">+ Assign checklist to all QA…</option>
-                      {checklists.map((item) => (
-                        <option value={item.id}>
-                          {item.name} × {qaEmails.length} QA
-                        </option>
-                      ))}
-                    </select>
-                  </form>
-                )}
-              </>
-            ) : (
-              <p class="muted td-qa-empty">Give someone the QA role on the People tab, then add checklist items here.</p>
-            )}
-          </div>
         )}
       </section>
 
