@@ -27,6 +27,7 @@ import {
   formatBytes,
   mentionHandle,
   recurLabel,
+  ATTACHMENT_ACCEPT,
   seenAgo,
   type TaskAttachment,
   type TaskEvent,
@@ -160,7 +161,7 @@ for (const item of attachments) {
   list.push(item);
   commentFiles.set(item.comment_id, list);
 }
-const fileAccept = 'image/*,.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.csv,.md,.json,.zip,application/pdf,application/zip,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-powerpoint,application/vnd.openxmlformats-officedocument.presentationml.presentation,text/plain,text/csv,text/markdown,application/json';
+const fileAccept = ATTACHMENT_ACCEPT;
 const sameTaskHref = (tid: string) => {
   const params = new URLSearchParams({ tab: 'tasks', task: tid });
   if (view) params.set('view', view);
@@ -861,9 +862,39 @@ function longDate(iso: string | null) {
     grow.forEach((t) => t.addEventListener('input', () => fit(t)));
     new ResizeObserver(() => grow.forEach(fit)).observe(panel);
 
+    const allowedExt = new Set([
+      'jpg', 'jpeg', 'png', 'webp', 'gif', 'svg', 'pdf', 'txt', 'csv', 'md', 'json', 'zip',
+      'doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx',
+    ]);
+    const allowedMime = new Set([
+      'image/jpeg', 'image/png', 'image/webp', 'image/gif', 'image/svg+xml',
+      'application/pdf', 'text/plain', 'text/csv', 'text/markdown', 'application/json', 'application/zip',
+      'application/msword', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+      'application/vnd.ms-excel', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      'application/vnd.ms-powerpoint', 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+    ]);
+    const isAllowedFile = (file: File) => {
+      const type = (file.type || '').toLowerCase();
+      if (type.startsWith('video/')) return false;
+      if (type && allowedMime.has(type)) return true;
+      const ext = file.name.split('.').pop()?.toLowerCase() ?? '';
+      return allowedExt.has(ext);
+    };
+    const rejectBadFile = (input: HTMLInputElement, file: File | undefined) => {
+      if (!file || isAllowedFile(file)) return false;
+      input.value = '';
+      input.setCustomValidity('Videos cannot be attached. Use an image, PDF, doc, or zip.');
+      input.reportValidity();
+      input.setCustomValidity('');
+      return true;
+    };
+
     // Selects and file pickers outside the main form submit their own small form.
     panel.querySelectorAll<HTMLInputElement | HTMLSelectElement>('[data-autosubmit-form]').forEach((el) =>
       el.addEventListener('change', () => {
+        if (el instanceof HTMLInputElement && el.type === 'file') {
+          if (rejectBadFile(el, el.files?.[0])) return;
+        }
         if (el.value) el.form?.requestSubmit();
       }),
     );
@@ -970,7 +1001,13 @@ function longDate(iso: string | null) {
         commentChip.hidden = true;
       }
     };
-    commentFile?.addEventListener('change', syncCommentFile);
+    commentFile?.addEventListener('change', () => {
+      if (commentFile && rejectBadFile(commentFile, commentFile.files?.[0])) {
+        syncCommentFile();
+        return;
+      }
+      syncCommentFile();
+    });
     commentFileClear?.addEventListener('click', () => {
       if (!commentFile) return;
       commentFile.value = '';

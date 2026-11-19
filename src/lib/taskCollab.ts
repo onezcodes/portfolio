@@ -7,6 +7,56 @@ import type { TeamMember } from './ledger';
 
 export const TASK_FILES_BUCKET = 'task-files';
 export const MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024;
+/** Explicit types only — no image/* / video/*, so pickers do not offer movies. */
+export const ATTACHMENT_ACCEPT =
+  'image/jpeg,image/png,image/webp,image/gif,image/svg+xml,.jpg,.jpeg,.png,.webp,.gif,.svg,application/pdf,.pdf,text/plain,text/csv,text/markdown,application/json,.txt,.csv,.md,.json,application/zip,.zip,application/msword,.doc,application/vnd.openxmlformats-officedocument.wordprocessingml.document,.docx,application/vnd.ms-excel,.xls,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,.xlsx,application/vnd.ms-powerpoint,.ppt,application/vnd.openxmlformats-officedocument.presentationml.presentation,.pptx';
+const ATTACHMENT_MIME = new Set([
+  'image/jpeg',
+  'image/png',
+  'image/webp',
+  'image/gif',
+  'image/svg+xml',
+  'application/pdf',
+  'text/plain',
+  'text/csv',
+  'text/markdown',
+  'application/json',
+  'application/zip',
+  'application/msword',
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  'application/vnd.ms-excel',
+  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  'application/vnd.ms-powerpoint',
+  'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+]);
+const ATTACHMENT_EXT = new Set([
+  'jpg',
+  'jpeg',
+  'png',
+  'webp',
+  'gif',
+  'svg',
+  'pdf',
+  'txt',
+  'csv',
+  'md',
+  'json',
+  'zip',
+  'doc',
+  'docx',
+  'xls',
+  'xlsx',
+  'ppt',
+  'pptx',
+]);
+
+export function isAllowedAttachment(file: Pick<File, 'name' | 'type'>) {
+  const type = (file.type || '').toLowerCase();
+  if (type.startsWith('video/')) return false;
+  if (type && ATTACHMENT_MIME.has(type)) return true;
+  const ext = file.name.split('.').pop()?.toLowerCase() ?? '';
+  return ATTACHMENT_EXT.has(ext);
+}
 export const RECUR_OPTIONS = [
   { id: '', label: 'Does not repeat' },
   { id: 'daily', label: 'Every day' },
@@ -146,6 +196,7 @@ export async function addFileAttachment(
   const file = form.get('file');
   if (!taskId || !(file instanceof File) || file.size === 0) return { error: 'invalid' as const };
   if (file.size > MAX_ATTACHMENT_BYTES) return { error: 'too-large-file' as const };
+  if (!isAllowedAttachment(file)) return { error: 'file-type' as const };
   const path = `${projectId}/${taskId}/${crypto.randomUUID()}-${safeFileName(file.name)}`;
   const upload = await supabase.storage.from(TASK_FILES_BUCKET).upload(path, file, {
     contentType: file.type || 'application/octet-stream',
